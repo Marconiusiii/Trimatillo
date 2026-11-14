@@ -70,7 +70,7 @@ final class CuttingBoardSession: ObservableObject {
 	private let originalDuration: CMTime
 	private let sourceFrames: [CMTime]
 	private var frames: [CMTime] = []
-	private var history: [Snapshot] = []
+	private var history: [(action: String, before: Snapshot)] = []
 	private var playbackObservation: Any?
 	private var endObservation: NSObjectProtocol?
 	private var itemObservation: NSKeyValueObservation?
@@ -83,7 +83,6 @@ final class CuttingBoardSession: ObservableObject {
 	private let audioFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
 	private var audioActive = false
 	private var seekGeneration = 0
-	private var returnAfterAudition: CMTime?
 	@Published private(set) var state: Snapshot
 	@Published private(set) var rate = 0.0
 	var speedLabel: String { abs(rate).formatted() + "x" }
@@ -92,6 +91,7 @@ final class CuttingBoardSession: ObservableObject {
 	@Published var message: String?
 	var duration: CMTime { state.timeline.duration }
 	var canUndo: Bool { !history.isEmpty }
+	var hasTimelineEdits: Bool { state.timeline != ClipEditTimeline(sourceDuration: originalDuration) }
 	var currentJoin: ClipEditTimeline.EditPoint? {
 		state.timeline.editPoints.first { CMTimeCompare($0.time, position) == 0 }
 	}
@@ -159,10 +159,6 @@ final class CuttingBoardSession: ObservableObject {
 				let end = item.forwardPlaybackEndTime.isNumeric ? item.forwardPlaybackEndTime : self.duration
 				if self.player.rate == 0 && now >= end {
 					self.rate = 0
-					if let point = self.returnAfterAudition {
-						self.seek(point)
-						return
-					}
 				}
 				self.state.position = min(now, end)
 			}
@@ -179,7 +175,7 @@ final class CuttingBoardSession: ObservableObject {
 				guard let self, self.player.currentItem === item, self.rate > 0 else { return }
 				let end = item.forwardPlaybackEndTime.isNumeric ? item.forwardPlaybackEndTime : self.duration
 				guard self.player.currentTime() >= end else { return }
-				self.seek(self.returnAfterAudition ?? end)
+				self.seek(end)
 			}
 		}
 		itemObservation = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
@@ -200,7 +196,6 @@ final class CuttingBoardSession: ObservableObject {
 
 	func stop() {
 		seekGeneration += 1
-		returnAfterAudition = nil
 		if rate > 0, player.rate > 0, player.currentTime().isNumeric {
 			state.position = min(duration, max(.zero, player.currentTime()))
 		}
@@ -331,25 +326,31 @@ final class CuttingBoardSession: ObservableObject {
 			announce(isIn ? "In Removed" : "Out Removed")
 			return
 		}
+		let previous = isIn ? state.markIn : state.markOut
+		guard previous != time else { return }
+		let action = (previous == nil ? "Mark " : "Move ") + (isIn ? "In" : "Out")
+		history.append((action, state))
 		if isIn { state.markIn = time } else { state.markOut = time }
 		if toggleAtPlayhead { announce(isIn ? "Marked In" : "Marked Out") }
 	}
 
 	func clear(_ isIn: Bool) {
+		guard (isIn ? state.markIn : state.markOut) != nil else { return }
+		history.append((isIn ? "Remove In" : "Remove Out", state))
 		if isIn { state.markIn = nil } else { state.markOut = nil }
 	}
 
 	func delete(_ range: CMTimeRange?, spoken: Bool = false) {
-		guard removeRange(range), spoken else { return }
+		guard removeRange(range, action: "Delete Marked Range"), spoken else { return }
 		announce(["Content deleted", currentJoin?.name].compactMap { $0 }.joined(separator: ", "))
 	}
 
-	private func removeRange(_ range: CMTimeRange?) -> Bool {
+	private func removeRange(_ range: CMTimeRange?, action: String) -> Bool {
 		guard let range else { message = "Set In before Out to delete a marked range."; return false }
 		do {
 			var timeline = state.timeline
 			try timeline.delete(editedRange: range)
-			try apply(Snapshot(timeline: timeline, position: range.start), record: true)
+			try apply(Snapshot(timeline: timeline, position: range.start), action: action)
 			return true
 		} catch {
 			message = error.localizedDescription
@@ -360,37 +361,47 @@ final class CuttingBoardSession: ObservableObject {
 	func trim(head: Bool, spoken: Bool = false) {
 		let point = rate > 0 && player.rate > 0 ? player.currentTime() : position
 		let range = CMTimeRange(start: head ? .zero : point, end: head ? point : duration)
-		if removeRange(range), spoken {
+		if removeRange(range, action: head ? "Trim Head to Playhead" : "Trim Tail to Playhead"), spoken {
 			announce(head ? "Head trimmed to playhead" : "Tail trimmed to playhead")
 		}
 	}
 
-	func adjust(_ index: Int, preceding: Bool, to time: CMTime, audible: Bool) {
-		guard let join = state.timeline.editPoints.first(where: { $0.index == index }) else { return }
-		do {
-			let timeline = try state.timeline.adjustingEditPoint(index,
-				inTime: preceding ? time : join.inTime, outTime: preceding ? join.outTime : time)
-			let position = timeline.editPoints[index].time
-			try apply(Snapshot(timeline: timeline, position: position), record: true)
-			if audible { previewBoundary(preceding: preceding, at: position) }
-		} catch { message = "Choose a boundary inside the adjacent section that keeps In before Out." }
+	func saveJoin(_ point: ClipEditTimeline.EditPoint, inTime: CMTime, outTime: CMTime) throws {
+		guard currentJoin == point else { throw ClipEditError.invalidSelection }
+		guard inTime != point.inTime || outTime != point.outTime else { return }
+		let timeline = try state.timeline.adjustingEditPoint(point.index, inTime: inTime, outTime: outTime)
+		let position = timeline.editPoints[point.index].time
+		try apply(Snapshot(timeline: timeline, position: position), action: "Adjust " + point.name)
 	}
 
-	private func previewBoundary(preceding: Bool, at point: CMTime) {
+	func previewBoundary(at time: CMTime, preceding: Bool) {
 		guard hasAudio else { return }
-		let start = preceding ? max(.zero, point - CMTime(seconds: 0.15, preferredTimescale: 48000)) : point
-		previewTask = Task { [weak self] in await self?.preview(at: start) }
+		stop()
+		let length = CMTime(seconds: 0.15, preferredTimescale: 48000)
+		let start = preceding ? max(.zero, time - length) : time
+		let end = preceding ? time : min(originalDuration, time + length)
+		previewTask = Task { [weak self] in
+			guard let self else { return }
+			await preview(at: start, length: (end - start).seconds, asset: source)
+		}
 	}
 
 	func undo() {
-		guard let previous = history.last else { return }
+		guard let entry = history.last else { announce("Nothing to undo"); return }
 		do {
-			try apply(previous, record: false)
+			if state.timeline == entry.before.timeline {
+				stop()
+				state = entry.before
+				seek(entry.before.position)
+			} else {
+				try apply(entry.before, action: nil)
+			}
 			history.removeLast()
+			announce("Undo " + entry.action)
 		} catch { message = error.localizedDescription }
 	}
 
-	private func apply(_ snapshot: Snapshot, record: Bool) throws {
+	private func apply(_ snapshot: Snapshot, action: String?) throws {
 		let composition = AVMutableComposition()
 		for (track, available) in tracks {
 			guard let output = composition.addMutableTrack(withMediaType: track.mediaType,
@@ -409,7 +420,7 @@ final class CuttingBoardSession: ObservableObject {
 			composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: snapshot.timeline.duration))
 		}
 		stop()
-		if record { history.append(state) }
+		if let action { history.append((action, state)) }
 		state = snapshot
 		editAsset = composition
 		var cursor = CMTime.zero
@@ -506,12 +517,6 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	func playAcross(_ point: CMTime) {
-		let second = CMTime(value: 1, timescale: 1)
-		play(from: max(.zero, point - second), to: min(duration, point + second), speed: 1)
-		returnAfterAudition = point
-	}
-
 	func playMarked() {
 		guard let selection else { return }
 		play(from: selection.start, to: selection.end, speed: 1)
@@ -531,9 +536,9 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	private func preview(at time: CMTime, length: Double = 0.2) async {
+	private func preview(at time: CMTime, length: Double = 0.2, asset: AVAsset? = nil) async {
 		do {
-			let samples = try await FrameAudioSamples.read(asset: editAsset, mix: nil, at: time, length: length)
+			let samples = try await FrameAudioSamples.read(asset: asset ?? editAsset, mix: nil, at: time, length: length)
 			try Task.checkCancellation()
 			guard !samples.isEmpty else { return }
 			try activateAudio()

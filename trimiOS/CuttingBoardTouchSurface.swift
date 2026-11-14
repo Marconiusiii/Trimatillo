@@ -52,12 +52,17 @@ final class TimelineSurface: UIView {
 		closeTap.numberOfTapsRequired = 3
 		addGestureRecognizer(closeTap)
 
+		let joinTap = UITapGestureRecognizer(target: self, action: #selector(openJoin))
+		joinTap.numberOfTapsRequired = 2
+		joinTap.require(toFail: closeTap)
+		addGestureRecognizer(joinTap)
+
 		let hold = UILongPressGestureRecognizer(target: self, action: #selector(scrub(_:)))
 		hold.minimumPressDuration = 0.35
 		addGestureRecognizer(hold)
 		for (count, directions) in [(1, [UISwipeGestureRecognizer.Direction.left, .right, .up, .down]),
 			(2, [.left, .right, .down]),
-			(3, [.left, .right]), (4, [.left, .right])] {
+			(3, [.left, .right, .down]), (4, [.left, .right])] {
 			for direction in directions {
 				let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swipe(_:)))
 				swipe.numberOfTouchesRequired = count
@@ -74,6 +79,8 @@ final class TimelineSurface: UIView {
 
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError() }
+
+	@objc private func openJoin() { session.showJoin() }
 
 	@objc private func closeEditor() { onClose?() }
 
@@ -151,7 +158,9 @@ final class TimelineSurface: UIView {
 		case 2:
 			if gesture.direction == .down { session.delete(session.selection, spoken: true) }
 			else { session.shuttle(right ? 1 : -1) }
-		case 3: session.navigate(right, spoken: true)
+		case 3:
+			if gesture.direction == .down { session.undo() }
+			else { session.navigate(right, spoken: true) }
 		case 4: session.trim(head: right, spoken: true)
 		default: break
 		}

@@ -29,6 +29,7 @@ struct CuttingBoardView: View {
 	var closeDirectTouchEditor: (() -> Void)?
 	@State private var showingDirectTouchEditor = false
 	@AccessibilityFocusState(for: .voiceOver) private var launcherFocused: Bool
+	@AccessibilityFocusState(for: .voiceOver) private var surfaceFocused: Bool
 	@State private var exporting = false
 	@AccessibilityFocusState(for: .voiceOver) private var exportFocused: Bool
 	@State private var sheetFromMenu = false
@@ -47,9 +48,10 @@ struct CuttingBoardView: View {
 							.accessibilityAddTraits(.isHeader)
 					}
 					CuttingBoardTouchSurface(session: session, onClose: closeDirectTouchEditor)
+						.accessibilityFocused($surfaceFocused)
 				}
 				.accessibilityAction(.magicTap) { session.toggle() }
-				.sheet(item: $session.sheet) { editorSheet($0) }
+				.sheet(item: $session.sheet, onDismiss: { surfaceFocused = true }) { editorSheet($0) }
 			} else {
 				board
 					.sheet(isPresented: $exporting, onDismiss: { exportFocused = true }) {
@@ -177,9 +179,16 @@ struct CuttingBoardView: View {
 		.background(EditorTheme.surface)
 	}
 
-	private func editorSheet(_ sheet: BoardSheet) -> some View {
-		BoardEditSheet(session: session, sheet: sheet)
-			.accessibilityAction(.magicTap) { session.toggle() }
+	@ViewBuilder private func editorSheet(_ sheet: BoardSheet) -> some View {
+		switch sheet {
+		case .jump:
+			JumpSheet(session: session)
+				.accessibilityAction(.magicTap) { session.toggle() }
+		case let .join(index):
+			if let point = session.state.timeline.editPoints.first(where: { $0.index == index }) {
+				JoinSheet(session: session, point: point)
+			}
+		}
 	}
 
 	private func sheetBinding(forMenu menu: Bool) -> Binding<BoardSheet?> {
@@ -235,8 +244,7 @@ struct CuttingBoardView: View {
 				Button("Delete Marked Range") { session.delete(range) }
 			}
 		}
-		if let point = session.currentJoin {
-			Button("Play Across Edit") { session.playAcross(point.time) }
+		if session.currentJoin != nil {
 			Button("Adjust Edit Point") { sheetFromMenu = fromMenu; session.showJoin() }
 		}
 		Button("Previous Edit Point") { session.navigate(false) }
@@ -248,87 +256,123 @@ struct CuttingBoardView: View {
 	}
 }
 
-private struct BoardEditSheet: View {
+private struct TimeEntry {
+	var exact: CMTime
+	var text: String
+
+	init(_ time: CMTime, session: CuttingBoardSession, format: TimecodeFormat, source: Bool) {
+		exact = time
+		text = format == .frames ? String(session.frameNumber(at: time, sourceTime: source)) : session.timecode(time, format: format)
+	}
+
+	func value(session: CuttingBoardSession, format: TimecodeFormat, source: Bool) -> CMTime? {
+		if text == TimeEntry(exact, session: session, format: format, source: source).text { return exact }
+		if format == .frames { return Int64(text).flatMap { session.time(atFrame: $0, sourceTime: source) } }
+		return CuttingBoardSession.parse(text)
+	}
+}
+
+private struct JumpSheet: View {
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@ObservedObject var session: CuttingBoardSession
-	let sheet: BoardSheet
 	@Environment(\.dismiss) private var dismiss
-	@State private var preceding = false
-	@State private var entry = ""
+	@State private var entry: TimeEntry?
 	@State private var error: String?
-
-	private var point: ClipEditTimeline.EditPoint? {
-		guard case let .join(index) = sheet else { return nil }
-		return session.state.timeline.editPoints.first { $0.index == index }
-	}
-	private var boundary: CMTime {
-		guard let point else { return session.position }
-		return preceding ? point.inTime : point.outTime
-	}
-
-	private var boundaryEntry: String {
-		if format == .frames { return String(session.frameNumber(at: boundary, sourceTime: point != nil)) }
-		return session.timecode(boundary, format: format)
-	}
 
 	var body: some View {
 		NavigationStack {
 			Form {
-				if let point {
-					Picker("Boundary", selection: $preceding) {
-						Text("End of preceding section").tag(true)
-						Text("Start of following section").tag(false)
-					}
-					Stepper("Boundary, " + session.timecode(boundary, format: format, sourceTime: true),
-						onIncrement: { adjust(by: 1) }, onDecrement: { adjust(by: -1) })
-					Button("Play Across Edit") { session.playAcross(point.time) }
+				if let binding = Binding($entry) {
+					TextField(format == .frames ? "Playhead frame" : "Playhead time", text: binding.text)
+						.autocorrectionDisabled()
+						.onSubmit { jump() }
 				}
-				TextField((point == nil ? "Playhead" : "Source") + (format == .frames ? " frame" : " time"), text: $entry)
-					.autocorrectionDisabled()
-					.onSubmit { submit() }
-				Button(point == nil ? "Jump" : "Set Boundary") { submit() }
-				if let text = error ?? session.message { Text(text) }
+				Button("Jump") { jump() }
+				if let error { Text(error) }
 			}
-			.navigationTitle(point?.name ?? "Jump to Time")
+			.navigationTitle("Jump to Time")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar { Button("Done") { dismiss() } }
 		}
-		.onAppear { entry = boundaryEntry }
-		.onChange(of: preceding) { _, _ in refresh() }
-		.onDisappear { session.message = nil }
+		.onAppear { entry = TimeEntry(session.position, session: session, format: format, source: false) }
 	}
 
-	private func refresh() {
-		error = nil
-		entry = boundaryEntry
-	}
-
-	private func adjust(by count: Int) {
-		guard let point else { return }
-		session.message = nil
-		session.adjust(point.index, preceding: preceding, to: session.stepped(from: boundary, by: count, sourceTime: true), audible: true)
-		refresh()
-	}
-
-	private func submit() {
-		let time: CMTime?
-		if entry == boundaryEntry { time = boundary }
-		else if format == .frames { time = Int64(entry).flatMap { session.time(atFrame: $0, sourceTime: point != nil) } }
-		else { time = CuttingBoardSession.parse(entry) }
-		guard let time else {
-			error = format == .frames ? "Enter a frame number within the clip." : "Enter seconds or hours:minutes:seconds."
+	private func jump() {
+		guard let time = entry?.value(session: session, format: format, source: false), time <= session.duration else {
+			error = "Enter a position from zero through " + session.timecode(session.duration, format: format) + "."
 			return
 		}
-		if let point {
-			session.message = nil
-			if entry != boundaryEntry {
-				session.adjust(point.index, preceding: preceding, to: time, audible: true)
+		session.seek(time)
+		dismiss()
+	}
+}
+
+private struct JoinSheet: View {
+	@ObservedObject var session: CuttingBoardSession
+	let point: ClipEditTimeline.EditPoint
+	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
+	@Environment(\.dismiss) private var dismiss
+	@State private var precedingEntry: TimeEntry?
+	@State private var followingEntry: TimeEntry?
+	@State private var error: String?
+
+	var body: some View {
+		NavigationStack {
+			Form {
+				if let preceding = Binding($precedingEntry), let following = Binding($followingEntry) {
+					boundary("End of preceding section", entry: preceding, preceding: true)
+					boundary("Start of following section", entry: following, preceding: false)
+				}
+				if let text = error ?? session.message { Text(text) }
 			}
-			refresh()
-		} else if time <= session.duration {
-			session.seek(time)
+			.navigationTitle(point.name)
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+				ToolbarItem(placement: .confirmationAction) { Button("Save") { save() } }
+			}
+		}
+		.onAppear {
+			precedingEntry = TimeEntry(point.inTime, session: session, format: format, source: true)
+			followingEntry = TimeEntry(point.outTime, session: session, format: format, source: true)
+		}
+		.onDisappear { session.stop(); session.message = nil }
+	}
+
+	private func boundary(_ title: String, entry: Binding<TimeEntry>, preceding: Bool) -> some View {
+		Section {
+			TextField(title + (format == .frames ? ", source frame" : ", source time"), text: entry.text)
+				.autocorrectionDisabled()
+			Stepper(title + ", " + entry.wrappedValue.text,
+				onIncrement: { step(entry, by: 1, preceding: preceding) },
+				onDecrement: { step(entry, by: -1, preceding: preceding) })
+		} header: { Text(title).accessibilityAddTraits(.isHeader) }
+	}
+
+	private func step(_ entry: Binding<TimeEntry>, by count: Int, preceding: Bool) {
+		guard let value = entry.wrappedValue.value(session: session, format: format, source: true) else {
+			error = "Enter a valid source position."
+			return
+		}
+		let next = session.stepped(from: value, by: count, sourceTime: true)
+		guard next > point.precedingStart, next < point.followingEnd else { return }
+		entry.wrappedValue = TimeEntry(next, session: session, format: format, source: true)
+		error = nil
+		session.previewBoundary(at: next, preceding: preceding)
+	}
+
+	private func save() {
+		guard let inTime = precedingEntry?.value(session: session, format: format, source: true),
+			let outTime = followingEntry?.value(session: session, format: format, source: true) else {
+			error = "Enter a valid source position for each boundary."
+			return
+		}
+		do {
+			try session.saveJoin(point, inTime: inTime, outTime: outTime)
 			dismiss()
-		} else { error = "Enter a time from zero through " + session.timecode(session.duration, format: format) + "." }
+		} catch ClipEditError.invalidSelection {
+			error = "Choose positions inside the adjacent sections and place the first boundary before the second."
+		} catch { self.error = error.localizedDescription }
 	}
 }
 
@@ -474,7 +518,7 @@ struct PrimaryCuttingBoard: View {
 			HStack(spacing: 0) {
 				Button {
 					session.stop()
-					if session.canUndo { confirmClose = true } else { close() }
+					if session.hasTimelineEdits { confirmClose = true } else { close() }
 				} label: { Text("Close").padding(.horizontal).frame(minHeight: 48) }
 				.accessibilityIdentifier("sharedBoardClose")
 				.alert("Close this clip and discard unsaved edits?", isPresented: $confirmClose) {

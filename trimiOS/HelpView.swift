@@ -4,9 +4,13 @@ struct HelpView: View {
 	@Environment(\.dismiss) private var dismiss
 	var body: some View {
 		NavigationStack {
-			List(HelpTopic.allCases, id: \.self) { topic in
-				NavigationLink(topic.rawValue, value: topic)
+			List {
+				Text("Start with Quick Start to edit your first clip, or choose a topic below.")
 					.listRowBackground(EditorTheme.surface)
+				ForEach(HelpTopic.allCases, id: \.self) { topic in
+					NavigationLink(topic.rawValue, value: topic)
+						.listRowBackground(EditorTheme.surface)
+				}
 			}
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
@@ -14,6 +18,7 @@ struct HelpView: View {
 			.toolbar { Button("Done") { dismiss() } }
 			.navigationDestination(for: HelpTopic.self) { topic in
 				List {
+					Text(topic.introduction).listRowBackground(EditorTheme.surface)
 					ForEach(topic.sections, id: \.title) { section in
 						Section {
 							ForEach(section.rows.indices, id: \.self) { index in
@@ -46,7 +51,7 @@ private struct HelpSection {
 }
 
 private enum HelpTopic: String, CaseIterable {
-	case first = "Make your first cut"
+	case first = "Quick Start"
 	case open = "Open a clip"
 	case playback = "Playback and the playhead"
 	case cuts = "Markers, trims, and joins"
@@ -56,17 +61,33 @@ private enum HelpTopic: String, CaseIterable {
 	case save = "Save and export"
 	case settings = "Settings and feedback"
 
+	var introduction: String {
+		switch self {
+		case .first: "Trim the beginning and end of a clip, then cut a passage from the middle and save a copy."
+		case .open: "Open an audio or video file in Trimatillo, or send a video from Photos to the Cutting Board."
+		case .playback: "The playhead is your current position in the clip. Move it to find the moment you want to edit."
+		case .cuts: "A trim shortens one end of a clip. Cutting a passage from the middle creates a join where the two remaining sections meet."
+		case .actions: "Use the VoiceOver Actions rotor on Cutting Board controls to move the playhead, set markers, and make cuts."
+		case .touch: "Use gestures on the Direct Touch editing surface to move through a clip and edit it."
+		case .keys: "Use a connected keyboard on the primary Cutting Board to control playback, set markers, and edit."
+		case .save: "Choose Export on the Cutting Board to update the original clip or save an edited copy."
+		case .settings: "Open Settings from the welcome screen to change the appearance and editing preferences or send feedback."
+		}
+	}
+
 	var sections: [HelpSection] {
 		switch self {
 		case .first:
-			[HelpSection("Remove a passage from the middle", numbered: true, [
-				"Choose Trim a Clip. Select a video from Photo Library or an audio or video file from Files.",
-				"Choose Play. Pause at the beginning of the passage you want to remove. The playhead is your current position in the clip.",
-				"Use Step Back or Step Forward to refine the position. Choose Mark In to set the start of the passage.",
-				"Move to the end of the passage. Choose Mark Out to set its end.",
-				"Open Edit Actions and choose Play Marked Range to review the selection.",
-				"Choose Delete Marked Range in Edit Actions. The sections before and after the passage now meet at a join.",
-				"At the join, choose Play Across Edit in Edit Actions to review the cut. If you want to restore the passage, choose Undo.",
+			[HelpSection("Open a clip and trim its ends", numbered: true, [
+				"Choose Trim a Clip. Choose Photo Library for a video or Files for an audio or video clip. Select your clip.",
+				"Choose Play. Pause where you want the clip to begin. Use Step Back or Step Forward to move the playhead one frame at a time.",
+				"Open Edit Actions and choose Trim Head to Playhead. The clip now starts at the position you chose.",
+				"Play or fast forward to where you want the clip to end. Pause and use the step buttons to refine the position.",
+				"Open Edit Actions and choose Trim Tail to Playhead. The clip now ends at that position."
+			]), HelpSection("Cut a passage from the middle", numbered: true, [
+				"Rewind to the beginning of a passage you want to remove. Pause, refine the position with the step buttons, and choose Mark In.",
+				"Play to the end of the passage. Pause and choose Mark Out.",
+				"Open Edit Actions and choose Delete Marked Range. The playhead lands at the join where the remaining sections meet.",
 				"Choose Export, then Save as New Clip. Choose a destination and save the edited copy."
 			])]
 		case .open:
@@ -94,9 +115,9 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Trim and review", [
 				"Trim Head to Playhead removes everything before the playhead. Trim Tail to Playhead removes everything after it.",
 				"Previous Edit Point and Next Edit Point move among joins, markers, and the start and end of the clip.",
-				"At a join, choose Adjust Edit Point in Edit Actions. Select the end of the preceding section or the start of the following section.",
-				"Use the Boundary stepper for a fine adjustment, or enter a source time or frame number and choose Set Boundary. Choose Play Across Edit to review the result.",
-				"Choose Undo to reverse the last cut or boundary adjustment."
+				"At a join, choose Adjust Edit Point in Edit Actions. The sheet shows the end of the preceding section and the start of the following section.",
+				"Step either boundary one frame at a time or enter a source time or frame number. Choose Save to apply both boundaries or Cancel to discard the adjustments.",
+				"Choose Undo to reverse a marker change, trim, deletion, or saved join adjustment. Repeat to undo earlier edits."
 			])]
 		case .actions:
 			[HelpSection("Actions rotor", [
@@ -113,6 +134,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Touch and hold, then drag right or left to scrub forward or backward. Audio previews play as you move. Lift your finger to leave the playhead at that position.",
 				"Swipe down to mark In. Repeat at the marker to remove it, or swipe down at a new position to move it.",
 				"Swipe up to mark Out. Repeat at the marker to remove it, or swipe up at a new position to move it.",
+				"Double-tap at a join to open its boundaries. Choose Save or Cancel to return to Direct Touch Editing.",
 				"Triple-tap to close the editor and return to the Cutting Board."
 			]), HelpSection("Two fingers", [
 				"Double-tap to play or pause.",
@@ -121,7 +143,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe down to delete the marked range. When material remains on both sides, the two sections meet at a join."
 			]), HelpSection("Three fingers", [
 				"Swipe right to move to the next join, marker, or end of the clip.",
-				"Swipe left to move to the previous join, marker, or start of the clip."
+				"Swipe left to move to the previous join, marker, or start of the clip.",
+				"Swipe down to undo the last edit. Repeat to undo earlier edits. VoiceOver announces the action after each Undo."
 			]), HelpSection("Four fingers", [
 				"Swipe right to trim the head of the clip to the playhead.",
 				"Swipe left to trim the tail of the clip to the playhead."
@@ -159,7 +182,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Control Color to set the color of buttons and the selected range. The shade follows the current appearance.",
 				"Under Editing, choose Timecode. Standard shows hours, minutes, and seconds. Milliseconds adds three decimal places.",
 				"Frames counts from zero. End is one past the last frame. For audio clips, each frame is one thirtieth of a second.",
-				"Turn on Shake to Undo under Editing to undo a cut by shaking your device. Shake to Undo must also be enabled in the device's Touch settings."
+				"Turn on Shake to Undo under Editing to undo the last edit by shaking your device. Shake to Undo must also be enabled in the device's Touch settings."
 			]), HelpSection("About and support", [
 				"Send App Feedback opens an email draft addressed to Marco Salsiccia. Privacy Policy opens the policy in your browser.",
 				"Support Trimatillo lists available one-time tips with their App Store prices. Select an amount and confirm the purchase in the App Store sheet."
