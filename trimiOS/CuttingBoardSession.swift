@@ -1,7 +1,36 @@
 import AVFoundation
 import AudioToolbox
 import Combine
+import CoreTransferable
+import UniformTypeIdentifiers
 import UIKit
+
+// Photos lends the transfer a file URL. Keep a private copy for the lifetime of the edit.
+nonisolated final class ImportedMovie: Transferable, Sendable {
+	let url: URL
+	private let directory: URL
+
+	private init(copying source: URL) throws {
+		let manager = FileManager.default
+		directory = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+		url = directory.appendingPathComponent(source.lastPathComponent)
+		try manager.createDirectory(at: directory, withIntermediateDirectories: false)
+		do {
+			try manager.copyItem(at: source, to: url)
+		} catch {
+			try? manager.removeItem(at: directory)
+			throw error
+		}
+	}
+
+	static var transferRepresentation: some TransferRepresentation {
+		FileRepresentation(importedContentType: .movie) { received in
+			try ImportedMovie(copying: received.file)
+		}
+	}
+
+	deinit { try? FileManager.default.removeItem(at: directory) }
+}
 
 @MainActor
 final class CuttingBoardSession: ObservableObject {
@@ -18,6 +47,7 @@ final class CuttingBoardSession: ObservableObject {
 	let hasAudio: Bool
 	private let source: AVURLAsset
 	private let scopedURL: URL?
+	private let importedMovie: ImportedMovie?
 	private let tracks: [(AVAssetTrack, CMTimeRange)]
 	private let transform: CGAffineTransform
 	private let sourceFrames: [CMTime]
@@ -50,7 +80,7 @@ final class CuttingBoardSession: ObservableObject {
 		return CMTimeRange(start: start, end: end)
 	}
 
-	static func open(_ url: URL) async throws -> CuttingBoardSession {
+	static func open(_ url: URL, importedMovie: ImportedMovie? = nil) async throws -> CuttingBoardSession {
 		let scoped = url.startAccessingSecurityScopedResource()
 		do {
 			let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
@@ -66,7 +96,7 @@ final class CuttingBoardSession: ObservableObject {
 			let transform = try await video?.load(.preferredTransform) ?? .identity
 			let frames = try await MediaTimelineReader.shared.frameTimes(asset: asset, track: video)
 			try Task.checkCancellation()
-			return CuttingBoardSession(asset: asset, scopedURL: scoped ? url : nil, duration: duration,
+			return CuttingBoardSession(asset: asset, importedMovie: importedMovie, scopedURL: scoped ? url : nil, duration: duration,
 				tracks: tracks, transform: transform, frames: frames, hasVideo: video != nil, hasAudio: audio != nil)
 		} catch {
 			if scoped { url.stopAccessingSecurityScopedResource() }
@@ -74,11 +104,12 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	private init(asset: AVURLAsset, scopedURL: URL?, duration: CMTime, tracks: [(AVAssetTrack, CMTimeRange)],
+	private init(asset: AVURLAsset, importedMovie: ImportedMovie?, scopedURL: URL?, duration: CMTime, tracks: [(AVAssetTrack, CMTimeRange)],
 		transform: CGAffineTransform, frames: [CMTime], hasVideo: Bool, hasAudio: Bool) {
 		source = asset
 		editAsset = asset
 		self.scopedURL = scopedURL
+		self.importedMovie = importedMovie
 		title = asset.url.lastPathComponent
 		self.tracks = tracks
 		self.transform = transform
