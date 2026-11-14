@@ -24,9 +24,11 @@ struct CuttingBoardTouchSurface: UIViewRepresentable {
 	@AppStorage("directTouchScrubbing", store: EditorPreferences.shared) private var scrubbing = DirectTouchScrubbing.absolute
 	let session: CuttingBoardSession
 	let onClose: (() -> Void)?
+	var projectActions: BoardProjectActions?
 
-	func makeUIView(context: Context) -> TimelineSurface { TimelineSurface(session, onClose: onClose) }
+	func makeUIView(context: Context) -> TimelineSurface { TimelineSurface(session, onClose: onClose, projectActions: projectActions) }
 	func updateUIView(_ view: TimelineSurface, context: Context) {
+		view.projectActions = projectActions
 		view.controlColor = color
 		view.scrubbing = scrubbing
 		view.updatePosition()
@@ -45,7 +47,10 @@ final class TimelineSurface: UIView {
 	private var scrubGeneration: Int?
 	private var previousSize = CGSize.zero
 
-	init(_ session: CuttingBoardSession, onClose: (() -> Void)?) {
+	var projectActions: BoardProjectActions?
+
+	init(_ session: CuttingBoardSession, onClose: (() -> Void)?, projectActions: BoardProjectActions? = nil) {
+		self.projectActions = projectActions
 		self.onClose = onClose
 		self.session = session
 		super.init(frame: .zero)
@@ -85,7 +90,7 @@ final class TimelineSurface: UIView {
 		addGestureRecognizer(hold)
 		for (count, directions) in [(1, [UISwipeGestureRecognizer.Direction.left, .right, .up, .down]),
 			(2, [.left, .right, .down]),
-			(3, [.left, .right, .down, .up]), (4, [.left, .right])] {
+			(3, [.left, .right, .down, .up]), (4, projectActions == nil ? [.left, .right] : [.left, .right, .down, .up])] {
 			for direction in directions {
 				let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swipe(_:)))
 				swipe.numberOfTouchesRequired = count
@@ -187,7 +192,13 @@ final class TimelineSurface: UIView {
 			if gesture.direction == .down { session.undo() }
 			else if gesture.direction == .up { session.redo() }
 			else { session.navigate(right, spoken: true) }
-		case 4: session.trim(head: right, spoken: true)
+		case 4:
+			switch gesture.direction {
+			case .left, .right: session.trim(head: right, spoken: true)
+			case .down: projectActions?.append()
+			case .up where projectActions != nil: session.stop(); session.choosingPlacement = true
+			default: break
+			}
 		default: break
 		}
 	}

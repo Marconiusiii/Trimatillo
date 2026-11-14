@@ -87,10 +87,27 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Arrange clips", numbered: true, [
 				"Expand Project Media. Choose Import Clip, then Photo Library or Files, and select the original.",
 				"Choose the source name and Open Cutting Board. Trim the clip or cut a marked range.",
-				"Choose Append to add the clip at the end of its track. Place at Playhead starts it at the current project time. Video goes on the Video track with its sound. Audio-only clips go on the Audio track.",
+				"Choose Append to add the marked portion after the last clip on the selected compatible track. With fewer than two markers, Append uses the entire current edit. Keep the Cutting Board open to append another passage.",
 				"Choose a timeline clip to jump to its start or end, remove it, or reopen its Cutting Board. Choose Save Changes to update that placement.",
 				"Choose Play to hear the tracks together and preview the picture. Choose Playhead to enter a position, or use the step buttons to move one project frame. Space plays or pauses, and the arrow keys step.",
-				"Use Mark In and Mark Out or the I and O keys to mark positions. Repeat at the same time to clear a marker. Use the Undo menu to undo or redo a project change."
+				"Use Mark In and Mark Out or the I and O keys to mark positions. Use the same marker button at that time to clear it. Use the Undo menu to undo or redo a project change."
+			]), HelpSection("Add at Playhead", numbered: true, [
+				"Set the project playhead to the destination time before opening the Cutting Board. Mark the source passage and choose Add at Playhead.",
+				"Choose New Track and enter a name, or choose an existing destination track for Overwrite or Split.",
+				"Overwrite replaces the covered time. The original resumes after the added clip. Split inserts the selection and moves later material on that track forward.",
+				"For a video cutaway, choose New Track. Turn off Include Clip Audio to keep the underlying sound. Choose Add."
+			]), HelpSection("Track actions and clip movement", numbered: true, [
+				"Use the track headings to navigate. Open a track menu to select the track or open Track Effects. Set Volume and choose Save.",
+				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it.",
+				"On the destination clip, choose Drop Before or Drop After. On an empty compatible track, choose Drop on Track. Cancel Drag abandons the move. Undo reverses a completed move.",
+				"You can also drag a clip onto the leading or trailing half of another clip to place it before or after that clip."
+			]), HelpSection("Project keyboard commands", [
+				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
+				"On the project timeline, Space or K plays or pauses. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
+				"I and O mark In and Out. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
+				"Command-Option-Up and Command-Option-Down select a track. C opens its clip at or after the playhead. Return opens the focused clip. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",
+				"S marks or unmarks a clip. With a clip focused, Space picks it up. Shift-S adds another clip to the drag. Use Left or Right Arrow to choose a destination and press Space to drop. Escape cancels. Command-Option-V drops after the focused clip.",
+				"Command-Option-Left and Command-Option-Right move a clip or marked group earlier or later. Delete removes the selected clips. Command-Z undoes and Command-Shift-Z redoes."
 			]), HelpSection("Reopen and reconnect", numbered: true, [
 				"Choose Close, then Open Project and the project name. Trimatillo saves each project change as you work.",
 				"If a source is unavailable, open Project Media, choose the source, and reconnect it from Files or Photos. Choose the original to restore access for every placement.",
@@ -172,7 +189,9 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe up to redo the last edit you undid. Repeat to reapply edits in order."
 			]), HelpSection("Four fingers", [
 				"Swipe right to trim the head of the clip to the playhead.",
-				"Swipe left to trim the tail of the clip to the playhead."
+				"Swipe left to trim the tail of the clip to the playhead.",
+				"Swipe down in a project Cutting Board to append the marked portion to the timeline.",
+				"Swipe up in a project Cutting Board to open Add at Playhead."
 			]), HelpSection("Direct Touch Scrubbing", [
 				"In Settings, choose Direct Touch Scrubbing under Editing.",
 				"Absolute is the default. The left edge is the start of the edited clip, the center is halfway through, and the right edge is the end. The playhead jumps to your finger as soon as the hold begins.",

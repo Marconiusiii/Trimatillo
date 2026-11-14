@@ -12,16 +12,23 @@ import Combine
 	private var status: NSKeyValueObservation?
 	private var audioActive = false
 	private var generation = 0
+	private var reverse: Task<Void, Never>?
+	private let engine = AVAudioEngine()
+	private let node = AVAudioPlayerNode()
+	private let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
+	private var speed: Double = 0
 	private var duration: CMTime = .zero
 
 	init() {
+		engine.attach(node)
+		engine.connect(node, to: engine.mainMixerNode, format: format)
 		observer = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] _ in
 			MainActor.assumeIsolated {
-				guard let self, self.playing else { return }
+				guard let self, self.playing, self.reverse == nil else { return }
 				let time = self.player.currentTime()
 				guard time.isNumeric else { return }
 				self.position = min(time, self.duration)
-				if time >= self.duration { self.pause() }
+				if (time >= self.duration || time <= .zero) && self.player.rate == 0 { self.pause() }
 			}
 		}
 	}
@@ -29,8 +36,14 @@ import Combine
 	deinit { if let observer { player.removeTimeObserver(observer) } }
 
 	func pause() {
+		let wasRewinding = reverse != nil
+		reverse?.cancel()
+		reverse = nil
+		node.stop()
+		engine.stop()
+		speed = 0
 		player.pause()
-		if playing, player.currentTime().isNumeric { position = min(duration, player.currentTime()) }
+		if !wasRewinding, playing, player.currentTime().isNumeric { position = min(duration, player.currentTime()) }
 		playing = false
 		if audioActive {
 			try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -42,14 +55,55 @@ import Combine
 		guard ready else { return }
 		if playing { pause(); return }
 		if position >= duration { seek(.zero) }
+		playForward(1)
+	}
+
+	private func playForward(_ rate: Double) {
 		do {
 			let session = AVAudioSession.sharedInstance()
 			try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
 			try session.setActive(true)
 			audioActive = true
-			player.play()
+			speed = rate
+			player.playImmediately(atRate: Float(rate))
 			playing = true
 		} catch { failure = "Could not start project audio. Check the audio output and choose Play again." }
+	}
+
+	func shuttle(forward: Bool) {
+		guard ready else { return }
+		let current = forward ? speed : -speed
+		guard let next = [1.0, 1.5, 2, 4, 8].first(where: { $0 > current }) else { return }
+		pause()
+		if forward {
+			if position >= duration { seek(.zero) }
+			playForward(next)
+		} else if let item = player.currentItem {
+			if position <= .zero { seek(duration) }
+			let start = position
+			do {
+				let audio = AVAudioSession.sharedInstance()
+				try audio.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+				try audio.setActive(true)
+				audioActive = true
+			} catch { failure = "Could not rewind. Check the audio output and try again."; return }
+			playing = true
+			speed = -next
+			reverse = Task {
+				do {
+					let hasAudio = try await !item.asset.loadTracks(withMediaType: .audio).isEmpty
+					try await ReverseAudioPlayback.run(from: start, speed: next, asset: item.asset, mix: item.audioMix,
+						hasAudio: hasAudio, engine: engine, node: node, format: format) { time in
+						position = time
+						player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
+					}
+					try Task.checkCancellation()
+					seek(.zero)
+				} catch {
+					if !Task.isCancelled { pause(); failure = "Could not rewind the project. Check the audio output and try again." }
+				}
+			}
+		}
 	}
 
 	func seek(_ time: CMTime) {
@@ -71,11 +125,11 @@ import Combine
 		guard duration > .zero else { return }
 		let composition = AVMutableComposition()
 		var sources: [UUID: ProjectMediaAccess] = [:]
-		var instructions: [AVMutableVideoCompositionInstruction] = []
-		var videoEnd = CMTime.zero
+		var layers: [(CMTimeRange, AVMutableVideoCompositionLayerInstruction)] = []
+		var levels: [AVMutableAudioMixInputParameters] = []
 		var currentName = ""
 		do {
-			for track in ProjectTrack.allCases {
+			for track in project.tracks {
 				var outputs: [AVMediaType: AVMutableCompositionTrack] = [:]
 				for clip in project.clips(on: track) {
 					try Task.checkCancellation()
@@ -89,11 +143,19 @@ import Combine
 					}
 					guard try await access.asset.load(.duration) >= (clip.ranges.map { $0.range.end }.max() ?? .zero) else { throw CocoaError(.fileReadCorruptFile) }
 					for type in [AVMediaType.video, .audio] {
+						if type == .audio && clip.omitAudio == true { continue }
 						guard let input = try await access.asset.loadTracks(withMediaType: type).first else {
 							if type == .video && source.picture != nil || type == .audio && source.hasAudio { throw CocoaError(.fileReadCorruptFile) }
 							continue
 						}
-						if outputs[type] == nil { outputs[type] = composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid) }
+						if outputs[type] == nil {
+							outputs[type] = composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid)
+							if type == .audio, let output = outputs[type] {
+								let parameters = AVMutableAudioMixInputParameters(track: output)
+								parameters.setVolume(project.trackVolumes?[track.id] ?? 1, at: .zero)
+								levels.append(parameters)
+							}
+						}
 						guard let output = outputs[type] else { throw CocoaError(.featureUnsupported) }
 						let available = try await input.load(.timeRange)
 						var cursor = clip.start.time
@@ -105,9 +167,6 @@ import Combine
 							cursor = cursor + range.duration
 						}
 						if type == .video, let picture = project.picture {
-							if clip.start.time > videoEnd {
-								instructions.append(Self.background(from: videoEnd, to: clip.start.time))
-							}
 							let size = try await input.load(.naturalSize)
 							let transform = try await input.load(.preferredTransform)
 							let rect = CGRect(origin: .zero, size: size).applying(transform)
@@ -117,10 +176,7 @@ import Combine
 							let layer = AVMutableVideoCompositionLayerInstruction(assetTrack: output)
 							layer.setTransform(transform.concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
 								.concatenating(CGAffineTransform(scaleX: scale, y: scale)).concatenating(offset), at: clip.start.time)
-							let instruction = Self.background(from: clip.start.time, to: clip.end)
-							instruction.layerInstructions = [layer]
-							instructions.append(instruction)
-							videoEnd = clip.end
+							layers.append((CMTimeRange(start: clip.start.time, end: clip.end), layer))
 						}
 					}
 				}
@@ -129,8 +185,21 @@ import Combine
 			guard generation == request else { return }
 			if composition.duration < duration { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: duration)) }
 			let item = AVPlayerItem(asset: composition)
-			if !instructions.isEmpty, let picture = project.picture {
-				if videoEnd < duration { instructions.append(Self.background(from: videoEnd, to: duration)) }
+			if !levels.isEmpty {
+				let mix = AVMutableAudioMix()
+				mix.inputParameters = levels
+				item.audioMix = mix
+			}
+			if !layers.isEmpty, let picture = project.picture {
+				let boundaries = ([CMTime.zero, duration] + layers.flatMap { [$0.0.start, $0.0.end] }).sorted()
+				var instructions: [AVMutableVideoCompositionInstruction] = []
+				for (start, end) in zip(boundaries, boundaries.dropFirst()) where start < end {
+					let instruction = Self.background(from: start, to: end)
+					if let visible = layers.first(where: { $0.0.containsTime(start) }) {
+						instruction.layerInstructions = [visible.1]
+					}
+					instructions.append(instruction)
+				}
 				let video = AVMutableVideoComposition()
 				video.renderSize = CGSize(width: picture.width, height: picture.height)
 				video.frameDuration = picture.frame.time

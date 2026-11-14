@@ -4,19 +4,21 @@ import UIKit
 
 struct CuttingBoardKeyboard: UIViewControllerRepresentable {
 	let session: CuttingBoardSession
-	var projectActions: [BoardProjectAction] = []
+	var projectActions: BoardProjectActions? = nil
 	let close: () -> Void
 
 	func makeUIViewController(context: Context) -> BoardController {
 		BoardController(session, projectActions: projectActions, close: close)
 	}
 
-	func updateUIViewController(_ controller: BoardController, context: Context) {}
+	func updateUIViewController(_ controller: BoardController, context: Context) {
+		controller.rootView = PrimaryCuttingBoard(session: session, projectActions: projectActions, close: close)
+	}
 }
 
 final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	let session: CuttingBoardSession
-	init(_ session: CuttingBoardSession, projectActions: [BoardProjectAction] = [], close: @escaping () -> Void) {
+	init(_ session: CuttingBoardSession, projectActions: BoardProjectActions? = nil, close: @escaping () -> Void) {
 		self.session = session
 		super.init(rootView: PrimaryCuttingBoard(session: session, projectActions: projectActions, close: close))
 	}
@@ -49,24 +51,12 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 
 	override var keyCommands: [UIKeyCommand]? {
 		guard presentedViewController == nil else { return [] }
-		let bindings: [(String, UIKeyModifierFlags, String)] = [
-			(" ", [], "Play or Pause"), ("k", [], "Play or Pause"),
-			("j", [], "Rewind"), ("l", [], "Play Forward"),
-			("i", [], "Mark In"), ("o", [], "Mark Out"),
-			("i", .alternate, "Clear In"), ("o", .alternate, "Clear Out"),
-			(UIKeyCommand.inputLeftArrow, [], "Step Back"),
-			(UIKeyCommand.inputRightArrow, [], "Step Forward"),
-			(UIKeyCommand.inputLeftArrow, .shift, "Back Ten Steps"),
-			(UIKeyCommand.inputRightArrow, .shift, "Forward Ten Steps"),
-			(";", [], "Previous Edit Point"), ("'", [], "Next Edit Point"),
-			(UIKeyCommand.inputLeftArrow, .command, "Previous Edit Point"),
-			(UIKeyCommand.inputRightArrow, .command, "Next Edit Point"),
-			(UIKeyCommand.inputHome, [], "Start"), (UIKeyCommand.inputEnd, [], "End"),
-			(UIKeyCommand.inputUpArrow, .command, "Start"), (UIKeyCommand.inputDownArrow, .command, "End"),
-			("[", .command, "Trim Head"), ("]", .command, "Trim Tail"),
-			("\u{8}", [], "Delete Marked Range"), (UIKeyCommand.inputDelete, [], "Delete Marked Range"),
-			("z", .command, "Undo"), ("t", [], "Current Time"), ("\r", [], "Adjust Edit Point")
-		]
+		var bindings = EditorKeyMap.bindings
+		if let actions = rootView.projectActions {
+			bindings += [("e", [], "Append"), ("w", [], "Split at Playhead"), ("d", [], "Overwrite at Playhead"),
+				("w", .alternate, "Add at Playhead")]
+			if actions.update != nil { bindings.append(("u", .command, "Save Changes")) }
+		}
 		return bindings.map { input, modifiers, title in
 			let command = UIKeyCommand(input: input, modifierFlags: modifiers, action: #selector(performCommand(_:)))
 			command.discoverabilityTitle = title
@@ -93,7 +83,13 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 		case UIKeyCommand.inputEnd, UIKeyCommand.inputDownArrow: session.seek(session.duration)
 		case "[", "]": session.trim(head: command.input == "[")
 		case "\u{8}", UIKeyCommand.inputDelete: session.delete(session.selection)
-		case "z": session.undo()
+		case "z": if flags.contains(.shift) { session.redo() } else { session.undo() }
+		case "e": rootView.projectActions?.append()
+		case "w":
+			if flags.contains(.alternate) { session.stop(); session.choosingPlacement = true }
+			else { rootView.projectActions?.split() }
+		case "d": rootView.projectActions?.overwrite()
+		case "u": rootView.projectActions?.update?()
 		case "t":
 			let format = EditorPreferences.shared.string(forKey: "timecodeFormat").flatMap(TimecodeFormat.init(rawValue:)) ?? .milliseconds
 			UIAccessibility.post(notification: .announcement, argument: session.timecode(session.position, format: format))
@@ -101,4 +97,25 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 		default: break
 		}
 	}
+}
+
+enum EditorKeyMap {
+	static let bindings: [(String, UIKeyModifierFlags, String)] = [
+		(" ", [], "Play or Pause"), ("k", [], "Play or Pause"),
+		("j", [], "Rewind"), ("l", [], "Play Forward"),
+		("i", [], "Mark In"), ("o", [], "Mark Out"),
+		("i", .alternate, "Clear In"), ("o", .alternate, "Clear Out"),
+		(UIKeyCommand.inputLeftArrow, [], "Step Back"),
+		(UIKeyCommand.inputRightArrow, [], "Step Forward"),
+		(UIKeyCommand.inputLeftArrow, .shift, "Back Ten Steps"),
+		(UIKeyCommand.inputRightArrow, .shift, "Forward Ten Steps"),
+		(";", [], "Previous Edit Point"), ("'", [], "Next Edit Point"),
+		(UIKeyCommand.inputLeftArrow, .command, "Previous Edit Point"),
+		(UIKeyCommand.inputRightArrow, .command, "Next Edit Point"),
+		(UIKeyCommand.inputHome, [], "Start"), (UIKeyCommand.inputEnd, [], "End"),
+		(UIKeyCommand.inputUpArrow, .command, "Start"), (UIKeyCommand.inputDownArrow, .command, "End"),
+		("[", .command, "Trim Head"), ("]", .command, "Trim Tail"),
+		("\u{8}", [], "Delete Marked Range"), (UIKeyCommand.inputDelete, [], "Delete Marked Range"),
+		("z", .command, "Undo"), ("z", [.command, .shift], "Redo"), ("t", [], "Current Time"), ("\r", [], "Adjust Edit Point")
+	]
 }

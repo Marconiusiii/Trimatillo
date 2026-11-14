@@ -22,13 +22,16 @@ extension CuttingBoardSession {
 	}
 }
 
-struct BoardProjectAction {
-	let title: String
-	let perform: () -> Void
+struct BoardProjectActions {
+	let append: () -> Void
+	let split: () -> Void
+	let overwrite: () -> Void
+	let update: (() -> Void)?
+	let placementSheet: () -> AnyView
 }
 
 struct CuttingBoardView: View {
-	var projectActions: [BoardProjectAction] = []
+	var projectActions: BoardProjectActions?
 	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@ObservedObject var session: CuttingBoardSession
@@ -38,6 +41,7 @@ struct CuttingBoardView: View {
 	@AccessibilityFocusState(for: .voiceOver) private var surfaceFocused: Bool
 	@State private var exporting = false
 	@AccessibilityFocusState(for: .voiceOver) private var exportFocused: Bool
+	@AccessibilityFocusState private var placementFocused: Bool
 	@State private var sheetFromMenu = false
 
 	var body: some View {
@@ -53,7 +57,7 @@ struct CuttingBoardView: View {
 							.frame(maxWidth: .infinity, minHeight: 48)
 							.accessibilityAddTraits(.isHeader)
 					}
-					CuttingBoardTouchSurface(session: session, onClose: closeDirectTouchEditor)
+					CuttingBoardTouchSurface(session: session, onClose: closeDirectTouchEditor, projectActions: projectActions)
 						.accessibilityFocused($surfaceFocused)
 				}
 				.accessibilityAction(.magicTap) { session.toggle() }
@@ -64,10 +68,15 @@ struct CuttingBoardView: View {
 						ClipExportView(session: session)
 					}
 					.fullScreenCover(isPresented: $showingDirectTouchEditor, onDismiss: { launcherFocused = true }) {
-						CuttingBoardView(session: session, closeDirectTouchEditor: { showingDirectTouchEditor = false })
+						CuttingBoardView(projectActions: projectActions, session: session, closeDirectTouchEditor: { showingDirectTouchEditor = false })
 					}
 			}
 		}
+		.sheet(isPresented: Binding(get: { !showingDirectTouchEditor && session.choosingPlacement }, set: {
+			if !showingDirectTouchEditor { session.choosingPlacement = $0 }
+		}), onDismiss: {
+			if closeDirectTouchEditor == nil { placementFocused = true } else { surfaceFocused = true }
+		}) { projectActions?.placementSheet() }
 		.background(EditorTheme.workspace)
 		.alert("Cutting Board", isPresented: Binding(get: { !showingDirectTouchEditor && session.message != nil && session.sheet == nil }, set: { if !$0 { session.message = nil } })) {
 			Button("OK") { session.message = nil }
@@ -177,16 +186,17 @@ struct CuttingBoardView: View {
 						if session.canRedo { Button("Redo") { session.redo() } }
 					}
 					.disabled(!session.canUndo && !session.canRedo)
-				if projectActions.isEmpty {
+				if let projectActions {
+					Button(action: projectActions.append) { cell("Append") }
+					Button { session.stop(); session.choosingPlacement = true } label: { cell("Add at Playhead") }
+						.accessibilityFocused($placementFocused)
+					if let update = projectActions.update { Button(action: update) { cell("Save Changes") } }
+				} else {
 					Button {
 						session.releaseAudio()
 						exporting = true
 					} label: { cell("Export") }
 					.accessibilityFocused($exportFocused)
-				} else {
-					ForEach(projectActions, id: \.title) { action in
-						Button(action: action.perform) { cell(action.title) }
-					}
 				}
 			}
 		}
@@ -529,7 +539,7 @@ struct ClipInfoView: View {
 
 struct PrimaryCuttingBoard: View {
 	let session: CuttingBoardSession
-	var projectActions: [BoardProjectAction] = []
+	var projectActions: BoardProjectActions?
 	let close: () -> Void
 	@State private var confirmClose = false
 	@State private var showingInfo = false

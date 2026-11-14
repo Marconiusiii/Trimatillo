@@ -90,6 +90,7 @@ final class CuttingBoardSession: ObservableObject {
 	@Published private(set) var rate = 0.0
 	var speedLabel: String { abs(rate).formatted() + "x" }
 	var shuttleLabel: String { (rate < 0 ? "Rewind " : "Forward ") + speedLabel }
+	@Published var choosingPlacement = false
 	@Published var sheet: BoardSheet?
 	@Published var message: String?
 	var duration: CMTime { state.timeline.duration }
@@ -521,47 +522,11 @@ final class CuttingBoardSession: ObservableObject {
 	}
 
 	private func playReverse(from start: CMTime, speed: Double) async throws {
-		let scale: CMTimeScale = 48000
-		let startFrame = CMTimeConvertScale(start, timescale: scale, method: .roundHalfAwayFromZero).value
-		var unread = startFrame
-		var scheduled: Int64 = 0
-		var played: Int64 = 0
-		let clock = ContinuousClock()
-		let began = clock.now
-		var remaining = startFrame
-		while remaining > 0 {
-			try Task.checkCancellation()
-			// Queue contiguous blocks ahead of the render clock. Only the last block can be partial.
-			if hasAudio, unread > 0, scheduled - played < 16000 {
-				let count = min(unread, Int64(8192 * speed))
-				let first = unread - count
-				let samples = try await FrameAudioSamples.read(asset: editAsset, mix: nil,
-					at: CMTime(value: first, timescale: scale), length: Double(count) / Double(scale))
-				try Task.checkCancellation()
-				guard let buffer = pcmBuffer(samples, reverseSpeed: speed) else { throw CocoaError(.fileReadCorruptFile) }
-				if !engine.isRunning { try engine.start() }
-				enqueue(buffer)
-				scheduled += Int64(buffer.frameLength)
-				unread = first
-				if !node.isPlaying && (scheduled >= 16000 || unread == 0) { node.play() }
-				continue
-			}
-			if hasAudio {
-				if let render = node.lastRenderTime, let time = node.playerTime(forNodeTime: render) {
-					played = max(0, min(scheduled, time.sampleTime))
-				}
-			} else {
-				let elapsed = began.duration(to: clock.now).components
-				played = elapsed.seconds * Int64(scale) + Int64(Double(elapsed.attoseconds) * 48_000e-18)
-			}
-			remaining = max(0, startFrame - Int64(Double(played) * speed))
-			if hasAudio && unread == 0 && played == scheduled { remaining = 0 }
-			let next = CMTime(value: remaining, timescale: scale)
-			if next != position {
-				state.position = next
-				if hasVideo { player.seek(to: next, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in }) }
-			}
-			try await Task.sleep(for: .milliseconds(16))
+		try await ReverseAudioPlayback.run(from: start, speed: speed, asset: editAsset, mix: nil,
+			hasAudio: hasAudio, engine: engine, node: node, format: audioFormat) { next in
+			guard next != self.position else { return }
+			self.state.position = next
+			if self.hasVideo { self.player.seek(to: next, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in }) }
 		}
 	}
 
@@ -590,7 +555,7 @@ final class CuttingBoardSession: ObservableObject {
 			try Task.checkCancellation()
 			guard !samples.isEmpty else { return }
 			try activateAudio()
-			guard let buffer = pcmBuffer(samples) else { return }
+			guard let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: audioFormat) else { return }
 			node.stop()
 			if !engine.isRunning { try engine.start() }
 			playBuffer(buffer)
@@ -599,32 +564,9 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	private func pcmBuffer(_ samples: [Float], reverseSpeed: Double? = nil) -> AVAudioPCMBuffer? {
-		let frames = samples.count / 2
-		let stride = reverseSpeed ?? 1
-		let length = Int(ceil(Double(frames) / stride))
-		guard length > 0, let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(length)),
-			let channels = buffer.floatChannelData else { return nil }
-		buffer.frameLength = buffer.frameCapacity
-		for i in 0..<length {
-			if reverseSpeed != nil {
-				let end = frames - Int(Double(i) * stride)
-				let first = max(0, frames - Int(Double(i + 1) * stride))
-				for channel in 0..<2 {
-					var sum: Float = 0
-					for frame in first..<end { sum += samples[frame * 2 + channel] }
-					channels[channel][i] = sum / Float(end - first)
-				}
-			} else {
-				channels[0][i] = samples[i * 2]
-				channels[1][i] = samples[i * 2 + 1]
-			}
-		}
-		return buffer
-	}
 
 	private func enqueue(_ buffer: AVAudioPCMBuffer) {
-		node.scheduleBuffer(buffer)
+		node.scheduleBuffer(buffer, completionHandler: nil)
 	}
 
 	private func playBuffer(_ buffer: AVAudioPCMBuffer) {
@@ -1004,5 +946,73 @@ extension CuttingBoardSession {
 			try? FileManager.default.removeItem(at: directory)
 			throw error
 		}
+	}
+}
+
+@MainActor enum ReverseAudioPlayback {
+	static func run(from start: CMTime, speed: Double, asset: AVAsset, mix: AVAudioMix?, hasAudio: Bool,
+		engine: AVAudioEngine, node: AVAudioPlayerNode, format: AVAudioFormat, update: (CMTime) -> Void) async throws {
+		let scale: CMTimeScale = 48000
+		let startFrame = CMTimeConvertScale(start, timescale: scale, method: .roundHalfAwayFromZero).value
+		var unread = startFrame
+		var scheduled: Int64 = 0
+		var played: Int64 = 0
+		let clock = ContinuousClock()
+		let began = clock.now
+		var remaining = startFrame
+		while remaining > 0 {
+			try Task.checkCancellation()
+			// Queue contiguous blocks ahead of the render clock. Only the last block can be partial.
+			if hasAudio, unread > 0, scheduled - played < 16000 {
+				let count = min(unread, Int64(8192 * speed))
+				let first = unread - count
+				let samples = try await FrameAudioSamples.read(asset: asset, mix: mix,
+					at: CMTime(value: first, timescale: scale), length: Double(count) / Double(scale))
+				try Task.checkCancellation()
+				guard let buffer = pcmBuffer(samples, format: format, reverseSpeed: speed) else { throw CocoaError(.fileReadCorruptFile) }
+				if !engine.isRunning { try engine.start() }
+				node.scheduleBuffer(buffer, completionHandler: nil)
+				scheduled += Int64(buffer.frameLength)
+				unread = first
+				if !node.isPlaying && (scheduled >= 16000 || unread == 0) { node.play() }
+				continue
+			}
+			if hasAudio {
+				if let render = node.lastRenderTime, let time = node.playerTime(forNodeTime: render) {
+					played = max(0, min(scheduled, time.sampleTime))
+				}
+			} else {
+				let elapsed = began.duration(to: clock.now).components
+				played = elapsed.seconds * Int64(scale) + Int64(Double(elapsed.attoseconds) * 48_000e-18)
+			}
+			remaining = max(0, startFrame - Int64(Double(played) * speed))
+			if hasAudio && unread == 0 && played == scheduled { remaining = 0 }
+			let next = CMTime(value: remaining, timescale: scale)
+			update(next)
+			try await Task.sleep(for: .milliseconds(16))
+		}
+	}
+	static func pcmBuffer(_ samples: [Float], format audioFormat: AVAudioFormat, reverseSpeed: Double? = nil) -> AVAudioPCMBuffer? {
+		let frames = samples.count / 2
+		let stride = reverseSpeed ?? 1
+		let length = Int(ceil(Double(frames) / stride))
+		guard length > 0, let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(length)),
+			let channels = buffer.floatChannelData else { return nil }
+		buffer.frameLength = buffer.frameCapacity
+		for i in 0..<length {
+			if reverseSpeed != nil {
+				let end = frames - Int(Double(i) * stride)
+				let first = max(0, frames - Int(Double(i + 1) * stride))
+				for channel in 0..<2 {
+					var sum: Float = 0
+					for frame in first..<end { sum += samples[frame * 2 + channel] }
+					channels[channel][i] = sum / Float(end - first)
+				}
+			} else {
+				channels[0][i] = samples[i * 2]
+				channels[1][i] = samples[i * 2 + 1]
+			}
+		}
+		return buffer
 	}
 }
