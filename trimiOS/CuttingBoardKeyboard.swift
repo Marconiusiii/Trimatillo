@@ -4,10 +4,11 @@ import UIKit
 
 struct CuttingBoardKeyboard: UIViewControllerRepresentable {
 	let session: CuttingBoardSession
+	var projectActions: [BoardProjectAction] = []
 	let close: () -> Void
 
 	func makeUIViewController(context: Context) -> BoardController {
-		BoardController(session, close: close)
+		BoardController(session, projectActions: projectActions, close: close)
 	}
 
 	func updateUIViewController(_ controller: BoardController, context: Context) {}
@@ -15,9 +16,9 @@ struct CuttingBoardKeyboard: UIViewControllerRepresentable {
 
 final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	let session: CuttingBoardSession
-	init(_ session: CuttingBoardSession, close: @escaping () -> Void) {
+	init(_ session: CuttingBoardSession, projectActions: [BoardProjectAction] = [], close: @escaping () -> Void) {
 		self.session = session
-		super.init(rootView: PrimaryCuttingBoard(session: session, close: close))
+		super.init(rootView: PrimaryCuttingBoard(session: session, projectActions: projectActions, close: close))
 	}
 
 	@available(*, unavailable)

@@ -59,9 +59,11 @@ final class CuttingBoardSession: ObservableObject {
 	let title: String
 	let hasVideo: Bool
 	let hasAudio: Bool
-	private let source: AVURLAsset
+	private let source: AVAsset
+	private var projectAccess: AnyObject?
+	private var openingTimeline: ClipEditTimeline?
 	private let scopedURL: URL?
-	private let importedMovie: ImportedMovie
+	private let importedMovie: ImportedMovie?
 	private let originalFile: URL?
 	private let photoIdentifier: String?
 	private var originalModification: Date?
@@ -93,7 +95,7 @@ final class CuttingBoardSession: ObservableObject {
 	var duration: CMTime { state.timeline.duration }
 	var canUndo: Bool { historyIndex > 0 }
 	var canRedo: Bool { historyIndex < history.count }
-	var hasTimelineEdits: Bool { state.timeline != ClipEditTimeline(sourceDuration: originalDuration) }
+	var hasTimelineEdits: Bool { state.timeline != (openingTimeline ?? ClipEditTimeline(sourceDuration: originalDuration)) }
 	var currentJoin: ClipEditTimeline.EditPoint? {
 		state.timeline.editPoints.first { CMTimeCompare($0.time, position) == 0 }
 	}
@@ -110,28 +112,47 @@ final class CuttingBoardSession: ObservableObject {
 			let copy: ImportedMovie
 			if let importedMovie { copy = importedMovie } else { copy = try await ImportedMovie.snapshot(of: url) }
 			let asset = AVURLAsset(url: copy.url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
-			let duration = try await asset.load(.duration)
-			guard duration.isNumeric, duration > .zero else { throw CocoaError(.fileReadCorruptFile) }
-			let video = try await asset.loadTracks(withMediaType: .video).first
-			let audio = try await asset.loadTracks(withMediaType: .audio).first
-			var tracks: [(AVAssetTrack, CMTimeRange)] = []
-			for track in [video, audio].compactMap({ $0 }) {
-				tracks.append((track, try await track.load(.timeRange)))
-			}
-			guard !tracks.isEmpty else { throw CocoaError(.fileReadUnsupportedScheme) }
-			let transform = try await video?.load(.preferredTransform) ?? .identity
-			let frames = try await MediaTimelineReader.shared.frameTimes(asset: asset, track: video)
-			try Task.checkCancellation()
-			return CuttingBoardSession(asset: asset, importedMovie: copy, originalFile: importedMovie == nil ? url : nil,
-				photoIdentifier: photoIdentifier, modification: importedMovie == nil ? modification : Date(), scopedURL: scoped ? url : nil, duration: duration,
-				tracks: tracks, transform: transform, frames: frames, hasVideo: video != nil, hasAudio: audio != nil)
+			return try await load(asset: asset, title: copy.url.lastPathComponent, importedMovie: copy,
+				originalFile: importedMovie == nil ? url : nil, photoIdentifier: photoIdentifier,
+				modification: importedMovie == nil ? modification : Date(), scopedURL: scoped ? url : nil)
 		} catch {
 			if scoped { url.stopAccessingSecurityScopedResource() }
 			throw error
 		}
 	}
 
-	private init(asset: AVURLAsset, importedMovie: ImportedMovie, originalFile: URL?, photoIdentifier: String?, modification: Date?, scopedURL: URL?, duration: CMTime, tracks: [(AVAssetTrack, CMTimeRange)],
+	static func openReferenced(asset: AVAsset, title: String, access: AnyObject, ranges: [CMTimeRange]?) async throws -> CuttingBoardSession {
+		let session = try await load(asset: asset, title: title)
+		session.projectAccess = access
+		if let ranges {
+			guard ranges.allSatisfy({ $0.start >= .zero && $0.end <= session.originalDuration }) else { throw CocoaError(.fileReadCorruptFile) }
+			let timeline = ClipEditTimeline(sourceRanges: ranges)
+			try session.apply(Snapshot(timeline: timeline), action: nil)
+			session.openingTimeline = timeline
+		}
+		return session
+	}
+
+	private static func load(asset: AVAsset, title: String, importedMovie: ImportedMovie? = nil, originalFile: URL? = nil,
+		photoIdentifier: String? = nil, modification: Date? = nil, scopedURL: URL? = nil) async throws -> CuttingBoardSession {
+		let duration = try await asset.load(.duration)
+		guard duration.isNumeric, duration > .zero else { throw CocoaError(.fileReadCorruptFile) }
+		let video = try await asset.loadTracks(withMediaType: .video).first
+		let audio = try await asset.loadTracks(withMediaType: .audio).first
+		var tracks: [(AVAssetTrack, CMTimeRange)] = []
+		for track in [video, audio].compactMap({ $0 }) {
+			tracks.append((track, try await track.load(.timeRange)))
+		}
+		guard !tracks.isEmpty else { throw CocoaError(.fileReadUnsupportedScheme) }
+		let transform = try await video?.load(.preferredTransform) ?? .identity
+		let frames = try await MediaTimelineReader.shared.frameTimes(asset: asset, track: video)
+		try Task.checkCancellation()
+		return CuttingBoardSession(asset: asset, title: title, importedMovie: importedMovie, originalFile: originalFile,
+			photoIdentifier: photoIdentifier, modification: modification, scopedURL: scopedURL, duration: duration,
+			tracks: tracks, transform: transform, frames: frames, hasVideo: video != nil, hasAudio: audio != nil)
+	}
+
+	private init(asset: AVAsset, title: String, importedMovie: ImportedMovie?, originalFile: URL?, photoIdentifier: String?, modification: Date?, scopedURL: URL?, duration: CMTime, tracks: [(AVAssetTrack, CMTimeRange)],
 		transform: CGAffineTransform, frames: [CMTime], hasVideo: Bool, hasAudio: Bool) {
 		source = asset
 		editAsset = asset
@@ -140,7 +161,7 @@ final class CuttingBoardSession: ObservableObject {
 		self.originalFile = originalFile
 		self.photoIdentifier = photoIdentifier
 		originalModification = modification
-		title = asset.url.lastPathComponent
+		self.title = title
 		self.tracks = tracks
 		self.transform = transform
 		self.hasVideo = hasVideo
@@ -787,7 +808,7 @@ struct ClipInfoSection {
 
 extension CuttingBoardSession {
 	func clipInfo(format: TimecodeFormat = .milliseconds) async -> [ClipInfoSection] {
-		let properties = try? source.url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+		let properties = try? (source as? AVURLAsset)?.url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
 		var file = ClipInfoSection(title: "File", rows: [("Filename", title)])
 		if let type = properties?.contentType?.localizedDescription { file.rows.append(("File type", type)) }
 		if let bytes = properties?.fileSize {
@@ -973,7 +994,7 @@ extension CuttingBoardSession {
 		guard exporter.supportedFileTypes.contains(type) else { throw CocoaError(.featureUnsupported) }
 		let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
 		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-		let name = source.url.deletingPathExtension().lastPathComponent + " Edited"
+		let name = (title as NSString).deletingPathExtension + " Edited"
 		let file = directory.appendingPathComponent(name).appendingPathExtension(type == .mp4 ? "mp4" : type == .mov ? "mov" : "m4a")
 		do {
 			try await exporter.export(to: file, as: type)

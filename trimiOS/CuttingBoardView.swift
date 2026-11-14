@@ -22,7 +22,13 @@ extension CuttingBoardSession {
 	}
 }
 
+struct BoardProjectAction {
+	let title: String
+	let perform: () -> Void
+}
+
 struct CuttingBoardView: View {
+	var projectActions: [BoardProjectAction] = []
 	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@ObservedObject var session: CuttingBoardSession
@@ -171,11 +177,17 @@ struct CuttingBoardView: View {
 						if session.canRedo { Button("Redo") { session.redo() } }
 					}
 					.disabled(!session.canUndo && !session.canRedo)
-				Button {
-					session.releaseAudio()
-					exporting = true
-				} label: { cell("Export") }
-				.accessibilityFocused($exportFocused)
+				if projectActions.isEmpty {
+					Button {
+						session.releaseAudio()
+						exporting = true
+					} label: { cell("Export") }
+					.accessibilityFocused($exportFocused)
+				} else {
+					ForEach(projectActions, id: \.title) { action in
+						Button(action: action.perform) { cell(action.title) }
+					}
+				}
 			}
 		}
 		.buttonStyle(.plain)
@@ -517,6 +529,7 @@ struct ClipInfoView: View {
 
 struct PrimaryCuttingBoard: View {
 	let session: CuttingBoardSession
+	var projectActions: [BoardProjectAction] = []
 	let close: () -> Void
 	@State private var confirmClose = false
 	@State private var showingInfo = false
@@ -542,7 +555,7 @@ struct PrimaryCuttingBoard: View {
 				}
 				.sheet(isPresented: $showingInfo) { ClipInfoView(session: session) }
 			}
-			CuttingBoardView(session: session)
+			CuttingBoardView(projectActions: projectActions, session: session)
 		}
 		.editorAppearance()
 		.onDisappear { session.releaseAudio() }

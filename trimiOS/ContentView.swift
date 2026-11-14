@@ -7,6 +7,10 @@ import AVFoundation
 struct ContentView: View {
 	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	@Environment(\.scenePhase) private var phase
+	@State private var project: EditingProject?
+	@State private var launcher: ProjectLauncher?
+	@State private var projectTrigger = ProjectLauncher.create
+	@AccessibilityFocusState private var projectFocus: ProjectLauncher?
 	@State private var session: CuttingBoardSession?
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
@@ -23,7 +27,13 @@ struct ContentView: View {
 
 	var body: some View {
 		Group {
-			if let session {
+			if let project {
+				ProjectEditorView(project: project) {
+					self.project = nil
+					projectFocus = projectTrigger
+					handleIncomingFile()
+				}.id(project.id)
+			} else if let session {
 				CuttingBoardKeyboard(session: session, close: close).id(ObjectIdentifier(session))
 			} else {
 				WelcomeView(loading: loading) {
@@ -43,6 +53,11 @@ struct ContentView: View {
 								if (error as NSError).code != NSUserCancelledError { failure = "Could not read the file. Select it again in Files." }
 							}
 						}
+					ForEach([ProjectLauncher.create, .open], id: \.self) { mode in
+						Button(mode.rawValue) { projectTrigger = mode; launcher = mode }
+							.accessibilityFocused($projectFocus, equals: mode)
+							.disabled(loading)
+					}
 					Button("Help") { showingHelp = true }
 						.accessibilityFocused($helpFocused)
 						.sheet(isPresented: $showingHelp, onDismiss: { helpFocused = true }) { HelpView() }
@@ -51,6 +66,9 @@ struct ContentView: View {
 						.sheet(isPresented: $showingSettings, onDismiss: { settingsFocused = true }) { SettingsView(support: support) }
 				}
 			}
+		}
+		.sheet(item: $launcher, onDismiss: { if project == nil { projectFocus = projectTrigger }; handleIncomingFile() }) { mode in
+			ProjectLauncherView(mode: mode) { project = $0 }
 		}
 		.editorAppearance()
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -98,7 +116,7 @@ struct ContentView: View {
 	}
 
 	private func handleIncomingFile() {
-		guard !incomingFiles.isEmpty, !loading, failure == nil, !choosingIncoming else { return }
+		guard project == nil, launcher == nil, !incomingFiles.isEmpty, !loading, failure == nil, !choosingIncoming else { return }
 		if session != nil {
 			choosingIncoming = true
 		} else {

@@ -92,7 +92,7 @@
         "INFOPLIST_KEY_CFBundleDisplayName": "Trimatillo",
         "INFOPLIST_KEY_LSApplicationCategoryType": "public.app-category.video",
         "INFOPLIST_KEY_NSPhotoLibraryAddUsageDescription": "Save an edited video as a new clip in Photos.",
-        "INFOPLIST_KEY_NSPhotoLibraryUsageDescription": "Save edits to the video you selected in Photos.",
+        "INFOPLIST_KEY_NSPhotoLibraryUsageDescription": "Open selected project videos from Photos and save clip edits to Photos.",
         "INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]": "YES",
         "INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]": "YES",
         "INFOPLIST_KEY_UIApplicationSupportsIndirectInputEvents[sdk=iphoneos*]": "YES",

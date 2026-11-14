@@ -61,9 +61,11 @@ private enum HelpTopic: String, CaseIterable {
 	case touch = "Direct Touch Editing"
 	case keys = "Keyboard commands"
 	case save = "Save and export"
+	case projects = "Multitrack projects"
 
 	var introduction: String {
 		switch self {
+		case .projects: "Arrange video and audio clips on a shared timeline. Each placement has its own edits."
 		case .first: "Trim the beginning and end of a clip, then cut a passage from the middle and save a copy."
 		case .open: "Open an audio or video file in Trimatillo, or send a video from Photos to the Cutting Board."
 		case .playback: "The playhead is your current position in the clip. Move it to find the moment you want to edit."
@@ -77,6 +79,23 @@ private enum HelpTopic: String, CaseIterable {
 
 	var sections: [HelpSection] {
 		switch self {
+		case .projects:
+			[HelpSection("Create a project", numbered: true, [
+				"Choose Create Project and enter a name.",
+				"Leave Custom Resolution off to use the first video placed on the timeline. Turn it on to set the width, height, and frame rate.",
+				"Turn on Use Target Duration to set a length to aim for. Clips can extend beyond it. Choose Create."
+			]), HelpSection("Arrange clips", numbered: true, [
+				"Expand Project Media. Choose Import Clip, then Photo Library or Files, and select the original.",
+				"Choose the source name and Open Cutting Board. Trim the clip or cut a marked range.",
+				"Choose Append to add the clip at the end of its track. Place at Playhead starts it at the current project time. Video goes on the Video track with its sound. Audio-only clips go on the Audio track.",
+				"Choose a timeline clip to jump to its start or end, remove it, or reopen its Cutting Board. Choose Save Changes to update that placement.",
+				"Choose Play to hear the tracks together and preview the picture. Choose Playhead to enter a position, or use the step buttons to move one project frame. Space plays or pauses, and the arrow keys step.",
+				"Use Mark In and Mark Out or the I and O keys to mark positions. Repeat at the same time to clear a marker. Use the Undo menu to undo or redo a project change."
+			]), HelpSection("Reopen and reconnect", numbered: true, [
+				"Choose Close, then Open Project and the project name. Trimatillo saves each project change as you work.",
+				"If a source is unavailable, open Project Media, choose the source, and reconnect it from Files or Photos. Choose the original to restore access for every placement.",
+				"When moving to a new device, restore Trimatillo's project data from your device backup and make the original media available through Files or Photos."
+			])]
 		case .first:
 			[HelpSection("Open a clip and trim its ends", numbered: true, [
 				"Choose Trim a Clip. Choose Photo Library for a video or Files for an audio or video clip. Select your clip.",
