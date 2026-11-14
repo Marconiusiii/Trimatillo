@@ -4,11 +4,10 @@ import UIKit
 
 struct CuttingBoardTouchSurface: UIViewRepresentable {
 	let session: CuttingBoardSession
-	let enabled: Bool
+	let onClose: (() -> Void)?
 
-	func makeUIView(context: Context) -> TimelineSurface { TimelineSurface(session) }
+	func makeUIView(context: Context) -> TimelineSurface { TimelineSurface(session, onClose: onClose) }
 	func updateUIView(_ view: TimelineSurface, context: Context) {
-		view.setEditing(enabled)
 		view.updatePosition()
 	}
 }
@@ -19,18 +18,18 @@ final class TimelineSurface: UIView {
 	private let selection = CALayer()
 	private let cursor = CALayer()
 	private var origin: CMTime = .zero
-	private var editorGestures: [UIGestureRecognizer] = []
+	private let onClose: (() -> Void)?
 	private var scrubStartX: CGFloat = 0
 	private var scrubGeneration: Int?
 	private var previousSize = CGSize.zero
 
-	init(_ session: CuttingBoardSession) {
+	init(_ session: CuttingBoardSession, onClose: (() -> Void)?) {
+		self.onClose = onClose
 		self.session = session
 		super.init(frame: .zero)
 		isAccessibilityElement = true
-		accessibilityLabel = "Direct Touch Editor"
-		accessibilityDirectTouchOptions = [.silentOnTouch]
-		isMultipleTouchEnabled = true
+		accessibilityLabel = onClose == nil ? "Clip preview" : "Direct Touch Editor"
+		accessibilityTraits = onClose == nil ? [.image] : [.allowsDirectInteraction]
 		layer.cornerRadius = 0
 		layer.masksToBounds = true
 		video.player = session.hasVideo ? session.player : nil
@@ -43,9 +42,16 @@ final class TimelineSurface: UIView {
 			view.applyColors()
 		}
 
+		guard onClose != nil else { return }
+		accessibilityDirectTouchOptions = [.silentOnTouch]
+		isMultipleTouchEnabled = true
+
+		let closeTap = UITapGestureRecognizer(target: self, action: #selector(closeEditor))
+		closeTap.numberOfTapsRequired = 3
+		addGestureRecognizer(closeTap)
+
 		let hold = UILongPressGestureRecognizer(target: self, action: #selector(scrub(_:)))
 		hold.minimumPressDuration = 0.35
-		editorGestures.append(hold)
 		addGestureRecognizer(hold)
 		for (count, directions) in [(1, [UISwipeGestureRecognizer.Direction.left, .right, .up, .down]),
 			(2, [.left, .right, .down]),
@@ -55,25 +61,19 @@ final class TimelineSurface: UIView {
 				swipe.numberOfTouchesRequired = count
 				swipe.direction = direction
 				if count == 1 { swipe.require(toFail: hold) }
-				editorGestures.append(swipe)
 				addGestureRecognizer(swipe)
 			}
 		}
 		let tap = UITapGestureRecognizer(target: self, action: #selector(toggle))
 		tap.numberOfTouchesRequired = 2
 		tap.numberOfTapsRequired = 2
-		editorGestures.append(tap)
 		addGestureRecognizer(tap)
 	}
 
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError() }
 
-	func setEditing(_ enabled: Bool) {
-		guard editorGestures.first?.isEnabled != enabled || accessibilityTraits.contains(.allowsDirectInteraction) != enabled else { return }
-		accessibilityTraits = enabled ? [.allowsDirectInteraction] : [.image]
-		for gesture in editorGestures { gesture.isEnabled = enabled }
-	}
+	@objc private func closeEditor() { onClose?() }
 
 	private func applyColors() {
 		backgroundColor = UIColor(EditorTheme.surface)
@@ -84,7 +84,7 @@ final class TimelineSurface: UIView {
 	override func layoutSubviews() {
 		super.layoutSubviews()
 		if bounds.size != previousSize {
-			for gesture in editorGestures where gesture.state == .began || gesture.state == .changed || gesture.numberOfTouches > 0 {
+			for gesture in gestureRecognizers ?? [] where gesture.state == .began || gesture.state == .changed || gesture.numberOfTouches > 0 {
 				gesture.isEnabled = false
 				gesture.isEnabled = true
 			}

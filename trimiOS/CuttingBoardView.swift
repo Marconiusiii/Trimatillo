@@ -25,14 +25,47 @@ extension CuttingBoardSession {
 
 struct CuttingBoardView: View {
 	@ObservedObject var session: CuttingBoardSession
+	var closeDirectTouchEditor: (() -> Void)?
 	@State private var increment = 1
-	@State private var directTouch = false
+	@State private var showingDirectTouchEditor = false
+	@AccessibilityFocusState(for: .voiceOver) private var launcherFocused: Bool
 	@State private var preparing = false
 	@State private var saving = false
 	@State private var output: BoardExport?
 	@State private var sheetFromMenu = false
 
 	var body: some View {
+		Group {
+			if let closeDirectTouchEditor {
+				VStack(spacing: 0) {
+					HStack(spacing: 0) {
+						Button(action: closeDirectTouchEditor) {
+							Text("Close").padding(.horizontal).frame(minHeight: 48)
+						}
+						Text("Direct Touch Editor")
+							.font(.headline)
+							.frame(maxWidth: .infinity, minHeight: 48)
+							.accessibilityAddTraits(.isHeader)
+					}
+					CuttingBoardTouchSurface(session: session, onClose: closeDirectTouchEditor)
+				}
+				.accessibilityAction(.magicTap) { session.toggle() }
+				.sheet(item: $session.sheet) { editorSheet($0) }
+			} else {
+				board
+					.fullScreenCover(isPresented: $showingDirectTouchEditor, onDismiss: { launcherFocused = true }) {
+						DirectTouchPresentation(session: session) { showingDirectTouchEditor = false }
+					}
+			}
+		}
+		.background(EditorTheme.workspace)
+		.tint(EditorTheme.accent)
+		.alert("Cutting Board", isPresented: Binding(get: { !showingDirectTouchEditor && session.message != nil && session.sheet == nil }, set: { if !$0 { session.message = nil } })) {
+			Button("OK") { session.message = nil }
+		} message: { Text(session.message ?? "") }
+	}
+
+	private var board: some View {
 		GeometryReader { geometry in
 			let wide = geometry.size.width > geometry.size.height && geometry.size.width > 550
 			if wide {
@@ -57,20 +90,22 @@ struct CuttingBoardView: View {
 				}
 			}
 		}
-		.background(EditorTheme.workspace)
-		.tint(EditorTheme.accent)
-		.alert("Cutting Board", isPresented: Binding(get: { session.message != nil && session.sheet == nil }, set: { if !$0 { session.message = nil } })) {
-			Button("OK") { session.message = nil }
-		} message: { Text(session.message ?? "") }
 	}
 
 	private var timeline: some View {
 		VStack(spacing: 0) {
-			Toggle("Use Direct Touch", isOn: $directTouch)
-				.padding(.horizontal)
-				.frame(minHeight: 44)
-			CuttingBoardTouchSurface(session: session, enabled: directTouch)
-				.frame(maxWidth: .infinity, maxHeight: .infinity)
+			Button { showingDirectTouchEditor = true } label: {
+				Text("Direct Touch Editor")
+					.frame(maxWidth: .infinity, minHeight: 48)
+					.contentShape(Rectangle())
+			}
+			.accessibilityFocused($launcherFocused)
+			if showingDirectTouchEditor {
+				EditorTheme.surface
+			} else {
+				CuttingBoardTouchSurface(session: session, onClose: nil)
+					.frame(maxWidth: .infinity, maxHeight: .infinity)
+			}
 			transport
 		}
 	}
@@ -159,7 +194,7 @@ struct CuttingBoardView: View {
 	}
 
 	private func sheetBinding(forMenu menu: Bool) -> Binding<BoardSheet?> {
-		Binding(get: { menu == sheetFromMenu ? session.sheet : nil }, set: { value in
+		Binding(get: { !showingDirectTouchEditor && menu == sheetFromMenu ? session.sheet : nil }, set: { value in
 			if menu == sheetFromMenu { session.sheet = value }
 		})
 	}
@@ -223,6 +258,20 @@ struct CuttingBoardView: View {
 			Button("Trim Tail to Playhead") { session.trim(head: false) }
 		}
 	}
+}
+
+// Host the editor with the same hardware keyboard and shake handlers as the board.
+private struct DirectTouchPresentation: UIViewControllerRepresentable {
+	let session: CuttingBoardSession
+	let close: () -> Void
+
+	func makeUIViewController(context: Context) -> BoardController {
+		let controller = BoardController(session)
+		controller.rootView = CuttingBoardView(session: session, closeDirectTouchEditor: close)
+		return controller
+	}
+
+	func updateUIViewController(_ controller: BoardController, context: Context) {}
 }
 
 private struct BoardEditSheet: View {
