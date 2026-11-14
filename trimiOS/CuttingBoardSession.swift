@@ -70,7 +70,8 @@ final class CuttingBoardSession: ObservableObject {
 	private let originalDuration: CMTime
 	private let sourceFrames: [CMTime]
 	private var frames: [CMTime] = []
-	private var history: [(action: String, before: Snapshot)] = []
+	private var history: [(action: String, before: Snapshot, after: Snapshot)] = []
+	private var historyIndex = 0
 	private var playbackObservation: Any?
 	private var endObservation: NSObjectProtocol?
 	private var itemObservation: NSKeyValueObservation?
@@ -90,7 +91,8 @@ final class CuttingBoardSession: ObservableObject {
 	@Published var sheet: BoardSheet?
 	@Published var message: String?
 	var duration: CMTime { state.timeline.duration }
-	var canUndo: Bool { !history.isEmpty }
+	var canUndo: Bool { historyIndex > 0 }
+	var canRedo: Bool { historyIndex < history.count }
 	var hasTimelineEdits: Bool { state.timeline != ClipEditTimeline(sourceDuration: originalDuration) }
 	var currentJoin: ClipEditTimeline.EditPoint? {
 		state.timeline.editPoints.first { CMTimeCompare($0.time, position) == 0 }
@@ -331,15 +333,17 @@ final class CuttingBoardSession: ObservableObject {
 		let previous = isIn ? state.markIn : state.markOut
 		guard previous != time else { return }
 		let action = (previous == nil ? "Mark " : "Move ") + (isIn ? "In" : "Out")
-		history.append((action, state))
+		let before = state
 		if isIn { state.markIn = time } else { state.markOut = time }
+		record(action, before: before, after: state)
 		if toggleAtPlayhead { announce(isIn ? "Marked In" : "Marked Out") }
 	}
 
 	func clear(_ isIn: Bool) {
 		guard (isIn ? state.markIn : state.markOut) != nil else { return }
-		history.append((isIn ? "Remove In" : "Remove Out", state))
+		let before = state
 		if isIn { state.markIn = nil } else { state.markOut = nil }
+		record(isIn ? "Remove In" : "Remove Out", before: before, after: state)
 	}
 
 	func delete(_ range: CMTimeRange?, spoken: Bool = false) {
@@ -388,18 +392,39 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
+	private func record(_ action: String, before: Snapshot, after: Snapshot) {
+		history.removeSubrange(historyIndex..<history.count)
+		history.append((action, before, after))
+		historyIndex = history.count
+	}
+
+	private func restore(_ snapshot: Snapshot) throws {
+		if state.timeline == snapshot.timeline {
+			stop()
+			state = snapshot
+			seek(snapshot.position)
+		} else {
+			try apply(snapshot, action: nil)
+		}
+	}
+
 	func undo() {
-		guard let entry = history.last else { announce("Nothing to undo"); return }
+		guard canUndo else { announce("Nothing to undo"); return }
+		let entry = history[historyIndex - 1]
 		do {
-			if state.timeline == entry.before.timeline {
-				stop()
-				state = entry.before
-				seek(entry.before.position)
-			} else {
-				try apply(entry.before, action: nil)
-			}
-			history.removeLast()
+			try restore(entry.before)
+			historyIndex -= 1
 			announce("Undo " + entry.action)
+		} catch { message = error.localizedDescription }
+	}
+
+	func redo() {
+		guard canRedo else { announce("Nothing to redo"); return }
+		let entry = history[historyIndex]
+		do {
+			try restore(entry.after)
+			historyIndex += 1
+			announce("Redo " + entry.action)
 		} catch { message = error.localizedDescription }
 	}
 
@@ -422,7 +447,7 @@ final class CuttingBoardSession: ObservableObject {
 			composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: snapshot.timeline.duration))
 		}
 		stop()
-		if let action { history.append((action, state)) }
+		if let action { record(action, before: state, after: snapshot) }
 		state = snapshot
 		editAsset = composition
 		var cursor = CMTime.zero

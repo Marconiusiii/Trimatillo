@@ -166,7 +166,11 @@ struct CuttingBoardView: View {
 			HStack(spacing: 0) {
 				Menu { editActions(fromMenu: true) } label: { cell("Edit Actions") }
 					.sheet(item: sheetBinding(forMenu: true)) { editorSheet($0) }
-				Button { session.undo() } label: { cell("Undo") }.disabled(!session.canUndo)
+				Button { session.undo() } label: { cell("Undo") }
+					.accessibilityActions {
+						if session.canRedo { Button("Redo") { session.redo() } }
+					}
+					.disabled(!session.canUndo && !session.canRedo)
 				Button {
 					session.releaseAudio()
 					exporting = true

@@ -85,7 +85,7 @@ final class TimelineSurface: UIView {
 		addGestureRecognizer(hold)
 		for (count, directions) in [(1, [UISwipeGestureRecognizer.Direction.left, .right, .up, .down]),
 			(2, [.left, .right, .down]),
-			(3, [.left, .right, .down]), (4, [.left, .right])] {
+			(3, [.left, .right, .down, .up]), (4, [.left, .right])] {
 			for direction in directions {
 				let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swipe(_:)))
 				swipe.numberOfTouchesRequired = count
@@ -185,6 +185,7 @@ final class TimelineSurface: UIView {
 			else { session.shuttle(right ? 1 : -1) }
 		case 3:
 			if gesture.direction == .down { session.undo() }
+			else if gesture.direction == .up { session.redo() }
 			else { session.navigate(right, spoken: true) }
 		case 4: session.trim(head: right, spoken: true)
 		default: break

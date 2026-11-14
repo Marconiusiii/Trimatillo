@@ -126,6 +126,7 @@ private enum HelpTopic: String, CaseIterable {
 		case .actions:
 			[HelpSection("Actions rotor", [
 				"Focus Step Forward or Step Back. In the Actions rotor, swipe up or down to choose a ten-step move or the next or previous edit point. Double-tap to perform the selected action.",
+				"Focus Undo, select Redo in the Actions rotor, and double-tap to reapply the last edit you undid. Making a new edit clears the remaining redo history.",
 				"Focus Playhead and use its actions to mark, trim, delete a selection, or navigate to an edit point.",
 				"Focus a set In or Out marker and use its actions to jump to that time or clear the marker.",
 				"Use Magic Tap, a two-finger double-tap, to play or pause the clip."
@@ -148,7 +149,8 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Three fingers", [
 				"Swipe right to move to the next join, marker, or end of the clip.",
 				"Swipe left to move to the previous join, marker, or start of the clip.",
-				"Swipe down to undo the last edit. Repeat to undo earlier edits. VoiceOver announces the action after each Undo."
+				"Swipe down to undo the last edit. Repeat to undo earlier edits. VoiceOver announces the action after each Undo.",
+				"Swipe up to redo the last edit you undid. Repeat to reapply edits in order."
 			]), HelpSection("Four fingers", [
 				"Swipe right to trim the head of the clip to the playhead.",
 				"Swipe left to trim the tail of the clip to the playhead."
