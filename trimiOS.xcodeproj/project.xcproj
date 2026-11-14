@@ -11,6 +11,7 @@
     ],
   },
   "files": [
+    { "kind": "folder", "path": "StoreKit" },
     {
       "kind": "folder",
       "path": "trimiOS",
@@ -79,6 +80,7 @@
       ],
       "build-settings": {
         "ASSETCATALOG_COMPILER_APPICON_NAME": "AppIcon",
+        "CODE_SIGN_ENTITLEMENTS": "trimiOS/trimiOS.entitlements",
         "CODE_SIGN_STYLE": "Automatic",
         "CURRENT_PROJECT_VERSION": "1",
         "DEVELOPMENT_TEAM": "4FL3XZDQ9P",
@@ -131,6 +133,7 @@
       ],
       "build-settings": {
         "APPLICATION_EXTENSION_API_ONLY": "YES",
+        "CODE_SIGN_ENTITLEMENTS": "TrimatoShare/TrimatoShare.entitlements",
         "CODE_SIGN_STYLE": "Automatic",
         "CURRENT_PROJECT_VERSION": "1",
         "DEVELOPMENT_TEAM": "4FL3XZDQ9P",

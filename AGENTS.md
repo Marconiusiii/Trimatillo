@@ -49,3 +49,9 @@
 * Don't go heavy into technical jargon, and explain it wherever needed to help boost overall development vocabulary.
 * When providing written code or code edits, always provide a plain-language commit message in a paragraph that can be easily copied, no need for putting it into a list element. Just a good, concise paragraph that works for a commit message.
 **
+
+## Help maintenance
+
+- Update the relevant in-app Help topic in the same change as every new or changed user-facing feature.
+- Explain each control, its action, and its result. Write for people learning the editor without assuming a disability, an assistive technology, or a preferred way to edit.
+- Use numbered steps for tasks. List each Direct Touch gesture separately, grouped by finger count. Describe keyboard commands in the primary Cutting Board topic.

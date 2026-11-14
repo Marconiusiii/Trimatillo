@@ -4,19 +4,20 @@ import UIKit
 
 struct CuttingBoardKeyboard: UIViewControllerRepresentable {
 	let session: CuttingBoardSession
+	let close: () -> Void
 
 	func makeUIViewController(context: Context) -> BoardController {
-		BoardController(session)
+		BoardController(session, close: close)
 	}
 
 	func updateUIViewController(_ controller: BoardController, context: Context) {}
 }
 
-final class BoardController: UIHostingController<CuttingBoardView> {
+final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	let session: CuttingBoardSession
-	init(_ session: CuttingBoardSession) {
+	init(_ session: CuttingBoardSession, close: @escaping () -> Void) {
 		self.session = session
-		super.init(rootView: CuttingBoardView(session: session))
+		super.init(rootView: PrimaryCuttingBoard(session: session, close: close))
 	}
 
 	@available(*, unavailable)
@@ -32,7 +33,7 @@ final class BoardController: UIHostingController<CuttingBoardView> {
 	override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
 		guard motion == .motionShake, presentedViewController == nil, session.sheet == nil,
 			UIAccessibility.isShakeToUndoEnabled,
-			UserDefaults.standard.object(forKey: "shakeToUndo") as? Bool ?? true,
+			EditorPreferences.shakeEnabled,
 			session.canUndo else {
 			super.motionEnded(motion, with: event)
 			return

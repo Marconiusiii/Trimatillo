@@ -12,35 +12,18 @@ struct ContentView: View {
 	@State private var photo: PhotosPickerItem?
 	@State private var loading = false
 	@State private var failure: String?
-	@State private var closing = false
-	@State private var showingInfo = false
+	@State private var showingHelp = false
+	@State private var showingSettings = false
+	@AccessibilityFocusState private var helpFocused: Bool
+	@AccessibilityFocusState private var settingsFocused: Bool
+	@StateObject private var support = SupportStore()
 	@State private var incomingFiles: [URL] = []
 	@State private var choosingIncoming = false
 
 	var body: some View {
 		Group {
 			if let session {
-				VStack(spacing: 0) {
-					HStack(spacing: 0) {
-						Button {
-							session.stop()
-							if session.canUndo { closing = true } else { close() }
-						} label: { Text("Close").padding(.horizontal).frame(minHeight: 48) }
-						.confirmationDialog("Discard this clip edit?", isPresented: $closing) {
-							Button("Discard and Close", role: .destructive) { close() }
-							Button("Keep Editing", role: .cancel) {}
-						}
-						Text(session.hasVideo ? "Video Cutting Board" : "Audio Cutting Board")
-							.font(.headline)
-							.frame(maxWidth: .infinity, minHeight: 48)
-							.accessibilityAddTraits(.isHeader)
-						Button { session.stop(); showingInfo = true } label: {
-							Text("Clip Info").padding(.horizontal).frame(minHeight: 48)
-						}
-						.sheet(isPresented: $showingInfo) { ClipInfoView(session: session) }
-					}
-					CuttingBoardKeyboard(session: session).id(ObjectIdentifier(session))
-				}
+				CuttingBoardKeyboard(session: session, close: close).id(ObjectIdentifier(session))
 			} else {
 				WelcomeView(loading: loading) {
 					ClipSourceMenu(title: "Trim a Clip", choose: present)
@@ -58,9 +41,16 @@ struct ContentView: View {
 								if (error as NSError).code != NSUserCancelledError { failure = "Could not read the file. Select it again in Files." }
 							}
 						}
+					Button("Help") { showingHelp = true }
+						.accessibilityFocused($helpFocused)
+						.sheet(isPresented: $showingHelp, onDismiss: { helpFocused = true }) { HelpView() }
+					Button("Settings") { showingSettings = true }
+						.accessibilityFocused($settingsFocused)
+						.sheet(isPresented: $showingSettings, onDismiss: { settingsFocused = true }) { SettingsView(support: support) }
 				}
 			}
 		}
+		.editorAppearance()
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
 		.background(EditorTheme.workspace)
 		.tint(EditorTheme.accent)
@@ -158,8 +148,8 @@ struct ContentView: View {
 			do {
 				let next = try await load()
 				session?.releaseAudio()
-				closing = false
-				showingInfo = false
+				showingHelp = false
+				showingSettings = false
 				session = next
 			} catch { failure = errorMessage }
 		}
@@ -193,7 +183,7 @@ private struct WelcomeView<Actions: View>: View {
 					.resizable()
 					.scaledToFit()
 					.frame(width: 104, height: 104)
-				Text("Welcome to Trimato")
+				Text("Welcome to Trimatillo")
 					.font(.largeTitle.weight(.semibold))
 					.accessibilityAddTraits(.isHeader)
 				actions()

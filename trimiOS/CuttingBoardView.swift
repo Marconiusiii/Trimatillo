@@ -54,7 +54,7 @@ struct CuttingBoardView: View {
 						ClipExportView(session: session)
 					}
 					.fullScreenCover(isPresented: $showingDirectTouchEditor, onDismiss: { launcherFocused = true }) {
-						DirectTouchPresentation(session: session) { showingDirectTouchEditor = false }
+						CuttingBoardView(session: session, closeDirectTouchEditor: { showingDirectTouchEditor = false })
 					}
 			}
 		}
@@ -245,20 +245,6 @@ struct CuttingBoardView: View {
 			Button("Trim Tail to Playhead") { session.trim(head: false) }
 		}
 	}
-}
-
-// Host the editor with the same hardware keyboard and shake handlers as the board.
-private struct DirectTouchPresentation: UIViewControllerRepresentable {
-	let session: CuttingBoardSession
-	let close: () -> Void
-
-	func makeUIViewController(context: Context) -> BoardController {
-		let controller = BoardController(session)
-		controller.rootView = CuttingBoardView(session: session, closeDirectTouchEditor: close)
-		return controller
-	}
-
-	func updateUIViewController(_ controller: BoardController, context: Context) {}
 }
 
 private struct BoardEditSheet: View {
@@ -466,7 +452,7 @@ struct ClipInfoView: View {
 	}
 }
 
-struct SharedVideoBoard: View {
+struct PrimaryCuttingBoard: View {
 	let session: CuttingBoardSession
 	let close: () -> Void
 	@State private var confirmClose = false
@@ -480,11 +466,11 @@ struct SharedVideoBoard: View {
 					if session.canUndo { confirmClose = true } else { close() }
 				} label: { Text("Close").padding(.horizontal).frame(minHeight: 48) }
 				.accessibilityIdentifier("sharedBoardClose")
-				.alert("Close this clip?", isPresented: $confirmClose) {
+				.alert("Close this clip and discard unsaved edits?", isPresented: $confirmClose) {
 					Button("Close Clip", role: .destructive, action: close)
 					Button("Keep Editing", role: .cancel) {}
 				}
-				Text("Video Cutting Board")
+				Text(session.hasVideo ? "Video Cutting Board" : "Audio Cutting Board")
 					.font(.headline)
 					.frame(maxWidth: .infinity, minHeight: 48)
 					.accessibilityAddTraits(.isHeader)
@@ -493,7 +479,7 @@ struct SharedVideoBoard: View {
 				}
 				.sheet(isPresented: $showingInfo) { ClipInfoView(session: session) }
 			}
-			CuttingBoardKeyboard(session: session)
+			CuttingBoardView(session: session)
 		}
 		.onDisappear { session.releaseAudio() }
 	}

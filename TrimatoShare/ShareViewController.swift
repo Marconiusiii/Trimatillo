@@ -28,7 +28,7 @@ final class ShareViewController: UIViewController {
 				let board = try await CuttingBoardSession.open(movie.url, importedMovie: movie)
 				try Task.checkCancellation()
 				session = board
-				display(SharedVideoBoard(session: board, close: { [weak self] in self?.finish() }))
+				display(CuttingBoardKeyboard(session: board, close: { [weak self] in self?.finish() }))
 			} catch {
 				guard !Task.isCancelled else { return }
 				display(VStack {
@@ -46,7 +46,7 @@ final class ShareViewController: UIViewController {
 			child.removeFromParent()
 		}
 		let host = UIHostingController(rootView: content.frame(maxWidth: .infinity, maxHeight: .infinity)
-			.background(EditorTheme.workspace).tint(EditorTheme.accent))
+			.background(EditorTheme.workspace).tint(EditorTheme.accent).editorAppearance())
 		addChild(host)
 		host.view.frame = view.bounds
 		host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]

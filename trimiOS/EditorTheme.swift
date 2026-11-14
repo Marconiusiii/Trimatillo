@@ -43,3 +43,36 @@ enum EditorTheme {
 		})
 	}
 }
+
+enum EditorPreferences {
+	static let shared = UserDefaults(suiteName: "group.com.marconius.trimato-ios")!
+	static var shakeEnabled: Bool {
+		shared.object(forKey: "shakeToUndo") as? Bool ?? true
+	}
+}
+
+enum EditorAppearance: String, CaseIterable {
+	case system = "System"
+	case light = "Light"
+	case dark = "Dark"
+
+	var scheme: ColorScheme? {
+		switch self {
+		case .system: nil
+		case .light: .light
+		case .dark: .dark
+		}
+	}
+}
+
+private struct AppearanceModifier: ViewModifier {
+	@AppStorage("appearance", store: EditorPreferences.shared) var appearance = EditorAppearance.system
+
+	func body(content: Content) -> some View {
+		content.preferredColorScheme(appearance.scheme)
+	}
+}
+
+extension View {
+	func editorAppearance() -> some View { modifier(AppearanceModifier()) }
+}

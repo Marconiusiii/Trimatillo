@@ -1,0 +1,94 @@
+{
+	"appPolicies": {
+		"eula": "",
+		"policies": [
+			{
+				"locale": "en_US",
+				"policyText": "",
+				"policyURL": ""
+			}
+		]
+	},
+	"identifier": "TRIMATILLOSUPPORT",
+	"nonRenewingSubscriptions": [],
+	"products": [
+		{
+			"displayPrice": "0.99",
+			"familyShareable": false,
+			"internalID": "TRIMATILLOTIP0",
+			"localizations": [
+				{
+					"description": "A little support for fresh cuts.",
+					"displayName": "A little slice",
+					"locale": "en_US"
+				}
+			],
+			"productID": "com.marconius.trimatillo.support.littleSlice",
+			"referenceName": "A little slice",
+			"type": "Consumable"
+		},
+		{
+			"displayPrice": "2.99",
+			"familyShareable": false,
+			"internalID": "TRIMATILLOTIP1",
+			"localizations": [
+				{
+					"description": "Give Trimatillo a juicy helping of support.",
+					"displayName": "A juicy cut",
+					"locale": "en_US"
+				}
+			],
+			"productID": "com.marconius.trimatillo.support.juicyCut",
+			"referenceName": "A juicy cut",
+			"type": "Consumable"
+		},
+		{
+			"displayPrice": "4.99",
+			"familyShareable": false,
+			"internalID": "TRIMATILLOTIP2",
+			"localizations": [
+				{
+					"description": "Support the next fresh take on Trimatillo.",
+					"displayName": "A fresh take",
+					"locale": "en_US"
+				}
+			],
+			"productID": "com.marconius.trimatillo.support.freshTake",
+			"referenceName": "A fresh take",
+			"type": "Consumable"
+		},
+		{
+			"displayPrice": "9.99",
+			"familyShareable": false,
+			"internalID": "TRIMATILLOTIP3",
+			"localizations": [
+				{
+					"description": "A whole tomato of support for Trimatillo.",
+					"displayName": "The whole tomato",
+					"locale": "en_US"
+				}
+			],
+			"productID": "com.marconius.trimatillo.support.wholeTomato",
+			"referenceName": "The whole tomato",
+			"type": "Consumable"
+		}
+	],
+	"settings": {
+		"_askToBuyEnabled": false,
+		"_billingGracePeriodEnabled": false,
+		"_billingIssuesEnabled": false,
+		"_disableDialogs": false,
+		"_failTransactionsEnabled": false,
+		"_locale": "en_US",
+		"_renewalBillingIssuesEnabled": false,
+		"_storefront": "USA",
+		"_storeKitErrors": [],
+		"_timeRate": 0
+	},
+	"subscriptionGroups": [],
+	"subscriptionSuiteGroups": [],
+	"version": {
+		"major": 6,
+		"minor": 3
+	}
+}
