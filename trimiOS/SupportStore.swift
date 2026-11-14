@@ -6,6 +6,8 @@ import StoreKit
 final class SupportStore: ObservableObject {
 	static let identifiers = ["littleSlice", "juicyCut", "freshTake", "wholeTomato"].map { "com.marconius.trimatillo.support." + $0 }
 	@Published private(set) var products: [Product] = []
+	enum CatalogState { case idle, loading, available, incomplete }
+	@Published private(set) var catalogState = CatalogState.idle
 	@Published private(set) var purchasing = false
 	@Published var notice: String?
 	private var listener: Task<Void, Never>?
@@ -27,11 +29,14 @@ final class SupportStore: ObservableObject {
 	deinit { listener?.cancel() }
 
 	func load() async {
+		guard catalogState != .loading else { return }
+		catalogState = .loading
 		do {
 			let available = try await Product.products(for: Self.identifiers)
 			products = Self.identifiers.compactMap { id in available.first { $0.id == id && $0.type == .consumable } }
+			catalogState = products.count == Self.identifiers.count ? .available : .incomplete
 		} catch {
-			if !Task.isCancelled { products = [] }
+			catalogState = .incomplete
 		}
 	}
 

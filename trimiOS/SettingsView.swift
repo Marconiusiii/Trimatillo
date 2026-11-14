@@ -31,16 +31,23 @@ struct SettingsView: View {
 					}
 					Toggle("Shake to Undo", isOn: $shake)
 				} header: { heading("Editing") }
-				if !support.products.isEmpty {
-					Section {
-						ForEach(support.products) { product in
-							Button {
-								Task { await support.buy(product) }
-							} label: { LabeledContent(product.displayName, value: product.displayPrice) }
-						}
-						.disabled(support.purchasing)
-					} header: { heading("Support Trimatillo") }
-				}
+				Section {
+					ForEach(support.products) { product in
+						Button {
+							Task { await support.buy(product) }
+						} label: { LabeledContent(product.displayName, value: product.displayPrice) }
+					}
+					.disabled(support.purchasing)
+					switch support.catalogState {
+					case .idle, .loading:
+						ProgressView("Loading support options")
+					case .incomplete:
+						Text("Some support options could not be loaded.")
+						Button("Retry") { Task { await support.load() } }
+					case .available:
+						EmptyView()
+					}
+				} header: { heading("Support Trimatillo") }
 				Section {
 					Button("Send App Feedback") {
 						if MFMailComposeViewController.canSendMail() {

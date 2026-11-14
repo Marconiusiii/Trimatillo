@@ -59,7 +59,6 @@ private enum HelpTopic: String, CaseIterable {
 	case touch = "Direct Touch Editing"
 	case keys = "Keyboard commands"
 	case save = "Save and export"
-	case settings = "Settings and feedback"
 
 	var introduction: String {
 		switch self {
@@ -71,7 +70,6 @@ private enum HelpTopic: String, CaseIterable {
 		case .touch: "Use gestures on the Direct Touch editing surface to move through a clip and edit it."
 		case .keys: "Use a connected keyboard on the primary Cutting Board to control playback, set markers, and edit."
 		case .save: "Choose Export on the Cutting Board to update the original clip or save an edited copy."
-		case .settings: "Open Settings from the welcome screen to change the appearance and editing preferences or send feedback."
 		}
 	}
 
@@ -107,7 +105,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Step Back and Step Forward move to the previous or next frame in a video. In a clip with a variable frame rate, the time between steps can change as you move through it.",
 				"At 24 frames per second, one frame lasts about 41.7 milliseconds. At 60 it lasts about 16.7 milliseconds, and at 120 it lasts about 8.3 milliseconds.",
 				"In an audio-only clip, one step moves one thirtieth of a second. Ten steps move one third of a second.",
-				"Choose Playhead to jump to a time. Enter seconds or a time separated by colons. With Frames selected, enter a frame number. Choose Jump."
+				"Choose Playhead, enter seconds or a time separated by colons, then choose Jump.",
+				"For frame entry, choose Frames under Timecode in Settings before opening the clip. On the Cutting Board, choose Playhead, enter a frame number, and choose Jump. Counting starts at zero."
 			])]
 		case .cuts:
 			[HelpSection("Select a range", [
@@ -119,7 +118,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Previous Edit Point and Next Edit Point move among joins, markers, and the start and end of the clip.",
 				"At a join, choose Adjust Edit Point in Edit Actions. The sheet shows the end of the preceding section and the start of the following section.",
 				"In a video, step either boundary to the previous or next frame of the original clip. You can also enter a source time or frame number. Choose Save to apply both boundaries or Cancel to discard the adjustments.",
-				"Choose Undo to reverse a marker change, trim, deletion, or saved join adjustment. Repeat to undo earlier edits."
+				"Choose Undo to reverse a marker change, trim, deletion, or saved join adjustment. Repeat to undo earlier edits.",
+				"To undo by shaking your device, turn on Shake to Undo in Trimatillo Settings and in the device's Accessibility settings under Touch."
 			])]
 		case .actions:
 			[HelpSection("Actions rotor", [
@@ -177,17 +177,6 @@ private enum HelpTopic: String, CaseIterable {
 				"Save as New Clip creates a separate clip. For video, choose Photos or Files. For audio, use the Files picker.",
 				"In Files, select the folder, change the suggested filename if desired, and choose Save.",
 				"When editing from the Photos Share sheet, choose Export, then Photos or Files under Save as New Clip."
-			])]
-		case .settings:
-			[HelpSection("Preferences", [
-				"Open Settings on the welcome screen. Under Appearance, choose System to follow the device, or select Light or Dark.",
-				"Choose Control Color to set the color of buttons and the selected range. The shade follows the current appearance.",
-				"Under Editing, choose Timecode. Standard shows hours, minutes, and seconds. Milliseconds adds three decimal places.",
-				"Choose Frames to show the frame number in a video or the step number in an audio clip. Counting starts at zero. End is one past the last frame or step.",
-				"Turn on Shake to Undo under Editing to undo the last edit by shaking your device. Shake to Undo must also be enabled in the device's Touch settings."
-			]), HelpSection("About and support", [
-				"Send App Feedback opens an email draft addressed to Marco Salsiccia. Privacy Policy opens the policy in your browser.",
-				"Support Trimatillo lists available one-time tips with their App Store prices. Select an amount and confirm the purchase in the App Store sheet."
 			])]
 		}
 	}
