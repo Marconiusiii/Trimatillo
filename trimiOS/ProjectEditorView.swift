@@ -46,61 +46,21 @@ struct ProjectEditorView: View {
 
 	private var editor: some View {
 		NavigationStack {
-			List {
-				if project.placements.contains(where: { $0.track == .video }) {
-					ProjectPreview(player: playback.player)
-						.aspectRatio(CGFloat(project.picture?.width ?? 16) / CGFloat(project.picture?.height ?? 9), contentMode: .fit)
-						.frame(maxHeight: 260)
-						.accessibilityHidden(true)
-				}
-				transport
-				DisclosureGroup("Project Media", isExpanded: $expanded) {
-					sourcePicker("Import Clip", source: nil)
-					ForEach(project.sources) { source in
-						Menu(source.name) {
-							Button("Open Cutting Board") { openBoard(source, placement: nil) }
-							Button("Reconnect from Files") { pick(source.id, files: true) }
-							Button("Reconnect from Photos") { pick(source.id, files: false) }
+			GeometryReader { geometry in
+				let hasVideo = project.placements.contains { $0.track == .video }
+				let wide = geometry.size.width > geometry.size.height && geometry.size.width > 550
+				HStack(spacing: 0) {
+					if hasVideo && wide {
+						preview.frame(width: geometry.size.width * 0.45)
+					}
+					List {
+						if hasVideo && !wide {
+							preview.frame(maxWidth: .infinity)
+								.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect))
 						}
-						.accessibilityFocused($focus, equals: source.id.uuidString)
+						projectRows
 					}
 				}
-				ForEach(project.tracks) { track in
-					Section {
-						let clips = project.clips(on: track)
-						if clips.isEmpty {
-							Text("No clips")
-								.accessibilityDropPoint(.center, description: Text("Drop on " + track.title))
-								.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: false) }
-						} else {
-							ScrollView(.horizontal) {
-								HStack {
-									ForEach(clips) { clip in
-										if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
-											clipButton(clip, source: source, track: track)
-										}
-									}
-								}
-							}
-						}
-					} header: {
-						Menu { trackActions(track) } label: {
-							HStack {
-								Text(track.title)
-								if activeTrack == track.id { Image(systemName: "checkmark").accessibilityHidden(true) }
-								Image(systemName: "chevron.down").accessibilityHidden(true)
-							}
-						}
-							.accessibilityValue(activeTrack == track.id ? "Selected" : "")
-							.accessibilityAddTraits(.isHeader)
-							.accessibilityActions { trackActions(track) }
-							.contextMenu { trackActions(track) }
-							.accessibilityFocused($focus, equals: track.id)
-							.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: true) }
-					}
-				}
-				if let seconds = project.targetSeconds { LabeledContent("Target Duration", value: time(CMTime(seconds: seconds, preferredTimescale: 60000))) }
-				if busy { ProgressView("Opening clip") }
 			}
 			.disabled(busy)
 			.scrollContentBackground(.hidden)
@@ -162,6 +122,67 @@ struct ProjectEditorView: View {
 		}
 		.onChange(of: phase) { _, phase in if phase != .active { playback.pause() } }
 		.onDisappear { playback.pause() }
+	}
+
+	private var pictureAspect: CGFloat {
+		CGFloat(project.picture?.width ?? 16) / CGFloat(max(1, project.picture?.height ?? 9))
+	}
+
+	private var preview: some View {
+		ProjectPreview(player: playback.player)
+			.aspectRatio(pictureAspect, contentMode: .fit)
+			.accessibilityHidden(true)
+	}
+
+	@ViewBuilder private var projectRows: some View {
+		transport
+		DisclosureGroup("Project Media", isExpanded: $expanded) {
+			sourcePicker("Import Clip", source: nil)
+			ForEach(project.sources) { source in
+				Menu(source.name) {
+					Button("Open Cutting Board") { openBoard(source, placement: nil) }
+					Button("Reconnect from Files") { pick(source.id, files: true) }
+					Button("Reconnect from Photos") { pick(source.id, files: false) }
+				}
+				.accessibilityFocused($focus, equals: source.id.uuidString)
+			}
+		}
+		ForEach(project.tracks) { track in
+			Section {
+				let clips = project.clips(on: track)
+				if clips.isEmpty {
+					Text("No clips")
+						.accessibilityDropPoint(.center, description: Text("Drop on " + track.title))
+						.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: false) }
+				} else {
+					ScrollView(.horizontal) {
+						HStack {
+							ForEach(clips) { clip in
+								if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
+									clipButton(clip, source: source, track: track)
+								}
+							}
+						}
+					}
+				}
+			} header: {
+				Menu { trackActions(track) } label: {
+					HStack {
+						Text(track.title)
+						if activeTrack == track.id { Image(systemName: "checkmark").accessibilityHidden(true) }
+						Image(systemName: "chevron.down").accessibilityHidden(true)
+					}
+				}
+					.accessibilityValue(activeTrack == track.id ? "Selected" : "")
+					.accessibilityAddTraits(.isHeader)
+					.accessibilityActions { trackActions(track) }
+					.contextMenu { trackActions(track) }
+					.accessibilityFocused($focus, equals: track.id)
+					.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: true) }
+			}
+		}
+		if let seconds = project.targetSeconds { LabeledContent("Project Duration", value: time(CMTime(seconds: seconds, preferredTimescale: 60000))) }
+		if busy { ProgressView("Opening clip") }
 	}
 
 	private var transport: some View {

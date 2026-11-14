@@ -86,6 +86,7 @@ struct CuttingBoardView: View {
 	private var board: some View {
 		GeometryReader { geometry in
 			let wide = geometry.size.width > geometry.size.height && geometry.size.width > 550
+			let portraitVideo = (session.videoAspect ?? 1) < 1
 			if wide {
 				HStack(spacing: 0) {
 					timeline
@@ -93,16 +94,16 @@ struct CuttingBoardView: View {
 						controls
 						ScrollView { controls }
 					}
-					.frame(width: geometry.size.width * 0.49)
+					.frame(width: geometry.size.width * (portraitVideo ? 0.60 : 0.49))
 				}
 			} else {
 				ViewThatFits(in: .vertical) {
 					VStack(spacing: 0) {
-						timeline.frame(minHeight: 180)
+						timeline.frame(minHeight: portraitVideo ? max(180, geometry.size.height * 0.45) : 180)
 						controls.fixedSize(horizontal: false, vertical: true)
 					}
 					VStack(spacing: 0) {
-						timeline.frame(height: geometry.size.height * 0.45)
+						timeline.frame(height: geometry.size.height * (portraitVideo ? 0.55 : 0.45))
 						ScrollView { controls }
 					}
 				}

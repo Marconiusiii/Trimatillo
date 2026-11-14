@@ -82,8 +82,9 @@ private enum HelpTopic: String, CaseIterable {
 		case .projects:
 			[HelpSection("Create a project", numbered: true, [
 				"Choose Create Project and enter a name.",
-				"Leave Custom Resolution off to use the first video placed on the timeline. Turn it on to set the width, height, and frame rate.",
-				"Turn on Use Target Duration to set a length to aim for. Clips can extend beyond it. Choose Create."
+				"Choose Same as Media to use the size and frame rate of the first video you place on the timeline. To set your own, choose a resolution and enter a frame rate.",
+				"Choose Custom to enter a width and height. With Lock Aspect Ratio on, changing one dimension adjusts the other.",
+				"To set a length to aim for, turn on Use Set Project Duration and enter the Duration in Seconds. Clips can extend beyond that duration. Choose Create."
 			]), HelpSection("Arrange clips", numbered: true, [
 				"Expand Project Media. Choose Import Clip, then Photo Library or Files, and select the original.",
 				"Choose the source name and Open Cutting Board. Trim the clip or cut a marked range.",

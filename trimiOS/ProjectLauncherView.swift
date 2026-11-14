@@ -7,14 +7,63 @@ enum ProjectLauncher: String, Identifiable {
 	var id: Self { self }
 }
 
+private enum ProjectResolutionChoice: String, CaseIterable, Identifiable, Sendable {
+	case sameAsMedia
+	case hd
+	case fullHD
+	case qhd
+	case ultraHD
+	case verticalHD
+	case verticalFullHD
+	case verticalUltraHD
+	case square
+	case portraitFourByFive
+	case custom
+
+	var id: String { rawValue }
+
+	var label: String {
+		switch self {
+		case .sameAsMedia: "Same as Media"
+		case .hd: "1280 by 720, HD"
+		case .fullHD: "1920 by 1080, Full HD"
+		case .qhd: "2560 by 1440, QHD"
+		case .ultraHD: "3840 by 2160, 4K UHD"
+		case .verticalHD: "720 by 1280, vertical HD"
+		case .verticalFullHD: "1080 by 1920, vertical Full HD"
+		case .verticalUltraHD: "2160 by 3840, vertical 4K"
+		case .square: "1080 by 1080, square"
+		case .portraitFourByFive: "1080 by 1350, portrait 4 by 5"
+		case .custom: "Custom"
+		}
+	}
+
+	var dimensions: (width: Int, height: Int)? {
+		switch self {
+		case .hd: (1_280, 720)
+		case .fullHD: (1_920, 1_080)
+		case .qhd: (2_560, 1_440)
+		case .ultraHD: (3_840, 2_160)
+		case .verticalHD: (720, 1_280)
+		case .verticalFullHD: (1_080, 1_920)
+		case .verticalUltraHD: (2_160, 3_840)
+		case .square: (1_080, 1_080)
+		case .portraitFourByFive: (1_080, 1_350)
+		case .custom, .sameAsMedia: nil
+		}
+	}
+}
+
 struct ProjectLauncherView: View {
 	let mode: ProjectLauncher
 	let open: (EditingProject) -> Void
 	@Environment(\.dismiss) private var dismiss
 	@State private var name = ""
-	@State private var custom = false
-	@State private var width = 1920
-	@State private var height = 1080
+	@State private var resolution = ProjectResolutionChoice.sameAsMedia
+	@State private var locked = true
+	@State private var aspect = 16.0 / 9.0
+	@State private var width = "1920"
+	@State private var height = "1080"
 	@State private var rate = 30.0
 	@State private var target = false
 	@State private var seconds = 60.0
@@ -26,15 +75,32 @@ struct ProjectLauncherView: View {
 			Form {
 				if mode == .create {
 					TextField("Project Name", text: $name)
-					Toggle("Custom Resolution", isOn: $custom)
-					if custom {
-						LabeledContent("Width") { TextField("Width", value: $width, format: .number).keyboardType(.numberPad) }
-						LabeledContent("Height") { TextField("Height", value: $height, format: .number).keyboardType(.numberPad) }
+					Picker("Resolution", selection: $resolution) {
+						ForEach(ProjectResolutionChoice.allCases) { Text($0.label).tag($0) }
+					}
+					.onChange(of: resolution) { _, choice in
+						if let size = choice.dimensions {
+							width = String(size.width)
+							height = String(size.height)
+							aspect = Double(size.width) / Double(size.height)
+						}
+					}
+					if resolution == .custom {
+						dimensionField("Width", horizontal: true)
+						dimensionField("Height", horizontal: false)
+						Toggle("Lock Aspect Ratio", isOn: $locked)
+							.onChange(of: locked) { _, enabled in
+								if enabled, let w = dimension(width), let h = dimension(height) {
+									aspect = Double(w) / Double(h)
+								}
+							}
+					}
+					if resolution != .sameAsMedia {
 						LabeledContent("Frames per Second") { TextField("Frames per Second", value: $rate, format: .number).keyboardType(.decimalPad) }
 					}
-					Toggle("Use Target Duration", isOn: $target)
+					Toggle("Use Set Project Duration", isOn: $target)
 					if target {
-						LabeledContent("Target in Seconds") { TextField("Target in Seconds", value: $seconds, format: .number).keyboardType(.decimalPad) }
+						LabeledContent("Duration in Seconds") { TextField("Duration in Seconds", value: $seconds, format: .number).keyboardType(.decimalPad) }
 					}
 					Button("Create") { create() }
 						.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -68,17 +134,38 @@ struct ProjectLauncherView: View {
 		.editorAppearance()
 	}
 
+	private func dimension(_ text: String) -> Int? {
+		guard let n = Int(text), (1...16384).contains(n) else { return nil }
+		return n
+	}
+
+	private func dimensionField(_ label: String, horizontal: Bool) -> some View {
+		LabeledContent {
+			TextField(label, text: Binding(get: { horizontal ? width : height }, set: { text in
+				if horizontal { width = text } else { height = text }
+				guard locked, let value = dimension(text) else { return }
+				if horizontal {
+					height = String(max(1, Int((Double(value) / aspect).rounded())))
+				} else {
+					width = String(max(1, Int((Double(value) * aspect).rounded())))
+				}
+			}))
+			.keyboardType(.numberPad)
+			.multilineTextAlignment(.trailing)
+		} label: { Text(label) }
+	}
+
 	private func create() {
 		var project = EditingProject(name: name.trimmingCharacters(in: .whitespacesAndNewlines))
-		if custom {
-			guard (1...16384).contains(width), (1...16384).contains(height), rate.isFinite, rate > 0, rate <= 1000 else {
+		if resolution != .sameAsMedia {
+			guard let width = dimension(width), let height = dimension(height), rate.isFinite, rate > 0, rate <= 1000 else {
 				error = "Enter a width and height from 1 to 16384 pixels and a frame rate greater than zero and at most 1000."
 				return
 			}
 			project.picture = ProjectPicture(width: width, height: height, frame: ProjectTime(CMTime(seconds: 1 / rate, preferredTimescale: 600000)))
 		}
 		if target {
-			guard seconds.isFinite, seconds > 0 else { error = "Enter a positive target duration in seconds."; return }
+			guard seconds.isFinite, seconds > 0 else { error = "Enter a positive duration in seconds."; return }
 			project.targetSeconds = seconds
 		}
 		do {

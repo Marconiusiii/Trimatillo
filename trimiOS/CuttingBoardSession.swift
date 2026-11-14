@@ -57,6 +57,7 @@ final class CuttingBoardSession: ObservableObject {
 
 	let player = AVPlayer()
 	let title: String
+	let videoAspect: CGFloat?
 	let hasVideo: Bool
 	let hasAudio: Bool
 	private let source: AVAsset
@@ -146,15 +147,17 @@ final class CuttingBoardSession: ObservableObject {
 		}
 		guard !tracks.isEmpty else { throw CocoaError(.fileReadUnsupportedScheme) }
 		let transform = try await video?.load(.preferredTransform) ?? .identity
+		let size = try await video?.load(.naturalSize)
+		let displaySize = size.map { CGRect(origin: .zero, size: $0).applying(transform).standardized.size }
 		let frames = try await MediaTimelineReader.shared.frameTimes(asset: asset, track: video)
 		try Task.checkCancellation()
 		return CuttingBoardSession(asset: asset, title: title, importedMovie: importedMovie, originalFile: originalFile,
 			photoIdentifier: photoIdentifier, modification: modification, scopedURL: scopedURL, duration: duration,
-			tracks: tracks, transform: transform, frames: frames, hasVideo: video != nil, hasAudio: audio != nil)
+			tracks: tracks, transform: transform, displaySize: displaySize, frames: frames, hasVideo: video != nil, hasAudio: audio != nil)
 	}
 
 	private init(asset: AVAsset, title: String, importedMovie: ImportedMovie?, originalFile: URL?, photoIdentifier: String?, modification: Date?, scopedURL: URL?, duration: CMTime, tracks: [(AVAssetTrack, CMTimeRange)],
-		transform: CGAffineTransform, frames: [CMTime], hasVideo: Bool, hasAudio: Bool) {
+		transform: CGAffineTransform, displaySize: CGSize?, frames: [CMTime], hasVideo: Bool, hasAudio: Bool) {
 		source = asset
 		editAsset = asset
 		self.scopedURL = scopedURL
@@ -165,6 +168,11 @@ final class CuttingBoardSession: ObservableObject {
 		self.title = title
 		self.tracks = tracks
 		self.transform = transform
+		if let displaySize, displaySize.width > 0, displaySize.height > 0 {
+			videoAspect = displaySize.width / displaySize.height
+		} else {
+			videoAspect = nil
+		}
 		self.hasVideo = hasVideo
 		self.hasAudio = hasAudio
 		originalDuration = duration
