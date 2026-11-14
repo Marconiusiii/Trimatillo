@@ -11,34 +11,30 @@ struct ContentView: View {
 	@State private var replacing = false
 
 	var body: some View {
-		VStack(spacing: 0) {
-			HStack {
-				Text(session?.title ?? "Trimato").font(.headline).lineLimit(1)
-				Spacer()
-				if session != nil {
-					Button("Open Clip") {
-						session?.stop()
-						if session?.canUndo == true { replacing = true } else { picking = true }
-					}
-				}
-			}
-			.padding(.horizontal)
-			.frame(minHeight: 44)
+		Group {
 			if loading {
-				Spacer()
 				ProgressView("Opening clip")
-				Spacer()
 			} else if let session {
-				CuttingBoardKeyboard(session: session).id(ObjectIdentifier(session))
+				VStack(spacing: 0) {
+					HStack {
+						Text(session.title).font(.headline).lineLimit(1)
+						Spacer()
+						Button("Open Clip") {
+							session.stop()
+							if session.canUndo { replacing = true } else { picking = true }
+						}
+					}
+					.padding(.horizontal)
+					.frame(minHeight: 44)
+					CuttingBoardKeyboard(session: session).id(ObjectIdentifier(session))
+				}
 			} else {
-				Spacer()
-				Button("Open Clip") { picking = true }.buttonStyle(.borderedProminent)
-				Spacer()
+				WelcomeView { picking = true }
 			}
 		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
 		.background(EditorTheme.workspace)
 		.tint(EditorTheme.accent)
-		.accessibilityAction(.magicTap) { session?.toggle() }
 		.confirmationDialog("Replace the current edit?", isPresented: $replacing) {
 			Button("Choose Another Clip") { picking = true }
 		} message: { Text("Opening another clip discards this edit.") }
@@ -69,5 +65,30 @@ struct ContentView: View {
 				session?.releaseAudio()
 			}
 		}
+	}
+}
+
+private struct WelcomeView: View {
+	let chooseClip: () -> Void
+
+	var body: some View {
+		ScrollView {
+			VStack(spacing: 20) {
+				Image(decorative: "AppIcon60x60")
+					.resizable()
+					.scaledToFit()
+					.frame(width: 104, height: 104)
+				Text("Welcome to Trimato")
+					.font(.largeTitle.weight(.semibold))
+					.accessibilityHeading(.h1)
+				Button("Trim a Clip", action: chooseClip)
+					.buttonStyle(.borderedProminent)
+					.controlSize(.large)
+			}
+			.multilineTextAlignment(.center)
+			.frame(maxWidth: .infinity)
+			.padding()
+		}
+		.defaultScrollAnchor(.center, for: .alignment)
 	}
 }
