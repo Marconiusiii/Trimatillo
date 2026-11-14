@@ -67,7 +67,9 @@ final class CuttingBoardSession: ObservableObject {
 	private var seekGeneration = 0
 	private var returnAfterAudition: CMTime?
 	@Published private(set) var state: Snapshot
-	@Published private(set) var rate = 0
+	@Published private(set) var rate = 0.0
+	var speedLabel: String { abs(rate).formatted() + "x" }
+	var shuttleLabel: String { (rate < 0 ? "Rewind " : "Forward ") + speedLabel }
 	@Published var sheet: BoardSheet?
 	@Published var message: String?
 	var duration: CMTime { state.timeline.duration }
@@ -395,16 +397,22 @@ final class CuttingBoardSession: ObservableObject {
 	}
 
 	func toggle() {
-		if rate != 0 { stop() } else { shuttle(1) }
+		if rate != 0 { stop() } else { play(from: position >= duration ? .zero : position, to: duration, speed: 1) }
 	}
 
 	func shuttle(_ direction: Int) {
-		let speed = rate * direction > 0 ? min(8, abs(rate) * 2) : 1
+		let current = rate * Double(direction)
+		guard let speed = [1.0, 1.5, 2, 4, 8].first(where: { $0 > current }) else { return }
 		stop()
 		let start = direction > 0 && position >= duration ? CMTime.zero : (direction < 0 && position <= .zero ? duration : position)
-		if direction > 0 { play(from: start, to: duration, speed: speed); return }
+		if direction > 0 {
+			play(from: start, to: duration, speed: speed)
+			if rate == speed { announce(shuttleLabel) }
+			return
+		}
 		do { try activateAudio() } catch { message = "Could not start audio. Check the audio output and try Play again."; return }
 		rate = -speed
+		announce(shuttleLabel)
 		state.position = start
 		reverseTask = Task { [weak self] in
 			guard let self else { return }
@@ -421,7 +429,7 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	private func playReverse(from start: CMTime, speed: Int) async throws {
+	private func playReverse(from start: CMTime, speed: Double) async throws {
 		let scale: CMTimeScale = 48000
 		let startFrame = CMTimeConvertScale(start, timescale: scale, method: .roundHalfAwayFromZero).value
 		var unread = startFrame
@@ -429,7 +437,8 @@ final class CuttingBoardSession: ObservableObject {
 		var played: Int64 = 0
 		let clock = ContinuousClock()
 		let began = clock.now
-		while played * Int64(speed) < startFrame {
+		var remaining = startFrame
+		while remaining > 0 {
 			try Task.checkCancellation()
 			// Queue contiguous blocks ahead of the render clock. Only the last block can be partial.
 			if hasAudio, unread > 0, scheduled - played < 16000 {
@@ -454,7 +463,9 @@ final class CuttingBoardSession: ObservableObject {
 				let elapsed = began.duration(to: clock.now).components
 				played = elapsed.seconds * Int64(scale) + Int64(Double(elapsed.attoseconds) * 48_000e-18)
 			}
-			let next = CMTime(value: max(0, startFrame - played * Int64(speed)), timescale: scale)
+			remaining = max(0, startFrame - Int64(Double(played) * speed))
+			if hasAudio && unread == 0 && played == scheduled { remaining = 0 }
+			let next = CMTime(value: remaining, timescale: scale)
 			if next != position {
 				state.position = next
 				if hasVideo { player.seek(to: next, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in }) }
@@ -474,7 +485,7 @@ final class CuttingBoardSession: ObservableObject {
 		play(from: selection.start, to: selection.end, speed: 1)
 	}
 
-	private func play(from start: CMTime, to end: CMTime, speed: Int) {
+	private func play(from start: CMTime, to end: CMTime, speed: Double) {
 		seek(start)
 		do { try activateAudio() } catch { message = "Could not start audio. Check the audio output and try Play again."; return }
 		player.currentItem?.forwardPlaybackEndTime = end
@@ -503,17 +514,17 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	private func pcmBuffer(_ samples: [Float], reverseSpeed: Int? = nil) -> AVAudioPCMBuffer? {
+	private func pcmBuffer(_ samples: [Float], reverseSpeed: Double? = nil) -> AVAudioPCMBuffer? {
 		let frames = samples.count / 2
 		let stride = reverseSpeed ?? 1
-		let length = (frames + stride - 1) / stride
+		let length = Int(ceil(Double(frames) / stride))
 		guard length > 0, let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(length)),
 			let channels = buffer.floatChannelData else { return nil }
 		buffer.frameLength = buffer.frameCapacity
 		for i in 0..<length {
 			if reverseSpeed != nil {
-				let end = frames - i * stride
-				let first = max(0, end - stride)
+				let end = frames - Int(Double(i) * stride)
+				let first = max(0, frames - Int(Double(i + 1) * stride))
 				for channel in 0..<2 {
 					var sum: Float = 0
 					for frame in first..<end { sum += samples[frame * 2 + channel] }

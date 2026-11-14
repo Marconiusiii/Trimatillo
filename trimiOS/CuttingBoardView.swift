@@ -26,7 +26,6 @@ extension CuttingBoardSession {
 struct CuttingBoardView: View {
 	@ObservedObject var session: CuttingBoardSession
 	var closeDirectTouchEditor: (() -> Void)?
-	@State private var increment = 1
 	@State private var showingDirectTouchEditor = false
 	@AccessibilityFocusState(for: .voiceOver) private var launcherFocused: Bool
 	@State private var preparing = false
@@ -112,19 +111,31 @@ struct CuttingBoardView: View {
 
 	private var transport: some View {
 		HStack(spacing: 0) {
-			transportButton("Rewind", "backward.fill") { session.shuttle(-1) }
+			transportButton("Rewind", "backward.fill", showsSpeed: session.rate < 0) { session.shuttle(-1) }
 			transportButton(session.rate == 0 ? "Play" : "Pause", session.rate == 0 ? "play.fill" : "pause.fill") { session.toggle() }
-			transportButton("Fast Forward", "forward.fill") { session.shuttle(1) }
+			transportButton("Fast Forward", "forward.fill", showsSpeed: session.rate > 0) { session.shuttle(1) }
 		}
 		.background(EditorTheme.surface)
 	}
 
-	private func transportButton(_ title: String, _ symbol: String, action: @escaping () -> Void) -> some View {
+	private func transportButton(_ title: String, _ symbol: String, showsSpeed: Bool = false, action: @escaping () -> Void) -> some View {
 		Button(action: action) {
 			Label { Text(title) } icon: { Image(systemName: symbol) }
 				.labelStyle(.iconOnly)
-				.accessibilityValue(symbol == "pause.fill" ? (session.rate < 0 ? "Reverse, \(-session.rate)×" : "Forward, \(session.rate)×") : "")
+				.accessibilityValue(symbol == "pause.fill" ? session.shuttleLabel : "")
 				.frame(maxWidth: .infinity, minHeight: 48)
+				.overlay(alignment: .topTrailing) {
+					if showsSpeed {
+						Text(session.speedLabel)
+							.font(.caption.weight(.semibold))
+							.foregroundStyle(EditorTheme.surface)
+							.padding(.horizontal, 5)
+							.background(EditorTheme.accent, in: Capsule())
+							.padding(2)
+							.accessibilityHidden(true)
+							.allowsHitTesting(false)
+					}
+				}
 				.contentShape(Rectangle())
 		}
 	}
@@ -140,17 +151,9 @@ struct CuttingBoardView: View {
 			}
 			.accessibilityActions { editActions(fromMenu: false) }
 			.sheet(item: sheetBinding(forMenu: false)) { editorSheet($0) }
-			Menu {
-				Picker("Step by", selection: $increment) {
-					Text(stepUnit(1)).tag(1)
-					Text(stepUnit(10)).tag(10)
-					Text("Edit point").tag(0)
-				}
-				.pickerStyle(.inline)
-			} label: { cell("Step by, " + stepUnit(increment)) }
 			HStack(spacing: 0) {
-				Button { move(false) } label: { cell(stepLabel(false)) }
-				Button { move(true) } label: { cell(stepLabel(true)) }
+				stepButton(forward: false)
+				stepButton(forward: true)
 			}
 			HStack(spacing: 0) {
 				markButton(true)
@@ -206,20 +209,19 @@ struct CuttingBoardView: View {
 			.contentShape(Rectangle())
 	}
 
-	private func stepUnit(_ amount: Int) -> String {
-		if amount == 0 { return "Edit point" }
-		if session.hasVideo { return amount == 1 ? "one frame" : "ten frames" }
-		return amount == 1 ? "one thirtieth of a second" : "one third of a second"
-	}
-
-	private func stepLabel(_ forward: Bool) -> String {
-		if increment == 0 { return forward ? "Next edit point" : "Previous edit point" }
-		return (forward ? "Forward " : "Back ") + stepUnit(increment)
-	}
-
-	private func move(_ forward: Bool) {
-		if increment == 0 { session.navigate(forward) }
-		else { session.step(forward ? increment : -increment) }
+	private func stepButton(forward: Bool) -> some View {
+		let direction = forward ? "Step Forward " : "Step Back "
+		let single = session.hasVideo ? "One Frame" : "One Thirtieth of a Second"
+		let ten = session.hasVideo ? "10 Frames" : "One Third of a Second"
+		return Button { session.step(forward ? 1 : -1) } label: {
+			cell(direction + single)
+		}
+		.accessibilityActions {
+			Button(direction + ten) { session.step(forward ? 10 : -10) }
+			Button(forward ? "Next Edit Point" : "Previous Edit Point") {
+				session.navigate(forward, spoken: true)
+			}
+		}
 	}
 
 	private func markButton(_ isIn: Bool) -> some View {
