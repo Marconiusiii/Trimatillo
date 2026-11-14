@@ -46,7 +46,7 @@ final class ShareViewController: UIViewController {
 			child.removeFromParent()
 		}
 		let host = UIHostingController(rootView: content.frame(maxWidth: .infinity, maxHeight: .infinity)
-			.background(EditorTheme.workspace).tint(EditorTheme.accent).editorAppearance())
+			.background(EditorTheme.workspace).editorAppearance())
 		addChild(host)
 		host.view.frame = view.bounds
 		host.view.autoresizingMask = [.flexibleWidth, .flexibleHeight]

@@ -5,6 +5,7 @@ import UniformTypeIdentifiers
 import AVFoundation
 
 struct ContentView: View {
+	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	@Environment(\.scenePhase) private var phase
 	@State private var session: CuttingBoardSession?
 	@State private var pickingFile = false
@@ -28,6 +29,7 @@ struct ContentView: View {
 				WelcomeView(loading: loading) {
 					ClipSourceMenu(title: "Trim a Clip", choose: present)
 						.buttonStyle(.borderedProminent)
+						.tint(color.fill)
 						.controlSize(.large)
 						.disabled(loading)
 						.photosPicker(isPresented: $pickingPhoto, selection: $photo, matching: .videos, photoLibrary: .shared())
@@ -53,7 +55,6 @@ struct ContentView: View {
 		.editorAppearance()
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
 		.background(EditorTheme.workspace)
-		.tint(EditorTheme.accent)
 		.onOpenURL { url in
 			guard url.isFileURL else { return }
 			incomingFiles.append(url)

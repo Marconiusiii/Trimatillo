@@ -30,7 +30,6 @@ struct HelpView: View {
 				.navigationBarTitleDisplayMode(.inline)
 			}
 		}
-		.tint(EditorTheme.accent)
 	}
 }
 
@@ -85,7 +84,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Play starts at the playhead. Pause holds the current position.",
 				"Fast Forward plays forward. Rewind plays backward. Repeat either control to advance through 1x, 1.5x, 2x, 4x, and 8x. Switching direction starts at 1x.",
 				"Step Back and Step Forward move one video frame at a time. For an audio clip, each step is one thirtieth of a second.",
-				"Choose Playhead to jump to a time. Enter seconds or hours, minutes, and seconds separated by colons, then choose Jump."
+				"Choose Playhead to jump to a time. Enter seconds or a time separated by colons. With Frames selected, enter a frame number. Choose Jump."
 			])]
 		case .cuts:
 			[HelpSection("Select a range", [
@@ -96,7 +95,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Trim Head to Playhead removes everything before the playhead. Trim Tail to Playhead removes everything after it.",
 				"Previous Edit Point and Next Edit Point move among joins, markers, and the start and end of the clip.",
 				"At a join, choose Adjust Edit Point in Edit Actions. Select the end of the preceding section or the start of the following section.",
-				"Use the Boundary stepper for a fine adjustment, or enter a source time and choose Set Boundary. Choose Play Across Edit to review the result.",
+				"Use the Boundary stepper for a fine adjustment, or enter a source time or frame number and choose Set Boundary. Choose Play Across Edit to review the result.",
 				"Choose Undo to reverse the last cut or boundary adjustment."
 			])]
 		case .actions:
@@ -157,9 +156,12 @@ private enum HelpTopic: String, CaseIterable {
 		case .settings:
 			[HelpSection("Preferences", [
 				"Open Settings on the welcome screen. Under Appearance, choose System to follow the device, or select Light or Dark.",
+				"Choose Control Color to set the color of buttons and the selected range. The shade follows the current appearance.",
+				"Under Editing, choose Timecode. Standard shows hours, minutes, and seconds. Milliseconds adds three decimal places.",
+				"Frames counts from zero. End is one past the last frame. For audio clips, each frame is one thirtieth of a second.",
 				"Turn on Shake to Undo under Editing to undo a cut by shaking your device. Shake to Undo must also be enabled in the device's Touch settings."
 			]), HelpSection("About and support", [
-				"Privacy Policy opens the policy in your browser. Send App Feedback opens an email draft addressed to Marco Salsiccia.",
+				"Send App Feedback opens an email draft addressed to Marco Salsiccia. Privacy Policy opens the policy in your browser.",
 				"Support Trimatillo lists available one-time tips with their App Store prices. Select an amount and confirm the purchase in the App Store sheet."
 			])]
 		}

@@ -9,12 +9,12 @@ enum BoardSheet: Identifiable, Hashable {
 }
 
 extension CuttingBoardSession {
-	var positionLabel: String {
+	func positionLabel(format: TimecodeFormat) -> String {
 		let name: String?
 		if position == .zero { name = "Start" }
 		else if position == duration { name = "End" }
 		else { name = currentJoin?.name }
-		return [name, Self.timecode(position)].compactMap { $0 }.joined(separator: ", ")
+		return [name, timecode(position, format: format)].compactMap { $0 }.joined(separator: ", ")
 	}
 
 	func showJoin() {
@@ -23,6 +23,8 @@ extension CuttingBoardSession {
 }
 
 struct CuttingBoardView: View {
+	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
+	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@ObservedObject var session: CuttingBoardSession
 	var closeDirectTouchEditor: (() -> Void)?
 	@State private var showingDirectTouchEditor = false
@@ -59,7 +61,6 @@ struct CuttingBoardView: View {
 			}
 		}
 		.background(EditorTheme.workspace)
-		.tint(EditorTheme.accent)
 		.alert("Cutting Board", isPresented: Binding(get: { !showingDirectTouchEditor && session.message != nil && session.sheet == nil }, set: { if !$0 { session.message = nil } })) {
 			Button("OK") { session.message = nil }
 		} message: { Text(session.message ?? "") }
@@ -131,7 +132,7 @@ struct CuttingBoardView: View {
 							.font(.caption.weight(.semibold))
 							.foregroundStyle(EditorTheme.surface)
 							.padding(.horizontal, 5)
-							.background(EditorTheme.accent, in: Capsule())
+							.background(color.accent, in: Capsule())
 							.padding(2)
 							.accessibilityHidden(true)
 							.allowsHitTesting(false)
@@ -148,7 +149,7 @@ struct CuttingBoardView: View {
 				session.stop()
 				session.sheet = .jump
 			} label: {
-				cell("Playhead, " + session.positionLabel)
+				cell("Playhead, " + session.positionLabel(format: format))
 			}
 			.accessibilityActions { editActions(fromMenu: false) }
 			.sheet(item: sheetBinding(forMenu: false)) { editorSheet($0) }
@@ -172,7 +173,7 @@ struct CuttingBoardView: View {
 			}
 		}
 		.buttonStyle(.plain)
-		.foregroundStyle(EditorTheme.accent)
+		.foregroundStyle(color.accent)
 		.background(EditorTheme.surface)
 	}
 
@@ -213,7 +214,7 @@ struct CuttingBoardView: View {
 		let time = isIn ? session.state.markIn : session.state.markOut
 		let name = isIn ? "In" : "Out"
 		return Button { session.mark(isIn) } label: {
-			cell("Mark " + name + (time.map { ", " + CuttingBoardSession.timecode($0) } ?? ""))
+			cell("Mark " + name + (time.map { ", " + session.timecode($0, format: format) } ?? ""))
 		}
 			.accessibilityActions {
 				if let time {
@@ -248,6 +249,7 @@ struct CuttingBoardView: View {
 }
 
 private struct BoardEditSheet: View {
+	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@ObservedObject var session: CuttingBoardSession
 	let sheet: BoardSheet
 	@Environment(\.dismiss) private var dismiss
@@ -264,6 +266,11 @@ private struct BoardEditSheet: View {
 		return preceding ? point.inTime : point.outTime
 	}
 
+	private var boundaryEntry: String {
+		if format == .frames { return String(session.frameNumber(at: boundary, sourceTime: point != nil)) }
+		return session.timecode(boundary, format: format)
+	}
+
 	var body: some View {
 		NavigationStack {
 			Form {
@@ -272,11 +279,11 @@ private struct BoardEditSheet: View {
 						Text("End of preceding section").tag(true)
 						Text("Start of following section").tag(false)
 					}
-					Stepper("Boundary, " + CuttingBoardSession.timecode(boundary),
+					Stepper("Boundary, " + session.timecode(boundary, format: format, sourceTime: true),
 						onIncrement: { adjust(by: 1) }, onDecrement: { adjust(by: -1) })
 					Button("Play Across Edit") { session.playAcross(point.time) }
 				}
-				TextField(point == nil ? "Playhead time" : "Source time", text: $entry)
+				TextField((point == nil ? "Playhead" : "Source") + (format == .frames ? " frame" : " time"), text: $entry)
 					.autocorrectionDisabled()
 					.onSubmit { submit() }
 				Button(point == nil ? "Jump" : "Set Boundary") { submit() }
@@ -286,14 +293,14 @@ private struct BoardEditSheet: View {
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar { Button("Done") { dismiss() } }
 		}
-		.onAppear { entry = CuttingBoardSession.timecode(boundary) }
+		.onAppear { entry = boundaryEntry }
 		.onChange(of: preceding) { _, _ in refresh() }
 		.onDisappear { session.message = nil }
 	}
 
 	private func refresh() {
 		error = nil
-		entry = CuttingBoardSession.timecode(boundary)
+		entry = boundaryEntry
 	}
 
 	private func adjust(by count: Int) {
@@ -304,19 +311,24 @@ private struct BoardEditSheet: View {
 	}
 
 	private func submit() {
-		guard let time = CuttingBoardSession.parse(entry) else {
-			error = "Enter seconds or hours:minutes:seconds."; return
+		let time: CMTime?
+		if entry == boundaryEntry { time = boundary }
+		else if format == .frames { time = Int64(entry).flatMap { session.time(atFrame: $0, sourceTime: point != nil) } }
+		else { time = CuttingBoardSession.parse(entry) }
+		guard let time else {
+			error = format == .frames ? "Enter a frame number within the clip." : "Enter seconds or hours:minutes:seconds."
+			return
 		}
 		if let point {
 			session.message = nil
-			if entry != CuttingBoardSession.timecode(boundary) {
+			if entry != boundaryEntry {
 				session.adjust(point.index, preceding: preceding, to: time, audible: true)
 			}
 			refresh()
 		} else if time <= session.duration {
 			session.seek(time)
 			dismiss()
-		} else { error = "Enter a time from zero through " + CuttingBoardSession.timecode(session.duration) + "." }
+		} else { error = "Enter a time from zero through " + session.timecode(session.duration, format: format) + "." }
 	}
 }
 
@@ -366,7 +378,6 @@ private struct ClipExportView: View {
 			FileSavePicker(file: rendered.url) { output = nil }
 		}
 		.interactiveDismissDisabled(destination != nil)
-		.tint(EditorTheme.accent)
 		.task(id: destination) {
 			guard let destination else { return }
 			do {
@@ -418,6 +429,7 @@ private struct FileSavePicker: UIViewControllerRepresentable {
 }
 
 struct ClipInfoView: View {
+	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	let session: CuttingBoardSession
 	@Environment(\.dismiss) private var dismiss
 	@State private var sections: [ClipInfoSection] = []
@@ -446,9 +458,8 @@ struct ClipInfoView: View {
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar { Button("Done") { dismiss() } }
 		}
-		.tint(EditorTheme.accent)
 		.accessibilityAction(.magicTap) { session.toggle() }
-		.task { sections = await session.clipInfo() }
+		.task(id: format) { sections = await session.clipInfo(format: format) }
 	}
 }
 
@@ -481,6 +492,7 @@ struct PrimaryCuttingBoard: View {
 			}
 			CuttingBoardView(session: session)
 		}
+		.editorAppearance()
 		.onDisappear { session.releaseAudio() }
 	}
 }

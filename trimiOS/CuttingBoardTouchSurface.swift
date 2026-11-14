@@ -3,11 +3,13 @@ import AVFoundation
 import UIKit
 
 struct CuttingBoardTouchSurface: UIViewRepresentable {
+	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	let session: CuttingBoardSession
 	let onClose: (() -> Void)?
 
 	func makeUIView(context: Context) -> TimelineSurface { TimelineSurface(session, onClose: onClose) }
 	func updateUIView(_ view: TimelineSurface, context: Context) {
+		view.controlColor = color
 		view.updatePosition()
 	}
 }
@@ -75,10 +77,14 @@ final class TimelineSurface: UIView {
 
 	@objc private func closeEditor() { onClose?() }
 
+	var controlColor = ControlColor.teal {
+		didSet { if oldValue != controlColor { applyColors() } }
+	}
+
 	private func applyColors() {
 		backgroundColor = UIColor(EditorTheme.surface)
 		cursor.backgroundColor = UIColor(EditorTheme.playhead).resolvedColor(with: traitCollection).cgColor
-		selection.backgroundColor = UIColor(EditorTheme.selection).resolvedColor(with: traitCollection).withAlphaComponent(0.65).cgColor
+		selection.backgroundColor = UIColor(controlColor.selection).resolvedColor(with: traitCollection).withAlphaComponent(0.65).cgColor
 	}
 
 	override func layoutSubviews() {

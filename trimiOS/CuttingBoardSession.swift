@@ -67,6 +67,7 @@ final class CuttingBoardSession: ObservableObject {
 	private var originalModification: Date?
 	private let tracks: [(AVAssetTrack, CMTimeRange)]
 	private let transform: CGAffineTransform
+	private let originalDuration: CMTime
 	private let sourceFrames: [CMTime]
 	private var frames: [CMTime] = []
 	private var history: [Snapshot] = []
@@ -142,6 +143,7 @@ final class CuttingBoardSession: ObservableObject {
 		self.transform = transform
 		self.hasVideo = hasVideo
 		self.hasAudio = hasAudio
+		originalDuration = duration
 		sourceFrames = frames
 		self.frames = frames
 		state = Snapshot(timeline: ClipEditTimeline(sourceDuration: duration))
@@ -413,8 +415,14 @@ final class CuttingBoardSession: ObservableObject {
 		var cursor = CMTime.zero
 		frames = snapshot.timeline.sourceRanges.flatMap { range -> [CMTime] in
 			defer { cursor = cursor + range.duration }
-			let slice = sourceFrames[sourceFrames.lowerBound(range.start)..<sourceFrames.lowerBound(range.end)]
-			return slice.map { cursor + ($0 - range.start) }
+			let first = sourceFrames.lowerBound(range.start)
+			let slice = sourceFrames[first..<sourceFrames.lowerBound(range.end)]
+			var starts = slice.map { cursor + ($0 - range.start) }
+			if first > 0, slice.first != range.start,
+				tracks.contains(where: { $0.0.mediaType == .video && $0.1.containsTime(range.start) }) {
+				starts.insert(cursor, at: 0)
+			}
+			return starts
 		}
 		installItem(composition)
 		seek(snapshot.position)
@@ -571,9 +579,35 @@ final class CuttingBoardSession: ObservableObject {
 		node.play()
 	}
 
-	static func timecode(_ time: CMTime) -> String {
-		let ms = Int((time.seconds * 1000).rounded())
-		return String(format: "%02d:%02d:%02d.%03d", ms / 3600000, ms / 60000 % 60, ms / 1000 % 60, ms % 1000)
+	func frameNumber(at time: CMTime, sourceTime: Bool = false) -> Int64 {
+		let timestamps = sourceTime ? sourceFrames : frames
+		let atEnd = time >= (sourceTime ? originalDuration : duration)
+		if timestamps.isEmpty {
+			return CMTimeConvertScale(time, timescale: 30, method: atEnd ? .roundTowardPositiveInfinity : .roundTowardZero).value
+		}
+		if atEnd { return Int64(timestamps.count) }
+		let index = timestamps.lowerBound(time)
+		if index < timestamps.count && timestamps[index] == time { return Int64(index) }
+		return Int64(max(0, index - 1))
+	}
+
+	func time(atFrame index: Int64, sourceTime: Bool) -> CMTime? {
+		let end = sourceTime ? originalDuration : duration
+		let count = frameNumber(at: end, sourceTime: sourceTime)
+		guard index >= 0, index <= count else { return nil }
+		if index == count { return end }
+		let timestamps = sourceTime ? sourceFrames : frames
+		return timestamps.isEmpty ? CMTime(value: index, timescale: 30) : timestamps[Int(index)]
+	}
+
+	func timecode(_ time: CMTime, format: TimecodeFormat, sourceTime: Bool = false) -> String {
+		if format == .frames { return "Frame \(frameNumber(at: time, sourceTime: sourceTime))" }
+		let milliseconds = format == .milliseconds
+		let ticks = CMTimeConvertScale(time, timescale: milliseconds ? 1000 : 1,
+			method: milliseconds ? .roundHalfAwayFromZero : .roundTowardZero).value
+		let seconds = milliseconds ? ticks / 1000 : ticks
+		let clock = String(format: "%02lld:%02lld:%02lld", seconds / 3600, seconds / 60 % 60, seconds % 60)
+		return milliseconds ? clock + String(format: ".%03lld", ticks % 1000) : clock
 	}
 
 	static func parse(_ text: String) -> CMTime? {
@@ -701,17 +735,20 @@ struct ClipInfoSection {
 }
 
 extension CuttingBoardSession {
-	func clipInfo() async -> [ClipInfoSection] {
+	func clipInfo(format: TimecodeFormat = .milliseconds) async -> [ClipInfoSection] {
 		let properties = try? source.url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
 		var file = ClipInfoSection(title: "File", rows: [("Filename", title)])
 		if let type = properties?.contentType?.localizedDescription { file.rows.append(("File type", type)) }
 		if let bytes = properties?.fileSize {
 			file.rows.append(("File size", ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)))
 		}
-		if let original = try? await source.load(.duration), original.isNumeric {
-			file.rows.append(("Source duration", Self.timecode(original)))
+		func durationLabel(_ end: CMTime, sourceTime: Bool) -> String {
+			guard format == .frames else { return timecode(end, format: format) }
+			let count = frameNumber(at: end, sourceTime: sourceTime)
+			return count == 1 ? "1 frame" : "\(count) frames"
 		}
-		file.rows.append(("Edited duration", Self.timecode(duration)))
+		file.rows.append(("Source duration", durationLabel(originalDuration, sourceTime: true)))
+		file.rows.append(("Edited duration", durationLabel(duration, sourceTime: false)))
 		var sections = [file]
 		for (index, track) in ((try? await source.load(.tracks)) ?? []).enumerated() {
 			var section = ClipInfoSection(title: "Track \(index + 1)", rows: [])

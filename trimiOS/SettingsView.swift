@@ -8,6 +8,8 @@ struct SettingsView: View {
 	@Environment(\.openURL) private var openURL
 	@AppStorage("appearance", store: EditorPreferences.shared) private var appearance = EditorAppearance.system
 	@AppStorage("shakeToUndo", store: EditorPreferences.shared) private var shake = true
+	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
+	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@State private var composing = false
 	@State private var mailFailed = false
 	@AccessibilityFocusState private var feedbackFocused: Bool
@@ -19,8 +21,14 @@ struct SettingsView: View {
 					Picker("Appearance", selection: $appearance) {
 						ForEach(EditorAppearance.allCases, id: \.self) { Text($0.rawValue).tag($0) }
 					}
+					Picker("Control Color", selection: $color) {
+						ForEach(ControlColor.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+					}
 				} header: { heading("Appearance") }
 				Section {
+					Picker("Timecode", selection: $format) {
+						ForEach(TimecodeFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+					}
 					Toggle("Shake to Undo", isOn: $shake)
 				} header: { heading("Editing") }
 				if !support.products.isEmpty {
@@ -34,9 +42,6 @@ struct SettingsView: View {
 					} header: { heading("Support Trimatillo") }
 				}
 				Section {
-					Link("Privacy Policy", destination: URL(string: "https://marconius.com/trimato/privacy/")!)
-						.accessibilityRemoveTraits(.isButton)
-						.accessibilityAddTraits(.isLink)
 					Button("Send App Feedback") {
 						if MFMailComposeViewController.canSendMail() {
 							composing = true
@@ -51,6 +56,9 @@ struct SettingsView: View {
 							mailFailed = failed
 						}
 					}
+					Link("Privacy Policy", destination: URL(string: "https://marconius.com/trimato/privacy/")!)
+						.accessibilityRemoveTraits(.isButton)
+						.accessibilityAddTraits(.isLink)
 				} header: { heading("About") } footer: {
 					let year = Calendar(identifier: .gregorian).component(.year, from: Date())
 					Text(verbatim: "© \(year) Marco Salsiccia, \(MailComposerView.version)")
@@ -68,7 +76,6 @@ struct SettingsView: View {
 			} message: { Text(support.notice ?? "") }
 			.task { await support.load() }
 		}
-		.tint(EditorTheme.accent)
 		.editorAppearance()
 	}
 

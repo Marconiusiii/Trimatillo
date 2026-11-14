@@ -93,7 +93,9 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 		case "[", "]": session.trim(head: command.input == "[")
 		case "\u{8}", UIKeyCommand.inputDelete: session.delete(session.selection)
 		case "z": session.undo()
-		case "t": UIAccessibility.post(notification: .announcement, argument: CuttingBoardSession.timecode(session.position))
+		case "t":
+			let format = EditorPreferences.shared.string(forKey: "timecodeFormat").flatMap(TimecodeFormat.init(rawValue:)) ?? .milliseconds
+			UIAccessibility.post(notification: .announcement, argument: session.timecode(session.position, format: format))
 		case "\r": session.showJoin()
 		default: break
 		}
