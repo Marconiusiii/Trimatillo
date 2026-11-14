@@ -80,7 +80,7 @@ private enum HelpTopic: String, CaseIterable {
 		case .first:
 			[HelpSection("Open a clip and trim its ends", numbered: true, [
 				"Choose Trim a Clip. Choose Photo Library for a video or Files for an audio or video clip. Select your clip.",
-				"Choose Play. Pause where you want the clip to begin. Use Step Back or Step Forward to move the playhead one frame at a time.",
+				"Choose Play. Pause where you want the clip to begin. Use Step Back or Step Forward to fine-tune the starting position.",
 				"Open Edit Actions and choose Trim Head to Playhead. The clip now starts at the position you chose.",
 				"Play or fast forward to where you want the clip to end. Pause and use the step buttons to refine the position.",
 				"Open Edit Actions and choose Trim Tail to Playhead. The clip now ends at that position."
@@ -104,7 +104,9 @@ private enum HelpTopic: String, CaseIterable {
 			[HelpSection("Move through a clip", [
 				"Play starts at the playhead. Pause holds the current position.",
 				"Fast Forward plays forward. Rewind plays backward. Repeat either control to advance through 1x, 1.5x, 2x, 4x, and 8x. Switching direction starts at 1x.",
-				"Step Back and Step Forward move one video frame at a time. For an audio clip, each step is one thirtieth of a second.",
+				"Step Back and Step Forward move to the previous or next frame in a video. In a clip with a variable frame rate, the time between steps can change as you move through it.",
+				"At 24 frames per second, one frame lasts about 41.7 milliseconds. At 60 it lasts about 16.7 milliseconds, and at 120 it lasts about 8.3 milliseconds.",
+				"In an audio-only clip, one step moves one thirtieth of a second. Ten steps move one third of a second.",
 				"Choose Playhead to jump to a time. Enter seconds or a time separated by colons. With Frames selected, enter a frame number. Choose Jump."
 			])]
 		case .cuts:
@@ -116,7 +118,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Trim Head to Playhead removes everything before the playhead. Trim Tail to Playhead removes everything after it.",
 				"Previous Edit Point and Next Edit Point move among joins, markers, and the start and end of the clip.",
 				"At a join, choose Adjust Edit Point in Edit Actions. The sheet shows the end of the preceding section and the start of the following section.",
-				"Step either boundary one frame at a time or enter a source time or frame number. Choose Save to apply both boundaries or Cancel to discard the adjustments.",
+				"In a video, step either boundary to the previous or next frame of the original clip. You can also enter a source time or frame number. Choose Save to apply both boundaries or Cancel to discard the adjustments.",
 				"Choose Undo to reverse a marker change, trim, deletion, or saved join adjustment. Repeat to undo earlier edits."
 			])]
 		case .actions:
@@ -129,8 +131,8 @@ private enum HelpTopic: String, CaseIterable {
 		case .touch:
 			[HelpSection("Open the editor", ["Choose Direct Touch Editor on the Cutting Board. Perform gestures on the editing surface below the heading and Close button."]),
 			HelpSection("One finger", [
-				"Swipe right to step forward one video frame or one thirtieth of a second in an audio clip.",
-				"Swipe left to step back one video frame or one thirtieth of a second in an audio clip.",
+				"Swipe right to step forward.",
+				"Swipe left to step back.",
 				"Touch and hold, then drag right or left to scrub forward or backward. Audio previews play as you move. Lift your finger to leave the playhead at that position.",
 				"Swipe down to mark In. Repeat at the marker to remove it, or swipe down at a new position to move it.",
 				"Swipe up to mark Out. Repeat at the marker to remove it, or swipe up at a new position to move it.",
@@ -181,7 +183,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Open Settings on the welcome screen. Under Appearance, choose System to follow the device, or select Light or Dark.",
 				"Choose Control Color to set the color of buttons and the selected range. The shade follows the current appearance.",
 				"Under Editing, choose Timecode. Standard shows hours, minutes, and seconds. Milliseconds adds three decimal places.",
-				"Frames counts from zero. End is one past the last frame. For audio clips, each frame is one thirtieth of a second.",
+				"Choose Frames to show the frame number in a video or the step number in an audio clip. Counting starts at zero. End is one past the last frame or step.",
 				"Turn on Shake to Undo under Editing to undo the last edit by shaking your device. Shake to Undo must also be enabled in the device's Touch settings."
 			]), HelpSection("About and support", [
 				"Send App Feedback opens an email draft addressed to Marco Salsiccia. Privacy Policy opens the policy in your browser.",

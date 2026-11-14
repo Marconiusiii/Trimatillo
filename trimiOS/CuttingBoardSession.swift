@@ -233,7 +233,7 @@ final class CuttingBoardSession: ObservableObject {
 		state.position = min(duration, max(.zero, time))
 		player.seek(to: position, toleranceBefore: .zero, toleranceAfter: .zero)
 		if audible && hasAudio {
-			let start = min(position, max(.zero, duration - audioStep))
+			let start = min(position, max(.zero, stepped(from: duration, by: -1)))
 			previewTask = Task { [weak self] in
 				guard let self else { return }
 				await self.preview(at: start)
@@ -253,7 +253,7 @@ final class CuttingBoardSession: ObservableObject {
 		state.position = next
 		if hasVideo { player.seek(to: next, toleranceBefore: .zero, toleranceAfter: .zero) }
 		guard hasAudio else { return }
-		pendingScrubTime = min(next, max(.zero, duration - audioStep))
+		pendingScrubTime = min(next, max(.zero, stepped(from: duration, by: -1)))
 		guard previewTask == nil else { return }
 		// Finish the current decode while newer touches replace the pending position.
 		previewTask = Task { [weak self] in
@@ -272,16 +272,18 @@ final class CuttingBoardSession: ObservableObject {
 		seek(time)
 	}
 
-	var audioStep: CMTime { CMTime(value: 1, timescale: 30) }
+	private var audioStep: CMTime { CMTime(value: 1, timescale: 30) }
 
 	func stepped(from time: CMTime, by count: Int, sourceTime: Bool = false) -> CMTime {
 		let times = sourceTime ? sourceFrames : frames
-		guard !times.isEmpty else { return time + CMTimeMultiply(audioStep, multiplier: Int32(count)) }
+		if !hasVideo { return time + CMTimeMultiply(audioStep, multiplier: Int32(count)) }
+		let end = sourceTime ? originalDuration : duration
+		guard !times.isEmpty else { return count > 0 ? end : .zero }
 		let index = times.lowerBound(time)
 		let base = count > 0 && (index == times.count || times[index] != time) ? index - 1 : index
 		let next = base + count
-		if next >= times.count { return sourceTime ? tracks.map { $0.1.end }.max() ?? duration : duration }
-		return times[max(0, next)]
+		if next >= times.count { return end }
+		return next < 0 ? .zero : times[next]
 	}
 
 	func step(_ count: Int) {
@@ -587,8 +589,8 @@ final class CuttingBoardSession: ObservableObject {
 	func frameNumber(at time: CMTime, sourceTime: Bool = false) -> Int64 {
 		let timestamps = sourceTime ? sourceFrames : frames
 		let atEnd = time >= (sourceTime ? originalDuration : duration)
-		if timestamps.isEmpty {
-			return CMTimeConvertScale(time, timescale: 30, method: atEnd ? .roundTowardPositiveInfinity : .roundTowardZero).value
+		if !hasVideo {
+			return CMTimeConvertScale(time, timescale: audioStep.timescale, method: atEnd ? .roundTowardPositiveInfinity : .roundTowardZero).value
 		}
 		if atEnd { return Int64(timestamps.count) }
 		let index = timestamps.lowerBound(time)
@@ -602,7 +604,7 @@ final class CuttingBoardSession: ObservableObject {
 		guard index >= 0, index <= count else { return nil }
 		if index == count { return end }
 		let timestamps = sourceTime ? sourceFrames : frames
-		return timestamps.isEmpty ? CMTime(value: index, timescale: 30) : timestamps[Int(index)]
+		return hasVideo ? timestamps[Int(index)] : CMTime(value: index, timescale: audioStep.timescale)
 	}
 
 	func timecode(_ time: CMTime, format: TimecodeFormat, sourceTime: Bool = false) -> String {
@@ -655,11 +657,30 @@ private actor MediaTimelineReader {
 		var times: [CMTime] = []
 		while let sample = output.copyNextSampleBuffer() {
 			try Task.checkCancellation()
-			guard CMSampleBufferGetNumSamples(sample) > 0 else { continue }
-			let time = CMSampleBufferGetOutputPresentationTimeStamp(sample)
-			if time.isNumeric, time >= .zero { times.append(time) }
+			let count = CMSampleBufferGetNumSamples(sample)
+			guard count > 0 else { continue }
+			let flags = CMSampleBufferGetSampleAttachmentsArray(sample, createIfNecessary: false) as? [[String: Any]]
+			let hiddenKey = kCMSampleAttachmentKey_DoNotDisplay as String
+			if count == 1 {
+				guard flags?.first?[hiddenKey] as? Bool != true else { continue }
+				let time = CMSampleBufferGetOutputPresentationTimeStamp(sample)
+				if time.isNumeric, time >= .zero { times.append(time) }
+				continue
+			}
+			var timing = Array(repeating: CMSampleTimingInfo(), count: count)
+			var entries = 0
+			guard CMSampleBufferGetOutputSampleTimingInfoArray(sample, entryCount: count,
+				arrayToFill: &timing, entriesNeededOut: &entries) == noErr,
+				entries == count || (entries == 1 && timing[0].duration.isNumeric && timing[0].duration > .zero)
+			else { throw CocoaError(.fileReadCorruptFile) }
+			var sharedTime = timing[0].presentationTimeStamp
+			for index in 0..<count {
+				let time = entries == 1 ? sharedTime : timing[index].presentationTimeStamp
+				if entries == 1 { sharedTime = sharedTime + timing[0].duration }
+				if flags?[index][hiddenKey] as? Bool != true, time.isNumeric, time >= .zero { times.append(time) }
+			}
 		}
-		guard reader.status == .completed else { throw reader.error ?? CocoaError(.fileReadCorruptFile) }
+		guard reader.status == .completed, !times.isEmpty else { throw reader.error ?? CocoaError(.fileReadCorruptFile) }
 		var previous = CMTime.invalid
 		return times.sorted().filter { time in
 			defer { previous = time }
