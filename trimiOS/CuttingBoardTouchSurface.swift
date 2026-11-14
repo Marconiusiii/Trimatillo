@@ -2,14 +2,33 @@ import SwiftUI
 import AVFoundation
 import UIKit
 
+extension DirectTouchScrubbing {
+	func time(at x: CGFloat, width: CGFloat, startX: CGFloat, origin: CMTime, duration: CMTime) -> CMTime {
+		guard width > 0 else { return origin }
+		let fraction = Double(min(width, max(0, x)) / width)
+		switch self {
+		case .absolute:
+			if fraction == 0 { return .zero }
+			if fraction == 1 { return duration }
+			return CMTime(seconds: fraction * duration.seconds, preferredTimescale: 600000)
+		case .relative:
+			let delta = (fraction - Double(startX / width)) * min(10, duration.seconds)
+			let time = origin + CMTime(seconds: delta, preferredTimescale: 600000)
+			return min(duration, max(.zero, time))
+		}
+	}
+}
+
 struct CuttingBoardTouchSurface: UIViewRepresentable {
 	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
+	@AppStorage("directTouchScrubbing", store: EditorPreferences.shared) private var scrubbing = DirectTouchScrubbing.absolute
 	let session: CuttingBoardSession
 	let onClose: (() -> Void)?
 
 	func makeUIView(context: Context) -> TimelineSurface { TimelineSurface(session, onClose: onClose) }
 	func updateUIView(_ view: TimelineSurface, context: Context) {
 		view.controlColor = color
+		view.scrubbing = scrubbing
 		view.updatePosition()
 	}
 }
@@ -21,6 +40,7 @@ final class TimelineSurface: UIView {
 	private let cursor = CALayer()
 	private var origin: CMTime = .zero
 	private let onClose: (() -> Void)?
+	var scrubbing = DirectTouchScrubbing.absolute
 	private var scrubStartX: CGFloat = 0
 	private var scrubGeneration: Int?
 	private var previousSize = CGSize.zero
@@ -58,7 +78,10 @@ final class TimelineSurface: UIView {
 		addGestureRecognizer(joinTap)
 
 		let hold = UILongPressGestureRecognizer(target: self, action: #selector(scrub(_:)))
+		hold.numberOfTapsRequired = 1
 		hold.minimumPressDuration = 0.35
+		joinTap.require(toFail: hold)
+		closeTap.require(toFail: hold)
 		addGestureRecognizer(hold)
 		for (count, directions) in [(1, [UISwipeGestureRecognizer.Direction.left, .right, .up, .down]),
 			(2, [.left, .right, .down]),
@@ -120,21 +143,23 @@ final class TimelineSurface: UIView {
 
 	@objc private func scrub(_ hold: UILongPressGestureRecognizer) {
 		let x = hold.location(in: self).x
+		func target() -> CMTime {
+			scrubbing.time(at: x, width: bounds.width, startX: scrubStartX, origin: origin, duration: session.duration)
+		}
 		switch hold.state {
 		case .began:
-			scrubGeneration = session.beginScrub()
+			let generation = session.beginScrub()
+			scrubGeneration = generation
 			scrubStartX = x
 			origin = session.position
-		case .changed, .ended:
+			session.scrub(to: target(), generation: generation, initial: true)
+		case .changed:
 			guard let generation = scrubGeneration else { return }
-			let seconds = Double((x - scrubStartX) / max(1, bounds.width)) * min(10, session.duration.seconds)
-			let time = origin + CMTime(seconds: seconds, preferredTimescale: 600000)
-			if hold.state == .ended {
-				session.endScrub(at: time, generation: generation)
-				scrubGeneration = nil
-			} else {
-				session.scrub(to: time, generation: generation)
-			}
+			session.scrub(to: target(), generation: generation)
+		case .ended:
+			guard let generation = scrubGeneration else { return }
+			session.endScrub(at: target(), generation: generation)
+			scrubGeneration = nil
 		case .cancelled, .failed:
 			if let generation = scrubGeneration {
 				session.endScrub(at: session.position, generation: generation)

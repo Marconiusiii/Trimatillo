@@ -135,7 +135,7 @@ private enum HelpTopic: String, CaseIterable {
 			HelpSection("One finger", [
 				"Swipe right to step forward.",
 				"Swipe left to step back.",
-				"Touch and hold, then drag right or left to scrub forward or backward. Audio previews play as you move. Lift your finger to leave the playhead at that position.",
+				"Double-tap and hold the second tap to scrub. Drag left or right to preview the clip, then lift to leave the playhead there.",
 				"Swipe down to mark In. Repeat at the marker to remove it, or swipe down at a new position to move it.",
 				"Swipe up to mark Out. Repeat at the marker to remove it, or swipe up at a new position to move it.",
 				"Double-tap at a join to open its boundaries. Choose Save or Cancel to return to Direct Touch Editing.",
@@ -152,6 +152,11 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Four fingers", [
 				"Swipe right to trim the head of the clip to the playhead.",
 				"Swipe left to trim the tail of the clip to the playhead."
+			]), HelpSection("Direct Touch Scrubbing", [
+				"In Settings, choose Direct Touch Scrubbing under Editing.",
+				"Absolute is the default. The left edge is the start of the edited clip, the center is halfway through, and the right edge is the end. The playhead jumps to your finger as soon as the hold begins.",
+				"Relative starts each drag at the current playhead. On clips ten seconds or longer, dragging from the center to either edge moves five seconds. On shorter clips, the full width spans the clip's duration.",
+				"To continue in Relative mode, lift and start another double-tap and hold. You can start anywhere on the surface, including back at the center."
 			])]
 		case .keys:
 			[HelpSection("On the primary Cutting Board", [

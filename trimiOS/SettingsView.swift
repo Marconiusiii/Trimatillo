@@ -10,6 +10,7 @@ struct SettingsView: View {
 	@AppStorage("shakeToUndo", store: EditorPreferences.shared) private var shake = true
 	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
+	@AppStorage("directTouchScrubbing", store: EditorPreferences.shared) private var scrubbing = DirectTouchScrubbing.absolute
 	@State private var composing = false
 	@State private var mailFailed = false
 	@AccessibilityFocusState private var feedbackFocused: Bool
@@ -35,6 +36,9 @@ struct SettingsView: View {
 				Section {
 					Picker("Timecode", selection: $format) {
 						ForEach(TimecodeFormat.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+					}
+					Picker("Direct Touch Scrubbing", selection: $scrubbing) {
+						ForEach(DirectTouchScrubbing.allCases, id: \.self) { Text($0.rawValue).tag($0) }
 					}
 					Toggle("Shake to Undo", isOn: $shake)
 				} header: { heading("Editing") }

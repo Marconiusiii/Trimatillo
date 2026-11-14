@@ -74,6 +74,11 @@ enum ControlColor: String, CaseIterable {
 	}
 }
 
+enum DirectTouchScrubbing: String, CaseIterable {
+	case absolute = "Absolute"
+	case relative = "Relative"
+}
+
 enum TimecodeFormat: String, CaseIterable {
 	case milliseconds = "Milliseconds"
 	case standard = "Standard"

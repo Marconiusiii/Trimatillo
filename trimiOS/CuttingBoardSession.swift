@@ -246,10 +246,10 @@ final class CuttingBoardSession: ObservableObject {
 		return seekGeneration
 	}
 
-	func scrub(to time: CMTime, generation: Int) {
+	func scrub(to time: CMTime, generation: Int, initial: Bool = false) {
 		guard generation == seekGeneration else { return }
 		let next = min(duration, max(.zero, time))
-		guard next != position else { return }
+		guard initial || next != position else { return }
 		state.position = next
 		if hasVideo { player.seek(to: next, toleranceBefore: .zero, toleranceAfter: .zero) }
 		guard hasAudio else { return }
