@@ -65,7 +65,9 @@ struct SettingsView: View {
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
 			.navigationTitle("Settings")
-			.toolbar { Button("Done") { dismiss() } }
+			.toolbar {
+				ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
+			}
 			.alert("Send App Feedback", isPresented: $mailFailed) {
 				Button("OK") { feedbackFocused = true }
 			} message: { Text("Email marco@marconius.com with your feedback.") }

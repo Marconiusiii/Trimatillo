@@ -15,7 +15,9 @@ struct HelpView: View {
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
 			.navigationTitle("Trimatillo Help")
-			.toolbar { Button("Done") { dismiss() } }
+			.toolbar {
+				ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
+			}
 			.navigationDestination(for: HelpTopic.self) { topic in
 				List {
 					Text(topic.introduction).listRowBackground(EditorTheme.surface)

@@ -292,7 +292,9 @@ private struct JumpSheet: View {
 			}
 			.navigationTitle("Jump to Time")
 			.navigationBarTitleDisplayMode(.inline)
-			.toolbar { Button("Done") { dismiss() } }
+			.toolbar {
+				ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
+			}
 		}
 		.onAppear { entry = TimeEntry(session.position, session: session, format: format, source: false) }
 	}
@@ -500,7 +502,9 @@ struct ClipInfoView: View {
 			.background(EditorTheme.workspace)
 			.navigationTitle("Clip Info")
 			.navigationBarTitleDisplayMode(.inline)
-			.toolbar { Button("Done") { dismiss() } }
+			.toolbar {
+				ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
+			}
 		}
 		.accessibilityAction(.magicTap) { session.toggle() }
 		.task(id: format) { sections = await session.clipInfo(format: format) }
