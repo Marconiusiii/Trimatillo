@@ -14,6 +14,13 @@ struct SettingsView: View {
 	@State private var mailFailed = false
 	@AccessibilityFocusState private var feedbackFocused: Bool
 
+	@Environment(\.scenePhase) private var scenePhase
+	@AccessibilityFocusState(for: .voiceOver) private var focusedOption: String?
+	@State private var selectedOption: String?
+	@State private var returnFocus: String?
+	@State private var confirmation: SupportStore.Receipt?
+	@State private var notice: String?
+
 	var body: some View {
 		NavigationStack {
 			Form {
@@ -31,23 +38,7 @@ struct SettingsView: View {
 					}
 					Toggle("Shake to Undo", isOn: $shake)
 				} header: { heading("Editing") }
-				Section {
-					ForEach(support.products) { product in
-						Button {
-							Task { await support.buy(product) }
-						} label: { LabeledContent(product.displayName, value: product.displayPrice) }
-					}
-					.disabled(support.purchasing)
-					switch support.catalogState {
-					case .idle, .loading:
-						ProgressView("Loading support options")
-					case .incomplete:
-						Text("Some support options could not be loaded.")
-						Button("Retry") { Task { await support.load() } }
-					case .available:
-						EmptyView()
-					}
-				} header: { heading("Support Trimatillo") }
+				supportSection
 				Section {
 					Button("Send App Feedback") {
 						if MFMailComposeViewController.canSendMail() {
@@ -78,15 +69,72 @@ struct SettingsView: View {
 			.alert("Send App Feedback", isPresented: $mailFailed) {
 				Button("OK") { feedbackFocused = true }
 			} message: { Text("Email marco@marconius.com with your feedback.") }
-			.alert("Support Trimatillo", isPresented: Binding(get: { support.notice != nil }, set: { if !$0 { support.notice = nil } })) {
-				Button("OK") { support.notice = nil }
-			} message: { Text(support.notice ?? "") }
-			.task { await support.load() }
 		}
 		.editorAppearance()
+		.task { await support.load() }
+		.task(id: scenePhase == .active && !support.purchasing ? returnFocus : nil) {
+			guard scenePhase == .active, !support.purchasing, let returnFocus else { return }
+			focusedOption = returnFocus
+			self.returnFocus = nil
+		}
+		.sheet(item: $confirmation, onDismiss: { returnFocus = selectedOption }) { receipt in
+			ScrollView {
+				VStack(alignment: .leading, spacing: 16) {
+					Text("Contribution Received").font(.title2).accessibilityAddTraits(.isHeader)
+					Text(support.thankYou(for: receipt))
+					Button("Done") { confirmation = nil }
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+				.padding()
+			}
+			.presentationBackground(EditorTheme.workspace)
+			.editorAppearance()
+		}
+		.alert("Support Trimatillo", isPresented: Binding(get: { notice != nil }, set: {
+			if !$0 { notice = nil; returnFocus = selectedOption }
+		})) {
+			Button("OK") {}
+		} message: { Text(notice ?? "") }
 	}
 
 	private func heading(_ title: String) -> some View {
 		Text(title).accessibilityAddTraits(.isHeader)
+	}
+
+	private var supportSection: some View {
+		Section {
+			Text("If Trimatillo helps you make the cut, you can support future updates with a one-time contribution. Thanks for pitching in!")
+			if let latest = support.latest { Text(support.thankYou(for: latest)) }
+			if support.catalogState == .loading || support.catalogState == .idle {
+				ProgressView("Loading support options")
+			}
+			ForEach(SupportStore.options) { option in
+				let product = support.products[option.id]
+				Button {
+					Task { await purchase(option) }
+				} label: {
+					LabeledContent(product?.displayName ?? option.name, value: product?.displayPrice ?? "Price unavailable")
+				}
+				.disabled(product == nil || support.purchasing)
+				.accessibilityFocused($focusedOption, equals: option.id)
+			}
+			if support.catalogState == .incomplete {
+				Text("Some support options could not be loaded.")
+				Button("Retry") { Task { await support.load() } }
+			}
+		} header: {
+			Text("Support Trimatillo").accessibilityAddTraits(.isHeader)
+		}
+	}
+
+	private func purchase(_ option: SupportStore.Option) async {
+		selectedOption = option.id
+		switch await support.buy(option) {
+		case .received(let receipt): confirmation = receipt
+		case .cancelled: returnFocus = option.id
+		case .pending: notice = "Your purchase is waiting for approval."
+		case .unverified: notice = "The App Store could not verify this purchase. Check your purchase history."
+		case .failed: notice = "Could not complete the purchase. Check your App Store account and try again."
+		}
 	}
 }
