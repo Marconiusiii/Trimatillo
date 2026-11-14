@@ -29,6 +29,17 @@ final class BoardController: UIHostingController<CuttingBoardView> {
 		becomeFirstResponder()
 	}
 
+	override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+		guard motion == .motionShake, presentedViewController == nil, session.sheet == nil,
+			UIAccessibility.isShakeToUndoEnabled,
+			UserDefaults.standard.object(forKey: "shakeToUndo") as? Bool ?? true,
+			session.canUndo else {
+			super.motionEnded(motion, with: event)
+			return
+		}
+		session.undo()
+	}
+
 	override func accessibilityPerformMagicTap() -> Bool {
 		session.toggle()
 		return true

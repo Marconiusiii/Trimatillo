@@ -59,6 +59,7 @@ final class CuttingBoardSession: ObservableObject {
 	private var editAsset: AVAsset
 	private var reverseTask: Task<Void, Never>?
 	private var previewTask: Task<Void, Never>?
+	private var pendingScrubTime: CMTime?
 	private let engine = AVAudioEngine()
 	private let node = AVAudioPlayerNode()
 	private let audioFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
@@ -181,6 +182,8 @@ final class CuttingBoardSession: ObservableObject {
 		reverseTask?.cancel()
 		reverseTask = nil
 		previewTask?.cancel()
+		previewTask = nil
+		pendingScrubTime = nil
 		node.stop()
 	}
 
@@ -215,6 +218,37 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
+	func beginScrub() -> Int {
+		stop()
+		return seekGeneration
+	}
+
+	func scrub(to time: CMTime, generation: Int) {
+		guard generation == seekGeneration else { return }
+		let next = min(duration, max(.zero, time))
+		guard next != position else { return }
+		state.position = next
+		if hasVideo { player.seek(to: next, toleranceBefore: .zero, toleranceAfter: .zero) }
+		guard hasAudio else { return }
+		pendingScrubTime = min(next, max(.zero, duration - audioStep))
+		guard previewTask == nil else { return }
+		// Finish the current decode while newer touches replace the pending position.
+		previewTask = Task { [weak self] in
+			guard let self else { return }
+			defer { if generation == self.seekGeneration { self.previewTask = nil } }
+			while !Task.isCancelled, let point = self.pendingScrubTime {
+				self.pendingScrubTime = nil
+				await self.preview(at: point)
+				do { try await Task.sleep(for: .milliseconds(65)) } catch { return }
+			}
+		}
+	}
+
+	func endScrub(at time: CMTime, generation: Int) {
+		guard generation == seekGeneration else { return }
+		seek(time)
+	}
+
 	var audioStep: CMTime { CMTime(value: 1, timescale: 30) }
 
 	func stepped(from time: CMTime, by count: Int, sourceTime: Bool = false) -> CMTime {
@@ -227,36 +261,80 @@ final class CuttingBoardSession: ObservableObject {
 		return times[max(0, next)]
 	}
 
-	func step(_ count: Int) { seek(stepped(from: position, by: count), audible: true) }
-
-	func navigate(_ forward: Bool) {
-		let stops = state.timeline.editPoints.map(\.time) + [state.markIn, state.markOut, .zero, duration].compactMap { $0 }
-		let next = forward ? stops.filter { $0 > position }.min() : stops.filter { $0 < position }.max()
-		seek(next ?? (forward ? duration : .zero))
+	func step(_ count: Int) {
+		stop()
+		let previous = position
+		let next = min(duration, max(.zero, stepped(from: previous, by: count)))
+		guard previous != next else { return }
+		seek(next)
+		guard hasAudio else { return }
+		let start = next == duration ? max(.zero, stepped(from: next, by: -1)) : next
+		let end = min(duration, stepped(from: start, by: 1))
+		previewTask = Task { [weak self] in await self?.preview(at: start, length: (end - start).seconds) }
 	}
 
-	func mark(_ isIn: Bool) {
+	private func announce(_ text: String) {
+		if UIAccessibility.isVoiceOverRunning {
+			UIAccessibility.post(notification: .announcement, argument: text)
+		}
+	}
+
+	func navigate(_ forward: Bool, spoken: Bool = false) {
+		let stops = state.timeline.editPoints.map(\.time) + [state.markIn, state.markOut, .zero, duration].compactMap { $0 }
+		let next = forward ? stops.filter { $0 > position }.min() : stops.filter { $0 < position }.max()
+		guard let next else { return }
+		seek(next)
+		if spoken {
+			var names: [String] = []
+			if next == .zero { names.append("Start") }
+			if let join = currentJoin { names.append(join.name) }
+			if next == state.markIn { names.append("In point") }
+			if next == state.markOut { names.append("Out point") }
+			if next == duration { names.append("End") }
+			announce(names.joined(separator: ", "))
+		}
+	}
+
+	func mark(_ isIn: Bool, toggleAtPlayhead: Bool = false) {
 		let now = rate > 0 && player.rate > 0 ? player.currentTime() : position
-		if isIn { state.markIn = min(duration, max(.zero, now)) }
-		else { state.markOut = min(duration, max(.zero, now)) }
+		let time = min(duration, max(.zero, now))
+		if toggleAtPlayhead, (isIn ? state.markIn : state.markOut) == time {
+			clear(isIn)
+			announce(isIn ? "In Removed" : "Out Removed")
+			return
+		}
+		if isIn { state.markIn = time } else { state.markOut = time }
+		if toggleAtPlayhead { announce(isIn ? "Marked In" : "Marked Out") }
 	}
 
 	func clear(_ isIn: Bool) {
 		if isIn { state.markIn = nil } else { state.markOut = nil }
 	}
 
-	func delete(_ range: CMTimeRange?) {
-		guard let range else { message = "Set In before Out to delete a marked range."; return }
+	func delete(_ range: CMTimeRange?, spoken: Bool = false) {
+		guard removeRange(range), spoken else { return }
+		announce(["Content deleted", currentJoin?.name].compactMap { $0 }.joined(separator: ", "))
+	}
+
+	private func removeRange(_ range: CMTimeRange?) -> Bool {
+		guard let range else { message = "Set In before Out to delete a marked range."; return false }
 		do {
 			var timeline = state.timeline
 			try timeline.delete(editedRange: range)
 			try apply(Snapshot(timeline: timeline, position: range.start), record: true)
-		} catch { message = error.localizedDescription }
+			return true
+		} catch {
+			message = error.localizedDescription
+			return false
+		}
 	}
 
-	func trim(head: Bool) {
+	func trim(head: Bool, spoken: Bool = false) {
 		let point = rate > 0 && player.rate > 0 ? player.currentTime() : position
-		delete(CMTimeRange(start: head ? .zero : point, end: head ? point : duration))
+		let range = CMTimeRange(start: head ? .zero : point, end: head ? point : duration)
+		if removeRange(range), spoken {
+			announce(head ? "Head trimmed to playhead" : "Tail trimmed to playhead")
+		}
 	}
 
 	func adjust(_ index: Int, preceding: Bool, to time: CMTime, audible: Bool) {
@@ -329,15 +407,59 @@ final class CuttingBoardSession: ObservableObject {
 		rate = -speed
 		state.position = start
 		reverseTask = Task { [weak self] in
-			while !Task.isCancelled, let self, self.position > .zero {
-				let interval = CMTime(value: 1, timescale: 5)
-				let next = max(.zero, self.position - CMTimeMultiply(interval, multiplier: Int32(speed)))
-				self.state.position = next
-				self.player.seek(to: next, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
-				if self.hasAudio { await self.preview(at: next, reversed: true) }
-				do { try await Task.sleep(for: .milliseconds(200)) } catch { return }
+			guard let self else { return }
+			do {
+				try await self.playReverse(from: start, speed: speed)
+				try Task.checkCancellation()
+				self.seek(.zero)
+			} catch {
+				if !Task.isCancelled {
+					self.stop()
+					self.message = "Reverse playback failed. Check the audio output and try Rewind again."
+				}
 			}
-			if !Task.isCancelled { self?.rate = 0 }
+		}
+	}
+
+	private func playReverse(from start: CMTime, speed: Int) async throws {
+		let scale: CMTimeScale = 48000
+		let startFrame = CMTimeConvertScale(start, timescale: scale, method: .roundHalfAwayFromZero).value
+		var unread = startFrame
+		var scheduled: Int64 = 0
+		var played: Int64 = 0
+		let clock = ContinuousClock()
+		let began = clock.now
+		while played * Int64(speed) < startFrame {
+			try Task.checkCancellation()
+			// Queue contiguous blocks ahead of the render clock. Only the last block can be partial.
+			if hasAudio, unread > 0, scheduled - played < 16000 {
+				let count = min(unread, Int64(8192 * speed))
+				let first = unread - count
+				let samples = try await FrameAudioSamples.read(asset: editAsset, mix: nil,
+					at: CMTime(value: first, timescale: scale), length: Double(count) / Double(scale))
+				try Task.checkCancellation()
+				guard let buffer = pcmBuffer(samples, reverseSpeed: speed) else { throw CocoaError(.fileReadCorruptFile) }
+				if !engine.isRunning { try engine.start() }
+				enqueue(buffer)
+				scheduled += Int64(buffer.frameLength)
+				unread = first
+				if !node.isPlaying && (scheduled >= 16000 || unread == 0) { node.play() }
+				continue
+			}
+			if hasAudio {
+				if let render = node.lastRenderTime, let time = node.playerTime(forNodeTime: render) {
+					played = max(0, min(scheduled, time.sampleTime))
+				}
+			} else {
+				let elapsed = began.duration(to: clock.now).components
+				played = elapsed.seconds * Int64(scale) + Int64(Double(elapsed.attoseconds) * 48_000e-18)
+			}
+			let next = CMTime(value: max(0, startFrame - played * Int64(speed)), timescale: scale)
+			if next != position {
+				state.position = next
+				if hasVideo { player.seek(to: next, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in }) }
+			}
+			try await Task.sleep(for: .milliseconds(16))
 		}
 	}
 
@@ -366,21 +488,13 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	private func preview(at time: CMTime, reversed: Bool = false) async {
+	private func preview(at time: CMTime, length: Double = 0.2) async {
 		do {
-			let samples = try await FrameAudioSamples.read(asset: editAsset, mix: nil, at: time)
+			let samples = try await FrameAudioSamples.read(asset: editAsset, mix: nil, at: time, length: length)
 			try Task.checkCancellation()
 			guard !samples.isEmpty else { return }
 			try activateAudio()
-			let count = samples.count / 2
-			guard let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(count)),
-				let channels = buffer.floatChannelData else { return }
-			buffer.frameLength = buffer.frameCapacity
-			for i in 0..<count {
-				let source = reversed ? count - 1 - i : i
-				channels[0][i] = samples[source * 2]
-				channels[1][i] = samples[source * 2 + 1]
-			}
+			guard let buffer = pcmBuffer(samples) else { return }
 			node.stop()
 			if !engine.isRunning { try engine.start() }
 			playBuffer(buffer)
@@ -389,8 +503,36 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	private func playBuffer(_ buffer: AVAudioPCMBuffer) {
+	private func pcmBuffer(_ samples: [Float], reverseSpeed: Int? = nil) -> AVAudioPCMBuffer? {
+		let frames = samples.count / 2
+		let stride = reverseSpeed ?? 1
+		let length = (frames + stride - 1) / stride
+		guard length > 0, let buffer = AVAudioPCMBuffer(pcmFormat: audioFormat, frameCapacity: AVAudioFrameCount(length)),
+			let channels = buffer.floatChannelData else { return nil }
+		buffer.frameLength = buffer.frameCapacity
+		for i in 0..<length {
+			if reverseSpeed != nil {
+				let end = frames - i * stride
+				let first = max(0, end - stride)
+				for channel in 0..<2 {
+					var sum: Float = 0
+					for frame in first..<end { sum += samples[frame * 2 + channel] }
+					channels[channel][i] = sum / Float(end - first)
+				}
+			} else {
+				channels[0][i] = samples[i * 2]
+				channels[1][i] = samples[i * 2 + 1]
+			}
+		}
+		return buffer
+	}
+
+	private func enqueue(_ buffer: AVAudioPCMBuffer) {
 		node.scheduleBuffer(buffer)
+	}
+
+	private func playBuffer(_ buffer: AVAudioPCMBuffer) {
+		enqueue(buffer)
 		node.play()
 	}
 
@@ -459,14 +601,14 @@ nonisolated enum FrameAudioSamples {
 
 	private static let decoder = FrameAudioDecoder()
 
-	static func read(asset: AVAsset, mix: AVAudioMix?, at time: CMTime) async throws -> [Float] {
-		try await decoder.read(asset: asset, mix: mix, at: time)
+	static func read(asset: AVAsset, mix: AVAudioMix?, at time: CMTime, length: Double = 0.2) async throws -> [Float] {
+		try await decoder.read(asset: asset, mix: mix, at: time, length: length)
 	}
 }
 
 /// Only one blocking reader runs at a time, even during rapid replacement requests.
 private actor FrameAudioDecoder {
-	func read(asset: AVAsset, mix: AVAudioMix?, at time: CMTime) async throws -> [Float] {
+	func read(asset: AVAsset, mix: AVAudioMix?, at time: CMTime, length: Double = 0.2) async throws -> [Float] {
 		try Task.checkCancellation()
 		let sampleRate = FrameAudioSamples.sampleRate
 		let channels = FrameAudioSamples.channels
@@ -475,11 +617,16 @@ private actor FrameAudioDecoder {
 		guard !tracks.isEmpty else { return [] }
 		let duration = try await asset.load(.duration)
 		guard duration.isNumeric else { return [] }
-		let length = min(0.2, max(0, duration.seconds - time.seconds))
+		let length = min(length, max(0, duration.seconds - time.seconds))
 		guard length > 0 else { return [] }
 		try Task.checkCancellation()
 		let reader = try AVAssetReader(asset: asset)
-		reader.timeRange = CMTimeRange(start: time, duration: CMTime(seconds: length, preferredTimescale: 48_000))
+		// Decode a little context around the requested interval. Some renderers
+		// round the first or last packet at a non-packet-aligned reader boundary.
+		// Copy only samples whose timestamps fall inside the requested buffer.
+		let context = CMTime(value: 1024, timescale: 48_000)
+		let end = time + CMTime(seconds: length, preferredTimescale: 48_000)
+		reader.timeRange = CMTimeRange(start: max(.zero, time - context), end: min(duration, end + context))
 		let output = AVAssetReaderAudioMixOutput(audioTracks: tracks, audioSettings: [
 			AVFormatIDKey: kAudioFormatLinearPCM, AVSampleRateKey: sampleRate,
 			AVNumberOfChannelsKey: channels, AVLinearPCMIsFloatKey: true,
@@ -510,5 +657,98 @@ private actor FrameAudioDecoder {
 		}
 		guard reader.status == .completed else { throw reader.error ?? CocoaError(.fileReadUnknown) }
 		return samples
+	}
+}
+
+struct ClipInfoSection {
+	let title: String
+	var rows: [(key: String, value: String)]
+}
+
+extension CuttingBoardSession {
+	func clipInfo() async -> [ClipInfoSection] {
+		let properties = try? source.url.resourceValues(forKeys: [.fileSizeKey, .contentTypeKey])
+		var file = ClipInfoSection(title: "File", rows: [("Filename", title)])
+		if let type = properties?.contentType?.localizedDescription { file.rows.append(("File type", type)) }
+		if let bytes = properties?.fileSize {
+			file.rows.append(("File size", ByteCountFormatter.string(fromByteCount: Int64(bytes), countStyle: .file)))
+		}
+		if let original = try? await source.load(.duration), original.isNumeric {
+			file.rows.append(("Source duration", Self.timecode(original)))
+		}
+		file.rows.append(("Edited duration", Self.timecode(duration)))
+		var sections = [file]
+		for (index, track) in ((try? await source.load(.tracks)) ?? []).enumerated() {
+			var section = ClipInfoSection(title: "Track \(index + 1)", rows: [])
+			let type = track.mediaType
+			section.rows.append(("Type", type == .video ? "Video" : type == .audio ? "Audio" : type.rawValue))
+			if let language = try? await track.load(.extendedLanguageTag) {
+				section.rows.append(("Language", Locale.current.localizedString(forIdentifier: language) ?? language))
+			}
+			if type == .video {
+				if let size = try? await track.load(.naturalSize), let transform = try? await track.load(.preferredTransform) {
+					let rect = CGRect(origin: .zero, size: size).applying(transform)
+					section.rows.append(("Dimensions", "\(Int(rect.width)) by \(Int(rect.height)) pixels"))
+				}
+				if let fps = try? await track.load(.nominalFrameRate), fps > 0 {
+					section.rows.append(("Frame rate", "\(fps.formatted(.number.precision(.fractionLength(0...3)))) frames per second"))
+				}
+			}
+			if let rate = try? await track.load(.estimatedDataRate), rate > 0 {
+				section.rows.append(("Estimated bit rate", "\(Int(rate).formatted()) bits per second"))
+			}
+			for format in (try? await track.load(.formatDescriptions)) ?? [] {
+				let code = CMFormatDescriptionGetMediaSubType(format)
+				let bytes = [24, 16, 8, 0].map { UInt8(truncatingIfNeeded: code >> $0) }
+				section.rows.append(("Codec", String(bytes: bytes, encoding: .ascii)?.trimmingCharacters(in: .whitespaces) ?? String(code)))
+				if type == .audio, let audio = CMAudioFormatDescriptionGetStreamBasicDescription(format)?.pointee {
+					section.rows.append(("Sample rate", "\(audio.mSampleRate.formatted()) Hz"))
+					section.rows.append(("Channels", "\(audio.mChannelsPerFrame)"))
+				}
+			}
+			sections.append(section)
+			for format in (try? await track.load(.availableMetadataFormats)) ?? [] {
+				let items = (try? await track.loadMetadata(for: format)) ?? []
+				if let tags = await metadataSection("Track \(index + 1) metadata", items) { sections.append(tags) }
+			}
+		}
+		for format in (try? await source.load(.availableMetadataFormats)) ?? [] {
+			let items = (try? await source.loadMetadata(for: format)) ?? []
+			if let tags = await metadataSection(format.rawValue, items) { sections.append(tags) }
+		}
+		return sections
+	}
+
+	private func metadataSection(_ title: String, _ items: [AVMetadataItem]) async -> ClipInfoSection? {
+		var section = ClipInfoSection(title: title, rows: [])
+		for item in items {
+			let name = item.commonKey?.rawValue ?? item.identifier?.rawValue ?? item.key.map { String(describing: $0) } ?? "Metadata"
+			if let text = try? await item.load(.stringValue) { section.rows.append((name, text)) }
+			else if let date = try? await item.load(.dateValue) { section.rows.append((name, date.formatted())) }
+			else if let value = try? await item.load(.numberValue) { section.rows.append((name, value.stringValue)) }
+			else if let data = try? await item.load(.dataValue) { section.rows.append((name, "\(data.count.formatted()) bytes")) }
+		}
+		return section.rows.isEmpty ? nil : section
+	}
+
+	func exportClip() async throws -> URL {
+		let preset = hasVideo ? AVAssetExportPresetHighestQuality : AVAssetExportPresetAppleM4A
+		guard let exporter = AVAssetExportSession(asset: editAsset, presetName: preset) else {
+			throw CocoaError(.featureUnsupported)
+		}
+		let type: AVFileType = hasVideo ? (exporter.supportedFileTypes.contains(.mp4) ? .mp4 : .mov) : .m4a
+		guard exporter.supportedFileTypes.contains(type) else { throw CocoaError(.featureUnsupported) }
+		let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+		let name = source.url.deletingPathExtension().lastPathComponent + " Edited"
+		let file = directory.appendingPathComponent(name).appendingPathExtension(type == .mp4 ? "mp4" : type == .mov ? "mov" : "m4a")
+		do {
+			try await exporter.export(to: file, as: type)
+			try Task.checkCancellation()
+			return file
+		} catch {
+			try? FileManager.default.removeItem(at: directory)
+			throw error
+		}
 	}
 }

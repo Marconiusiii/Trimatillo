@@ -4,9 +4,11 @@ import UIKit
 
 struct CuttingBoardTouchSurface: UIViewRepresentable {
 	let session: CuttingBoardSession
+	let enabled: Bool
 
 	func makeUIView(context: Context) -> TimelineSurface { TimelineSurface(session) }
 	func updateUIView(_ view: TimelineSurface, context: Context) {
+		view.setEditing(enabled)
 		view.updatePosition()
 	}
 }
@@ -17,19 +19,19 @@ final class TimelineSurface: UIView {
 	private let selection = CALayer()
 	private let cursor = CALayer()
 	private var origin: CMTime = .zero
-	private var horizontal: Bool?
+	private var editorGestures: [UIGestureRecognizer] = []
+	private var scrubStartX: CGFloat = 0
+	private var scrubGeneration: Int?
 	private var previousSize = CGSize.zero
-	private var lastScrub = -Double.infinity
 
 	init(_ session: CuttingBoardSession) {
 		self.session = session
 		super.init(frame: .zero)
 		isAccessibilityElement = true
-		accessibilityLabel = "Clip timeline"
-		accessibilityTraits = [.allowsDirectInteraction]
-		accessibilityDirectTouchOptions = [.requiresActivation, .silentOnTouch]
+		accessibilityLabel = "Direct Touch Editor"
+		accessibilityDirectTouchOptions = [.silentOnTouch]
 		isMultipleTouchEnabled = true
-		layer.cornerRadius = 12
+		layer.cornerRadius = 0
 		layer.masksToBounds = true
 		video.player = session.hasVideo ? session.player : nil
 		video.videoGravity = .resizeAspect
@@ -41,26 +43,37 @@ final class TimelineSurface: UIView {
 			view.applyColors()
 		}
 
-		let pan = UIPanGestureRecognizer(target: self, action: #selector(handlePan(_:)))
-		pan.maximumNumberOfTouches = 1
-		addGestureRecognizer(pan)
-		for (count, directions) in [(2, [UISwipeGestureRecognizer.Direction.left, .right, .down]),
+		let hold = UILongPressGestureRecognizer(target: self, action: #selector(scrub(_:)))
+		hold.minimumPressDuration = 0.35
+		editorGestures.append(hold)
+		addGestureRecognizer(hold)
+		for (count, directions) in [(1, [UISwipeGestureRecognizer.Direction.left, .right, .up, .down]),
+			(2, [.left, .right, .down]),
 			(3, [.left, .right]), (4, [.left, .right])] {
 			for direction in directions {
 				let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swipe(_:)))
 				swipe.numberOfTouchesRequired = count
 				swipe.direction = direction
+				if count == 1 { swipe.require(toFail: hold) }
+				editorGestures.append(swipe)
 				addGestureRecognizer(swipe)
 			}
 		}
 		let tap = UITapGestureRecognizer(target: self, action: #selector(toggle))
 		tap.numberOfTouchesRequired = 2
 		tap.numberOfTapsRequired = 2
+		editorGestures.append(tap)
 		addGestureRecognizer(tap)
 	}
 
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError() }
+
+	func setEditing(_ enabled: Bool) {
+		guard editorGestures.first?.isEnabled != enabled || accessibilityTraits.contains(.allowsDirectInteraction) != enabled else { return }
+		accessibilityTraits = enabled ? [.allowsDirectInteraction] : [.image]
+		for gesture in editorGestures { gesture.isEnabled = enabled }
+	}
 
 	private func applyColors() {
 		backgroundColor = UIColor(EditorTheme.surface)
@@ -71,7 +84,7 @@ final class TimelineSurface: UIView {
 	override func layoutSubviews() {
 		super.layoutSubviews()
 		if bounds.size != previousSize {
-			for gesture in gestureRecognizers ?? [] where gesture.state == .began || gesture.state == .changed || gesture.state == .possible {
+			for gesture in editorGestures where gesture.state == .began || gesture.state == .changed || gesture.numberOfTouches > 0 {
 				gesture.isEnabled = false
 				gesture.isEnabled = true
 			}
@@ -90,37 +103,50 @@ final class TimelineSurface: UIView {
 			selection.frame = CGRect(x: x(range.start), y: bounds.height - 12, width: x(range.duration), height: 12)
 		} else { selection.frame = .zero }
 		CATransaction.commit()
-		accessibilityValue = session.positionLabel
 	}
 
-	@objc private func handlePan(_ gesture: UIPanGestureRecognizer) {
-		let offset = gesture.translation(in: self)
-		if gesture.state == .began {
-			horizontal = abs(offset.x) > abs(offset.y)
-			if horizontal == true { session.stop() }
+	@objc private func scrub(_ hold: UILongPressGestureRecognizer) {
+		let x = hold.location(in: self).x
+		switch hold.state {
+		case .began:
+			scrubGeneration = session.beginScrub()
+			scrubStartX = x
 			origin = session.position
-			lastScrub = -.infinity
-		}
-		guard gesture.state == .began || gesture.state == .changed || gesture.state == .ended else { return }
-		if horizontal == true {
-			let now = CACurrentMediaTime()
-			guard now - lastScrub >= 0.075 || gesture.state == .ended else { return }
-			lastScrub = now
-			let delta = Double(offset.x / max(1, bounds.width)) * min(10, session.duration.seconds)
-			session.seek(origin + CMTime(seconds: delta, preferredTimescale: 600000), audible: true)
-		} else if gesture.state == .ended, abs(offset.y) >= 28 {
-			session.mark(offset.y > 0)
+		case .changed, .ended:
+			guard let generation = scrubGeneration else { return }
+			let seconds = Double((x - scrubStartX) / max(1, bounds.width)) * min(10, session.duration.seconds)
+			let time = origin + CMTime(seconds: seconds, preferredTimescale: 600000)
+			if hold.state == .ended {
+				session.endScrub(at: time, generation: generation)
+				scrubGeneration = nil
+			} else {
+				session.scrub(to: time, generation: generation)
+			}
+		case .cancelled, .failed:
+			if let generation = scrubGeneration {
+				session.endScrub(at: session.position, generation: generation)
+				scrubGeneration = nil
+			}
+		default: break
 		}
 	}
 
 	@objc private func swipe(_ gesture: UISwipeGestureRecognizer) {
 		let right = gesture.direction == .right
 		switch gesture.numberOfTouchesRequired {
+		case 1:
+			switch gesture.direction {
+			case .left: session.step(-1)
+			case .right: session.step(1)
+			case .down: session.mark(true, toggleAtPlayhead: true)
+			case .up: session.mark(false, toggleAtPlayhead: true)
+			default: break
+			}
 		case 2:
-			if gesture.direction == .down { session.delete(session.selection) }
+			if gesture.direction == .down { session.delete(session.selection, spoken: true) }
 			else { session.shuttle(right ? 1 : -1) }
-		case 3: session.navigate(right)
-		case 4: session.trim(head: right)
+		case 3: session.navigate(right, spoken: true)
+		case 4: session.trim(head: right, spoken: true)
 		default: break
 		}
 	}
