@@ -14,6 +14,8 @@ struct ContentView: View {
 	@State private var failure: String?
 	@State private var closing = false
 	@State private var showingInfo = false
+	@State private var incomingFiles: [URL] = []
+	@State private var choosingIncoming = false
 
 	var body: some View {
 		Group {
@@ -62,6 +64,25 @@ struct ContentView: View {
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
 		.background(EditorTheme.workspace)
 		.tint(EditorTheme.accent)
+		.onOpenURL { url in
+			guard url.isFileURL else { return }
+			incomingFiles.append(url)
+			handleIncomingFile()
+		}
+		.alert("Open shared clip?", isPresented: $choosingIncoming) {
+			Button("Keep Editing", role: .cancel) {
+				if !incomingFiles.isEmpty { discardInboxCopy(incomingFiles.removeFirst()) }
+			}
+			Button("Close Current Clip and Open", role: .destructive) { openIncomingFile() }
+		} message: {
+			Text("Opening the shared clip closes the current Cutting Board.")
+		}
+		.onChange(of: choosingIncoming) { _, presented in
+			if !presented { handleIncomingFile() }
+		}
+		.onChange(of: failure) { _, error in
+			if error == nil { handleIncomingFile() }
+		}
 		.onChange(of: photo) { _, item in
 			guard let item else { return }
 			photo = nil
@@ -69,7 +90,7 @@ struct ContentView: View {
 				guard let movie = try await item.loadTransferable(type: ImportedMovie.self) else {
 					throw CocoaError(.fileReadCorruptFile)
 				}
-				return try await CuttingBoardSession.open(movie.url, importedMovie: movie)
+				return try await CuttingBoardSession.open(movie.url, importedMovie: movie, photoIdentifier: item.itemIdentifier)
 			}
 		}
 		.alert("Could Not Open Clip", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
@@ -82,6 +103,36 @@ struct ContentView: View {
 			if note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt == AVAudioSession.InterruptionType.began.rawValue {
 				session?.releaseAudio()
 			}
+		}
+	}
+
+	private func handleIncomingFile() {
+		guard !incomingFiles.isEmpty, !loading, failure == nil, !choosingIncoming else { return }
+		if session != nil {
+			choosingIncoming = true
+		} else {
+			openIncomingFile()
+		}
+	}
+
+	private func openIncomingFile() {
+		guard !incomingFiles.isEmpty else { return }
+		let url = incomingFiles.removeFirst()
+		openClip(errorMessage: "Could not open the shared clip. Choose a playable audio or video file and share it again.") {
+			let accessed = url.startAccessingSecurityScopedResource()
+			defer {
+				if accessed { url.stopAccessingSecurityScopedResource() }
+				discardInboxCopy(url)
+			}
+			let copy = try await ImportedMovie.snapshot(of: url)
+			return try await CuttingBoardSession.open(copy.url, importedMovie: copy)
+		}
+	}
+
+	private func discardInboxCopy(_ url: URL) {
+		let inbox = URL.documentsDirectory.appendingPathComponent("Inbox", isDirectory: true)
+		if url.deletingLastPathComponent().resolvingSymlinksInPath().path == inbox.resolvingSymlinksInPath().path {
+			try? FileManager.default.removeItem(at: url)
 		}
 	}
 
@@ -100,10 +151,15 @@ struct ContentView: View {
 	private func openClip(errorMessage: String, load: @escaping () async throws -> CuttingBoardSession) {
 		loading = true
 		Task {
-			defer { loading = false }
+			defer {
+				loading = false
+				handleIncomingFile()
+			}
 			do {
 				let next = try await load()
 				session?.releaseAudio()
+				closing = false
+				showingInfo = false
 				session = next
 			} catch { failure = errorMessage }
 		}

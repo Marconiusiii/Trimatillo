@@ -1,7 +1,6 @@
 import AVFoundation
 import SwiftUI
-import CoreTransferable
-import UniformTypeIdentifiers
+import UIKit
 
 enum BoardSheet: Identifiable, Hashable {
 	case jump
@@ -28,9 +27,8 @@ struct CuttingBoardView: View {
 	var closeDirectTouchEditor: (() -> Void)?
 	@State private var showingDirectTouchEditor = false
 	@AccessibilityFocusState(for: .voiceOver) private var launcherFocused: Bool
-	@State private var preparing = false
-	@State private var saving = false
-	@State private var output: BoardExport?
+	@State private var exporting = false
+	@AccessibilityFocusState(for: .voiceOver) private var exportFocused: Bool
 	@State private var sheetFromMenu = false
 
 	var body: some View {
@@ -52,6 +50,9 @@ struct CuttingBoardView: View {
 				.sheet(item: $session.sheet) { editorSheet($0) }
 			} else {
 				board
+					.sheet(isPresented: $exporting, onDismiss: { exportFocused = true }) {
+						ClipExportView(session: session)
+					}
 					.fullScreenCover(isPresented: $showingDirectTouchEditor, onDismiss: { launcherFocused = true }) {
 						DirectTouchPresentation(session: session) { showingDirectTouchEditor = false }
 					}
@@ -164,26 +165,10 @@ struct CuttingBoardView: View {
 					.sheet(item: sheetBinding(forMenu: true)) { editorSheet($0) }
 				Button { session.undo() } label: { cell("Undo") }.disabled(!session.canUndo)
 				Button {
-					guard !preparing && output == nil else { return }
-					session.stop()
-					preparing = true
-				} label: { cell(preparing ? "Exporting…" : "Export") }
-				.task(id: preparing) {
-					guard preparing else { return }
-					do {
-						let file = try await session.exportClip()
-						output = BoardExport(url: file)
-						saving = true
-					} catch {
-						if !Task.isCancelled { session.message = "Could not export the clip. Check available storage and try Export again." }
-					}
-					preparing = false
-				}
-				.fileExporter(isPresented: $saving, item: output, contentTypes: output.map { [$0.type] } ?? [],
-					defaultFilename: output?.url.lastPathComponent) { result in
-					if case .failure = result { session.message = "Could not save the clip. Choose Export and select another destination." }
-					output = nil
-				} onCancellation: { output = nil }
+					session.releaseAudio()
+					exporting = true
+				} label: { cell("Export") }
+				.accessibilityFocused($exportFocused)
 			}
 		}
 		.buttonStyle(.plain)
@@ -349,28 +334,101 @@ private struct BoardEditSheet: View {
 	}
 }
 
-private nonisolated final class BoardExport: Transferable, Sendable {
-	let url: URL
-	var type: UTType {
-		switch url.pathExtension {
-		case "mp4": .mpeg4Movie
-		case "mov": .quickTimeMovie
-		default: .mpeg4Audio
+private struct ClipExportView: View {
+	let session: CuttingBoardSession
+	@Environment(\.dismiss) private var dismiss
+	@State private var destination: Destination?
+	@State private var output: ExportFile?
+	@State private var failure: String?
+
+	private enum Destination { case original, photos, files }
+
+	var body: some View {
+		NavigationStack {
+			List {
+				if destination != nil {
+					ProgressView("Exporting")
+				} else if Bundle.main.bundleURL.pathExtension == "appex" {
+					Section("Save as New Clip") {
+						Button("Photos") { destination = .photos }
+						Button("Files") { destination = .files }
+					}
+				} else {
+					Button("Save Changes to Original") { destination = .original }
+						.disabled(!session.canSaveOriginal)
+					if session.hasVideo {
+						Menu("Save as New Clip") {
+							Button("Photos") { destination = .photos }
+							Button("Files") { destination = .files }
+						}
+					} else {
+						Button("Save as New Clip") { destination = .files }
+					}
+				}
+			}
+			.scrollContentBackground(.hidden)
+			.background(EditorTheme.workspace)
+			.navigationTitle("Export")
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) {
+					Button("Cancel") { dismiss() }.disabled(destination != nil)
+				}
+			}
 		}
+		.sheet(item: $output, onDismiss: { dismiss() }) { rendered in
+			FileSavePicker(file: rendered.url) { output = nil }
+		}
+		.interactiveDismissDisabled(destination != nil)
+		.tint(EditorTheme.accent)
+		.task(id: destination) {
+			guard let destination else { return }
+			do {
+				switch destination {
+				case .original: try await session.saveOriginal()
+				case .photos: try await session.saveNewVideo()
+				case .files:
+					output = ExportFile(url: try await session.exportClip())
+					return
+				}
+				dismiss()
+			} catch {
+				guard !Task.isCancelled else { return }
+				failure = (error as? CuttingBoardSession.SaveFailure)?.errorDescription ??
+					"Could not save the clip. Check available storage or choose another destination."
+				self.destination = nil
+			}
+		}
+		.alert("Could Not Save Clip", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+			Button("OK") { failure = nil }
+		} message: { Text(failure ?? "") }
 	}
+}
 
+private final class ExportFile: Identifiable {
+	let url: URL
 	init(url: URL) { self.url = url }
-
-	static var transferRepresentation: some TransferRepresentation {
-		FileRepresentation(exportedContentType: .mpeg4Movie) { SentTransferredFile($0.url) }
-			.exportingCondition { $0.type == .mpeg4Movie }
-		FileRepresentation(exportedContentType: .quickTimeMovie) { SentTransferredFile($0.url) }
-			.exportingCondition { $0.type == .quickTimeMovie }
-		FileRepresentation(exportedContentType: .mpeg4Audio) { SentTransferredFile($0.url) }
-			.exportingCondition { $0.type == .mpeg4Audio }
-	}
-
 	deinit { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+}
+
+private struct FileSavePicker: UIViewControllerRepresentable {
+	let file: URL
+	let finish: () -> Void
+
+	func makeCoordinator() -> Coordinator { Coordinator(finish) }
+	func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
+		let picker = UIDocumentPickerViewController(forExporting: [file], asCopy: true)
+		picker.delegate = context.coordinator
+		return picker
+	}
+	func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
+
+	final class Coordinator: NSObject, UIDocumentPickerDelegate {
+		let finish: () -> Void
+		init(_ finish: @escaping () -> Void) { self.finish = finish }
+		func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish() }
+		func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finish() }
+	}
 }
 
 struct ClipInfoView: View {
@@ -405,5 +463,38 @@ struct ClipInfoView: View {
 		.tint(EditorTheme.accent)
 		.accessibilityAction(.magicTap) { session.toggle() }
 		.task { sections = await session.clipInfo() }
+	}
+}
+
+struct SharedVideoBoard: View {
+	let session: CuttingBoardSession
+	let close: () -> Void
+	@State private var confirmClose = false
+	@State private var showingInfo = false
+
+	var body: some View {
+		VStack(spacing: 0) {
+			HStack(spacing: 0) {
+				Button {
+					session.stop()
+					if session.canUndo { confirmClose = true } else { close() }
+				} label: { Text("Close").padding(.horizontal).frame(minHeight: 48) }
+				.accessibilityIdentifier("sharedBoardClose")
+				.alert("Close this clip?", isPresented: $confirmClose) {
+					Button("Close Clip", role: .destructive, action: close)
+					Button("Keep Editing", role: .cancel) {}
+				}
+				Text("Video Cutting Board")
+					.font(.headline)
+					.frame(maxWidth: .infinity, minHeight: 48)
+					.accessibilityAddTraits(.isHeader)
+				Button { session.stop(); showingInfo = true } label: {
+					Text("Clip Info").padding(.horizontal).frame(minHeight: 48)
+				}
+				.sheet(isPresented: $showingInfo) { ClipInfoView(session: session) }
+			}
+			CuttingBoardKeyboard(session: session)
+		}
+		.onDisappear { session.releaseAudio() }
 	}
 }

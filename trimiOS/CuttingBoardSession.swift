@@ -1,5 +1,6 @@
 import AVFoundation
 import AudioToolbox
+import Photos
 import Combine
 import CoreTransferable
 import UniformTypeIdentifiers
@@ -10,7 +11,7 @@ nonisolated final class ImportedMovie: Transferable, Sendable {
 	let url: URL
 	private let directory: URL
 
-	private init(copying source: URL) throws {
+	init(copying source: URL) throws {
 		let manager = FileManager.default
 		directory = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
 		url = directory.appendingPathComponent(source.lastPathComponent)
@@ -21,6 +22,19 @@ nonisolated final class ImportedMovie: Transferable, Sendable {
 			try? manager.removeItem(at: directory)
 			throw error
 		}
+	}
+
+	static func snapshot(of url: URL) async throws -> ImportedMovie {
+		try await Task.detached {
+			var error: NSError?
+			var copy: Result<ImportedMovie, Error>?
+			NSFileCoordinator().coordinate(readingItemAt: url, options: [], error: &error) { readable in
+				copy = Result { try ImportedMovie(copying: readable) }
+			}
+			if let error { throw error }
+			guard let copy else { throw CocoaError(.fileReadUnknown) }
+			return try copy.get()
+		}.value
 	}
 
 	static var transferRepresentation: some TransferRepresentation {
@@ -47,7 +61,10 @@ final class CuttingBoardSession: ObservableObject {
 	let hasAudio: Bool
 	private let source: AVURLAsset
 	private let scopedURL: URL?
-	private let importedMovie: ImportedMovie?
+	private let importedMovie: ImportedMovie
+	private let originalFile: URL?
+	private let photoIdentifier: String?
+	private var originalModification: Date?
 	private let tracks: [(AVAssetTrack, CMTimeRange)]
 	private let transform: CGAffineTransform
 	private let sourceFrames: [CMTime]
@@ -83,10 +100,13 @@ final class CuttingBoardSession: ObservableObject {
 		return CMTimeRange(start: start, end: end)
 	}
 
-	static func open(_ url: URL, importedMovie: ImportedMovie? = nil) async throws -> CuttingBoardSession {
+	static func open(_ url: URL, importedMovie: ImportedMovie? = nil, photoIdentifier: String? = nil) async throws -> CuttingBoardSession {
 		let scoped = url.startAccessingSecurityScopedResource()
 		do {
-			let asset = AVURLAsset(url: url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
+			let modification = try url.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+			let copy: ImportedMovie
+			if let importedMovie { copy = importedMovie } else { copy = try await ImportedMovie.snapshot(of: url) }
+			let asset = AVURLAsset(url: copy.url, options: [AVURLAssetPreferPreciseDurationAndTimingKey: true])
 			let duration = try await asset.load(.duration)
 			guard duration.isNumeric, duration > .zero else { throw CocoaError(.fileReadCorruptFile) }
 			let video = try await asset.loadTracks(withMediaType: .video).first
@@ -99,7 +119,8 @@ final class CuttingBoardSession: ObservableObject {
 			let transform = try await video?.load(.preferredTransform) ?? .identity
 			let frames = try await MediaTimelineReader.shared.frameTimes(asset: asset, track: video)
 			try Task.checkCancellation()
-			return CuttingBoardSession(asset: asset, importedMovie: importedMovie, scopedURL: scoped ? url : nil, duration: duration,
+			return CuttingBoardSession(asset: asset, importedMovie: copy, originalFile: importedMovie == nil ? url : nil,
+				photoIdentifier: photoIdentifier, modification: importedMovie == nil ? modification : Date(), scopedURL: scoped ? url : nil, duration: duration,
 				tracks: tracks, transform: transform, frames: frames, hasVideo: video != nil, hasAudio: audio != nil)
 		} catch {
 			if scoped { url.stopAccessingSecurityScopedResource() }
@@ -107,12 +128,15 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	private init(asset: AVURLAsset, importedMovie: ImportedMovie?, scopedURL: URL?, duration: CMTime, tracks: [(AVAssetTrack, CMTimeRange)],
+	private init(asset: AVURLAsset, importedMovie: ImportedMovie, originalFile: URL?, photoIdentifier: String?, modification: Date?, scopedURL: URL?, duration: CMTime, tracks: [(AVAssetTrack, CMTimeRange)],
 		transform: CGAffineTransform, frames: [CMTime], hasVideo: Bool, hasAudio: Bool) {
 		source = asset
 		editAsset = asset
 		self.scopedURL = scopedURL
 		self.importedMovie = importedMovie
+		self.originalFile = originalFile
+		self.photoIdentifier = photoIdentifier
+		originalModification = modification
 		title = asset.url.lastPathComponent
 		self.tracks = tracks
 		self.transform = transform
@@ -742,12 +766,122 @@ extension CuttingBoardSession {
 		return section.rows.isEmpty ? nil : section
 	}
 
-	func exportClip() async throws -> URL {
+	private var originalType: AVFileType? {
+		switch originalFile?.pathExtension.lowercased() {
+		case "mov" where hasVideo: .mov
+		case "mp4" where hasVideo: .mp4
+		case "m4a" where !hasVideo: .m4a
+		default: nil
+		}
+	}
+
+	var canSaveOriginal: Bool {
+		if let originalFile { return originalType != nil && FileManager.default.isWritableFile(atPath: originalFile.path) }
+		return photoIdentifier != nil
+	}
+
+	func saveOriginal() async throws {
+		if let originalFile, let originalType {
+			let file = try await exportClip(type: originalType)
+			defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+			let expected = originalModification
+			originalModification = try await Task.detached {
+				let manager = FileManager.default
+				var coordinationError: NSError?
+				var result: Result<Date?, Error>?
+				NSFileCoordinator().coordinate(writingItemAt: originalFile, options: .forReplacing, error: &coordinationError) { destination in
+					result = Result {
+						let current = try destination.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+						guard expected == current else { throw SaveFailure.changed }
+						let staging = try manager.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: destination, create: true)
+						defer { try? manager.removeItem(at: staging) }
+						let replacement = staging.appendingPathComponent(destination.lastPathComponent)
+						try manager.copyItem(at: file, to: replacement)
+						_ = try manager.replaceItemAt(destination, withItemAt: replacement)
+						return try destination.resourceValues(forKeys: [.contentModificationDateKey]).contentModificationDate
+					}
+				}
+				if let coordinationError { throw coordinationError }
+				guard let result else { throw CocoaError(.fileWriteUnknown) }
+				return try result.get()
+			}.value
+			return
+		}
+
+		try await authorizePhotos(.readWrite)
+		guard let photoIdentifier, let asset = PHAsset.fetchAssets(withLocalIdentifiers: [photoIdentifier], options: nil).firstObject,
+			asset.canPerform(.content) else { throw SaveFailure.unavailable }
+		if let modified = asset.modificationDate, let originalModification, modified > originalModification { throw SaveFailure.changed }
+		let options = PHContentEditingInputRequestOptions()
+		options.isNetworkAccessAllowed = true
+		let input: PHContentEditingInput = try await withCheckedThrowingContinuation { continuation in
+			asset.requestContentEditingInput(with: options) { input, _ in
+				if let input { continuation.resume(returning: input) } else { continuation.resume(throwing: SaveFailure.unavailable) }
+			}
+		}
+		let output = PHContentEditingOutput(contentEditingInput: input)
+		let renderedURL = output.renderedContentURL
+		let type: AVFileType
+		switch renderedURL.pathExtension.lowercased() {
+		case "mov": type = .mov
+		case "mp4": type = .mp4
+		default: throw SaveFailure.unavailable
+		}
+		let file = try await exportClip(type: type)
+		defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+		try await Task.detached { try FileManager.default.copyItem(at: file, to: renderedURL) }.value
+		output.adjustmentData = PHAdjustmentData(formatIdentifier: "com.marconius.trimato-ios.cut", formatVersion: "1", data: Data("Trimato cut".utf8))
+		try Task.checkCancellation()
+		try await PHPhotoLibrary.shared().performChanges {
+			PHAssetChangeRequest(for: asset).contentEditingOutput = output
+		}
+		originalModification = Date()
+	}
+
+	func saveNewVideo() async throws {
+		try await authorizePhotos(.addOnly)
+		let file = try await exportClip()
+		defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+		try await PHPhotoLibrary.shared().performChanges {
+			let options = PHAssetResourceCreationOptions()
+			options.originalFilename = file.lastPathComponent
+			PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: file, options: options)
+		}
+	}
+
+	private func authorizePhotos(_ level: PHAccessLevel) async throws {
+		let status = await PHPhotoLibrary.requestAuthorization(for: level)
+		guard status == .authorized || status == .limited else { throw SaveFailure.permission }
+		try Task.checkCancellation()
+	}
+
+	enum SaveFailure: LocalizedError {
+		case changed, unavailable, permission
+		var errorDescription: String? {
+			switch self {
+			case .changed: "The original changed. Save as a new clip or reopen the original."
+			case .unavailable: "This original cannot be edited. Save as a new clip."
+			case .permission: "Allow Photos access in Settings or save the clip to Files."
+			}
+		}
+	}
+
+	func exportClip(type requested: AVFileType? = nil) async throws -> URL {
 		let preset = hasVideo ? AVAssetExportPresetHighestQuality : AVAssetExportPresetAppleM4A
 		guard let exporter = AVAssetExportSession(asset: editAsset, presetName: preset) else {
 			throw CocoaError(.featureUnsupported)
 		}
-		let type: AVFileType = hasVideo ? (exporter.supportedFileTypes.contains(.mp4) ? .mp4 : .mov) : .m4a
+		exporter.timeRange = CMTimeRange(start: .zero, duration: duration)
+		if hasAudio {
+			let mix = AVMutableAudioMix()
+			mix.inputParameters = try await editAsset.loadTracks(withMediaType: .audio).map { track in
+				let input = AVMutableAudioMixInputParameters(track: track)
+				input.setVolume(1, at: .zero)
+				return input
+			}
+			exporter.audioMix = mix
+		}
+		let type: AVFileType = requested ?? (hasVideo ? (exporter.supportedFileTypes.contains(.mp4) ? .mp4 : .mov) : .m4a)
 		guard exporter.supportedFileTypes.contains(type) else { throw CocoaError(.featureUnsupported) }
 		let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
 		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
