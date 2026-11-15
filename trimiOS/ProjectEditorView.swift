@@ -616,7 +616,11 @@ struct ProjectEditorView: View {
 	}
 
 	private func update(_ next: EditingProject) {
-		let rebuild = project.picture != next.picture || project.placements != next.placements || project.sources.map(\.reference) != next.sources.map(\.reference) || project.tracks != next.tracks || project.trackVolumes != next.trackVolumes
+		let usedSources = Set(next.placements.map(\.sourceID))
+		func timelineReferences(_ model: EditingProject) -> [UUID: ProjectMediaSource.Reference] {
+			Dictionary(uniqueKeysWithValues: model.sources.filter { usedSources.contains($0.id) }.map { ($0.id, $0.reference) })
+		}
+		let rebuild = project.picture != next.picture || project.placements != next.placements || timelineReferences(project) != timelineReferences(next) || project.tracks != next.tracks || project.trackVolumes != next.trackVolumes
 		project = next
 		let valid = Set(next.placements.map(\.id))
 		marked.formIntersection(valid)

@@ -131,6 +131,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Command-Option-Left and Command-Option-Right move a clip or marked group earlier or later. Delete removes the selected clips. Command-Z undoes and Command-Shift-Z redoes."
 			]), HelpSection("Reopen and reconnect", numbered: true, [
 				"Choose Close, then Open Project and the project name. Trimatillo saves each project change as you work.",
+				"If a saved project cannot be read, restore its project file from backup. Choose another project in Open Project to keep editing.",
 				"If a source is unavailable, open Project Media, choose the source, and reconnect it from Files or Photos. Choose the original to restore access for every placement.",
 				"When moving to a new device, restore Trimatillo's project data from your device backup and make the original media available through Files or Photos."
 			])]

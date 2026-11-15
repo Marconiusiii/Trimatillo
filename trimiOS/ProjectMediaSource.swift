@@ -84,11 +84,12 @@ nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 		let options = PHVideoRequestOptions()
 		options.isNetworkAccessAllowed = true
 		options.deliveryMode = .highQualityFormat
-		return try await withCheckedThrowingContinuation { continuation in
-			PHImageManager.default().requestAVAsset(forVideo: photo, options: options) { asset, _, _ in
-				if let asset { continuation.resume(returning: asset) }
-				else { continuation.resume(throwing: ProjectFailure("Download the video in Photos, then reopen it.")) }
-			}
+		let request = ProjectPhotoRequest()
+		return try await withTaskCancellationHandler {
+			try Task.checkCancellation()
+			return try await request.load(photo, options: options)
+		} onCancel: {
+			Task { @MainActor in request.cancel() }
 		}
 	}
 
@@ -103,5 +104,33 @@ nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 			let photo = try await Self.photoAsset(local, cloud: cloud)
 			return ProjectMediaAccess(asset: try await Self.video(photo))
 		}
+	}
+}
+
+@MainActor private final class ProjectPhotoRequest {
+	private var identifier: PHImageRequestID?
+	private var continuation: CheckedContinuation<AVAsset, Error>?
+
+	func load(_ photo: PHAsset, options: PHVideoRequestOptions) async throws -> AVAsset {
+		try Task.checkCancellation()
+		return try await withCheckedThrowingContinuation { continuation in
+			self.continuation = continuation
+			identifier = PHImageManager.default().requestAVAsset(forVideo: photo, options: options) { @Sendable asset, _, _ in
+				Task { @MainActor in
+					guard let continuation = self.continuation else { return }
+					self.continuation = nil
+					self.identifier = nil
+					if let asset { continuation.resume(returning: asset) }
+					else { continuation.resume(throwing: ProjectFailure("Download the video in Photos, then reopen it.")) }
+				}
+			}
+		}
+	}
+
+	func cancel() {
+		if let identifier { PHImageManager.default().cancelImageRequest(identifier) }
+		identifier = nil
+		continuation?.resume(throwing: CancellationError())
+		continuation = nil
 	}
 }

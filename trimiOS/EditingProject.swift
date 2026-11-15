@@ -234,11 +234,75 @@ nonisolated struct ProjectFailure: LocalizedError {
 enum ProjectLibrary {
 	static let directory = URL.documentsDirectory.appendingPathComponent("Projects", isDirectory: true)
 
+	// Projects store edit decisions and references, never the media payload.
+	private static let maximumBytes = 32 * 1024 * 1024
+
+	private static func data(at url: URL) throws -> Data {
+		let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+		guard values.isRegularFile == true, values.isSymbolicLink != true else { throw CocoaError(.fileReadCorruptFile) }
+		let handle = try FileHandle(forReadingFrom: url)
+		defer { try? handle.close() }
+		let size = try handle.seekToEnd()
+		guard size <= maximumBytes else { throw CocoaError(.fileReadTooLarge) }
+		try handle.seek(toOffset: 0)
+		let data = try handle.read(upToCount: Int(size) + 1) ?? Data()
+		guard data.count == size else { throw CocoaError(.fileReadCorruptFile) }
+		return data
+	}
+
+	static func name(at url: URL) throws -> String {
+		struct Header: Decodable { let name: String }
+		return try JSONDecoder().decode(Header.self, from: data(at: url)).name
+	}
+
 	static func load(_ url: URL) throws -> EditingProject {
-		var project = try JSONDecoder().decode(EditingProject.self, from: Data(contentsOf: url))
+		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: url))
 		guard (1...2).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		try validate(project)
 		project.assignPlacementLabels()
 		return project
+	}
+
+	private static func validate(_ project: EditingProject) throws {
+		let corrupt = CocoaError(.fileReadCorruptFile)
+		func validTime(_ time: ProjectTime) -> Bool {
+			time.scale > 0 && time.value >= 0 && time.time.seconds * 48000 < Double(Int64.max)
+		}
+		func validPicture(_ picture: ProjectPicture) -> Bool {
+			(1...16384).contains(picture.width) && (1...16384).contains(picture.height)
+				&& validTime(picture.frame) && picture.frame.value > 0
+		}
+		if let picture = project.picture, !validPicture(picture) { throw corrupt }
+		if let target = project.targetSeconds, !target.isFinite || target <= 0 { throw corrupt }
+		var sources = [UUID: ProjectMediaSource]()
+		for source in project.sources {
+			guard sources.updateValue(source, forKey: source.id) == nil, validTime(source.duration),
+				source.duration.value > 0, source.picture.map(validPicture) ?? source.hasAudio else { throw corrupt }
+		}
+		var tracks = [String: ProjectTrack]()
+		for track in project.tracks {
+			guard tracks.updateValue(track.kind, forKey: track.id) == nil else { throw corrupt }
+		}
+		for (id, volume) in project.trackVolumes ?? [:] {
+			guard tracks[id] != nil, (0...1).contains(volume) else { throw corrupt }
+		}
+		var ids = Set<UUID>()
+		for clip in project.placements {
+			guard ids.insert(clip.id).inserted, let source = sources[clip.sourceID],
+				tracks[clip.trackID] == clip.track, clip.track == (source.picture == nil ? .audio : .video),
+				validTime(clip.start), !clip.ranges.isEmpty else { throw corrupt }
+			for range in clip.ranges {
+				guard validTime(range.start), validTime(range.length), range.length.value > 0,
+					range.range.end.isNumeric, range.range.end <= source.duration.time else { throw corrupt }
+			}
+			let end = clip.end
+			guard end.isNumeric, end.seconds * 48000 < Double(Int64.max),
+				end.seconds / project.frame.seconds < Double(Int64.max) else { throw corrupt }
+		}
+		let duration = project.duration
+		for marker in [project.markIn, project.markOut].compactMap({ $0 }) {
+			guard validTime(marker), marker.time <= duration else { throw corrupt }
+		}
 	}
 
 	static func savedFiles() throws -> [URL] {
@@ -253,6 +317,8 @@ enum ProjectLibrary {
 		if let previous, try load(url) != previous {
 			throw ProjectFailure("This project changed in another window. Close and reopen it before editing.")
 		}
-		try JSONEncoder().encode(project).write(to: url, options: .atomic)
+		let data = try JSONEncoder().encode(project)
+		guard data.count <= maximumBytes else { throw ProjectFailure("This project is too large to save. Continue in a new project.") }
+		try data.write(to: url, options: .atomic)
 	}
 }

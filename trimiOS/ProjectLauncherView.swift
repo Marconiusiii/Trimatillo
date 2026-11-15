@@ -58,7 +58,11 @@ struct ProjectLauncherView: View {
 	let mode: ProjectLauncher
 	let open: (EditingProject) -> Void
 	@Environment(\.dismiss) private var dismiss
-	@State private var saved: [EditingProject] = []
+	private struct SavedProject: Identifiable {
+		let id: URL
+		let name: String
+	}
+	@State private var saved: [SavedProject] = []
 	@State private var error: String?
 
 	var body: some View {
@@ -73,7 +77,16 @@ struct ProjectLauncherView: View {
 				} else {
 					if saved.isEmpty { Text("No saved projects") }
 					ForEach(saved) { project in
-						Button(project.name) { open(project); dismiss() }
+						Button(project.name) {
+							do {
+								open(try ProjectLibrary.load(project.id))
+								dismiss()
+							} catch let failure as ProjectFailure {
+								error = failure.localizedDescription
+							} catch {
+								self.error = "Could not open this project. Restore its project file from backup."
+							}
+						}
 					}
 				}
 			}
@@ -87,7 +100,7 @@ struct ProjectLauncherView: View {
 				do {
 					var unreadable = false
 					saved = try ProjectLibrary.savedFiles().compactMap {
-						do { return try ProjectLibrary.load($0) }
+						do { return try SavedProject(id: $0, name: ProjectLibrary.name(at: $0)) }
 						catch { unreadable = true; return nil }
 					}.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
 					if unreadable { error = "A saved project could not be read. Restore its project file from backup." }

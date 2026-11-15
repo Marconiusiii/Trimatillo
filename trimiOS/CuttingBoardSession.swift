@@ -80,6 +80,8 @@ final class CuttingBoardSession: ObservableObject {
 	private var itemObservation: NSKeyValueObservation?
 	private var editAsset: AVAsset
 	private var reverseTask: Task<Void, Never>?
+	private var idleAudioTask: Task<Void, Never>?
+	private var previewSequence = 0
 	private var previewTask: Task<Void, Never>?
 	private var pendingScrubTime: CMTime?
 	private let engine = AVAudioEngine()
@@ -190,7 +192,7 @@ final class CuttingBoardSession: ObservableObject {
 				guard now.isNumeric else { return }
 				let end = item.forwardPlaybackEndTime.isNumeric ? item.forwardPlaybackEndTime : self.duration
 				if self.player.rate == 0 && now >= end {
-					self.rate = 0
+					self.stop()
 				}
 				self.state.position = min(now, end)
 			}
@@ -248,11 +250,19 @@ final class CuttingBoardSession: ObservableObject {
 		previewTask?.cancel()
 		previewTask = nil
 		pendingScrubTime = nil
+		previewSequence += 1
 		node.stop()
+		scheduleIdleAudioRelease()
 	}
 
 	func releaseAudio() {
 		stop()
+		deactivateAudio()
+	}
+
+	private func deactivateAudio() {
+		idleAudioTask?.cancel()
+		idleAudioTask = nil
 		engine.stop()
 		if audioActive {
 			try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
@@ -260,7 +270,19 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
+	private func scheduleIdleAudioRelease() {
+		guard audioActive || engine.isRunning else { return }
+		idleAudioTask?.cancel()
+		idleAudioTask = Task { [weak self] in
+			do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+			guard let self, rate == 0 else { return }
+			deactivateAudio()
+		}
+	}
+
 	private func activateAudio() throws {
+		idleAudioTask?.cancel()
+		idleAudioTask = nil
 		if !audioActive {
 			let session = AVAudioSession.sharedInstance()
 			try session.setCategory(.playback, mode: .default)
@@ -554,6 +576,7 @@ final class CuttingBoardSession: ObservableObject {
 
 	private func play(from start: CMTime, to end: CMTime, speed: Double) {
 		seek(start)
+		if engine.isRunning { engine.stop() }
 		do { try activateAudio() } catch { message = "Could not start audio. Check the audio output and try Play again."; return }
 		player.currentItem?.forwardPlaybackEndTime = end
 		let generation = seekGeneration
@@ -582,12 +605,15 @@ final class CuttingBoardSession: ObservableObject {
 	}
 
 
-	private func enqueue(_ buffer: AVAudioPCMBuffer) {
-		node.scheduleBuffer(buffer, completionHandler: nil)
-	}
-
 	private func playBuffer(_ buffer: AVAudioPCMBuffer) {
-		enqueue(buffer)
+		previewSequence += 1
+		let sequence = previewSequence
+		node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { @Sendable [weak self] _ in
+			Task { @MainActor [weak self] in
+				guard let self, previewSequence == sequence else { return }
+				scheduleIdleAudioRelease()
+			}
+		}
 		node.play()
 	}
 
