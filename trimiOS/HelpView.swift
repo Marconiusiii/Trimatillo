@@ -206,7 +206,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Open Edit Actions and choose Trim Silences. With In and Out set, leave Only Between In and Out on to search that passage.",
 				"Adjust the Silence threshold slider. A higher value includes louder sounds. Minimum silence sets the shortest pause to find. Retained silence sets how much of each pause to keep, divided between its two ends.",
 				"Choose Find Pauses. If No Pauses Found appears, choose OK to return to Find Pauses. Adjust the settings to search again.",
-				"For each pause, choose its numbered preview button to play the original passage in context. Close the preview to return to that button. Move the pause's Start or End slider to change the cut, or turn off Remove Pause to keep that passage.",
+				"For each pause, choose its numbered preview button to play that pause with up to half a second of the original clip on either side. Close the preview to return to that button. Move the pause's Start or End slider to change the cut, or turn off Remove Pause to keep that passage.",
 				"Time to remove shows the total duration of the selected cuts. Choose Preview Trimmed Clip to open Trimmed Silence Preview and play those cuts together. Choose Close to return to Preview Trimmed Clip.",
 				"Choose Apply Cuts. Undo restores all the pauses from this operation in one step."
 			])]

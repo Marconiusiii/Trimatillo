@@ -1,3 +1,4 @@
+import Accessibility
 import AVKit
 import Combine
 import PhotosUI
@@ -60,27 +61,14 @@ private struct PhotoClipPreview<Clip>: View {
 	@State private var failure: String?
 
 	var body: some View {
-		Group {
+		VStack(spacing: 0) {
 			if let failure {
 				Text(failure).padding()
-			} else if let player, let current = player.currentItem {
-				Group {
-					if ready {
-						VideoPlayer(player: player)
-							.accessibilityAction(.magicTap) { toggle(player) }
-					} else {
-						LoadingStatusView("Loading clip preview")
-					}
-				}
-				.onReceive(current.publisher(for: \.status, options: [.initial, .new]).removeDuplicates()) { status in
-					if status == .failed { playbackFailed() }
-					else { ready = status == .readyToPlay }
-				}
-				.onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.failedToPlayToEndTimeNotification, object: current)) { _ in
-					playbackFailed()
-				}
+			} else if ready, let player {
+				VideoPlayer(player: player)
+					.accessibilityAction(.magicTap) { toggle(player) }
 			} else {
-				LoadingStatusView("Loading clip preview")
+				LoadingStatusView("Loading Clip Preview")
 			}
 		}
 		.frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -104,17 +92,32 @@ private struct PhotoClipPreview<Clip>: View {
 			if ready, let player { toggle(player) }
 		}
 		.task(id: item) {
+			if UIAccessibility.isVoiceOverRunning {
+				var message = AttributedString("Loading Clip Preview")
+				message.accessibilitySpeechAnnouncementPriority = .high
+				AccessibilityNotification.Announcement(message).post()
+			}
 			do {
 				let (asset, candidate) = try await prepare(item)
 				try Task.checkCancellation()
 				try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
 				clip = candidate
-				player = AVPlayer(playerItem: AVPlayerItem(asset: asset))
+				let current = AVPlayerItem(asset: asset)
+				player = AVPlayer(playerItem: current)
+				for await status in current.publisher(for: \.status, options: [.initial, .new]).values {
+					try Task.checkCancellation()
+					if status == .failed { playbackFailed(); break }
+					ready = status == .readyToPlay
+				}
 			} catch {
 				if !Task.isCancelled {
 					failure = (error as? ProjectFailure)?.localizedDescription ?? "Could not load the preview. Go back and choose the video again."
 				}
 			}
+		}
+		.onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.failedToPlayToEndTimeNotification)) { notification in
+			guard let failed = notification.object as? AVPlayerItem, failed === player?.currentItem else { return }
+			playbackFailed()
 		}
 		.onDisappear { player?.pause() }
 		.onChange(of: phase) { _, value in
