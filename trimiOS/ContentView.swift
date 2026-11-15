@@ -16,7 +16,7 @@ struct ContentView: View {
 	@AccessibilityFocusState private var trimFocused: Bool
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
-	@State private var confirmedPhoto: (movie: ImportedMovie, identifier: String?)?
+	@State private var confirmedPhoto: SelectedPhotoClip?
 	@State private var loadingTask: Task<Void, Never>?
 	@State private var failure: String?
 	@State private var showingHelp = false
@@ -70,12 +70,7 @@ struct ContentView: View {
 			}
 		}
 		.sheet(isPresented: $pickingPhoto, onDismiss: finishPhotoSelection) {
-			PhotoClipPickerView { item in
-				guard let movie = try await item.loadTransferable(type: ImportedMovie.self) else {
-					throw CocoaError(.fileReadCorruptFile)
-				}
-				return (AVURLAsset(url: movie.url), (movie, item.itemIdentifier))
-			} use: { confirmedPhoto = $0 }
+			PhotoClipPickerView { confirmedPhoto = $0 }
 		}
 		.sheet(item: $launcher, onDismiss: { if project == nil { projectFocus = projectTrigger }; handleIncomingFile() }) { mode in
 			ProjectLauncherView(mode: mode) { project = $0 }
@@ -124,8 +119,7 @@ struct ContentView: View {
 		}
 		self.confirmedPhoto = nil
 		openClip(errorMessage: "Could not open this video. Select it again in Photo Library.") {
-			try await CuttingBoardSession.open(confirmedPhoto.movie.url, importedMovie: confirmedPhoto.movie,
-				photoIdentifier: confirmedPhoto.identifier)
+			try await confirmedPhoto.openCuttingBoard()
 		}
 	}
 

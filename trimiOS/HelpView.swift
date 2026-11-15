@@ -168,7 +168,7 @@ private enum HelpTopic: String, CaseIterable {
 		case .open:
 			[HelpSection("From the welcome screen", [
 				"Trim a Clip opens the source menu. Choose Photo Library for a video or Files for an audio or video clip.",
-				"Use the picker's search field to find a clip. In Photo Library, select a video to open Clip Preview. Use Play, Magic Tap, or the playback slider to check the video.",
+				"Use the picker's search field to find a clip. In Photo Library, select a video to open Clip Preview. When the preview is ready, use Play, Magic Tap, or the playback slider to check the video. VoiceOver announces \"Clip preview ready\" when playback becomes available.",
 				"Choose Use Clip to open the Cutting Board, or Back to return to the picker with that video selected. Choose Cancel in the picker to return to Trim a Clip.",
 				"Choose Clip Info at the top of the board to read the clip's filename, duration, and available media details."
 			]), HelpSection("From Photos", numbered: true, [

@@ -35,9 +35,19 @@ nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 		return try await inspect(asset: AVURLAsset(url: url), name: url.lastPathComponent, reference: .file(data))
 	}
 
-	@MainActor static func photo(_ id: String) async throws -> Self {
+	@MainActor static func accessibleVideo(_ id: String) async throws -> AVAsset? {
+		let permission = PHPhotoLibrary.authorizationStatus(for: .readWrite)
+		guard permission == .authorized || permission == .limited,
+			let photo = PHAsset.fetchAssets(withLocalIdentifiers: [id], options: nil).firstObject else { return nil }
+		do { return try await video(photo) }
+		catch {
+			try Task.checkCancellation()
+			return nil
+		}
+	}
+
+	@MainActor static func photo(_ id: String, asset: AVAsset) async throws -> Self {
 		let photo = try await photoAsset(id, cloud: nil)
-		let asset = try await video(photo)
 		let name = PHAssetResource.assetResources(for: photo).first { $0.type == .video || $0.type == .fullSizeVideo }?.originalFilename ?? "Video"
 		let result = PHPhotoLibrary.shared().cloudIdentifierMappings(forLocalIdentifiers: [id])[id]
 		let cloud = (try? result?.get())?.stringValue

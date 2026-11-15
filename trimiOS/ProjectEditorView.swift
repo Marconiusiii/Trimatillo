@@ -36,7 +36,7 @@ struct ProjectEditorView: View {
 	@State private var expanded = true
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
-	@State private var confirmedPhoto: ProjectMediaSource?
+	@State private var confirmedPhoto: SelectedPhotoClip?
 	@State private var renaming: ProjectMediaSource?
 	@State private var clipName = ""
 	@State private var reconnect: UUID?
@@ -135,18 +135,15 @@ struct ProjectEditorView: View {
 				focus = trigger
 			}
 			.sheet(isPresented: $pickingPhoto, onDismiss: {
-				if let source = confirmedPhoto {
+				if let clip = confirmedPhoto {
 					confirmedPhoto = nil
-					importSource { source }
+					importSource {
+						guard let id = clip.item.itemIdentifier else { throw ProjectFailure("Choose the original video in Photo Library.") }
+						return try await ProjectMediaSource.photo(id, asset: clip.asset)
+					}
 				} else { focus = trigger }
 			}) {
-				PhotoClipPickerView { item in
-					guard let id = item.itemIdentifier else { throw ProjectFailure("Choose the original video in Photo Library.") }
-					let source = try await ProjectMediaSource.photo(id)
-					try Task.checkCancellation()
-					let access = try await source.open()
-					return (access.asset, source)
-				} use: { confirmedPhoto = $0 }
+				PhotoClipPickerView { confirmedPhoto = $0 }
 			}
 			.onChange(of: pickingFile) { _, presented in if !presented { focus = trigger } }
 			.sheet(item: $renaming, onDismiss: { focus = trigger }) { source in
