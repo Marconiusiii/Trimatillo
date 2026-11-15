@@ -38,7 +38,10 @@ struct CuttingBoardTouchSurface: UIViewRepresentable {
 final class TimelineSurface: UIView {
 	let session: CuttingBoardSession
 	private let video = AVPlayerLayer()
+	private let rangeTrack = CALayer()
 	private let selection = CALayer()
+	private let rangeStart = CALayer()
+	private let rangeEnd = CALayer()
 	private let cursor = CALayer()
 	private var origin: CMTime = .zero
 	private let onClose: (() -> Void)?
@@ -62,7 +65,10 @@ final class TimelineSurface: UIView {
 		video.player = session.hasVideo ? session.player : nil
 		video.videoGravity = .resizeAspect
 		layer.addSublayer(video)
+		layer.addSublayer(rangeTrack)
 		layer.addSublayer(selection)
+		layer.addSublayer(rangeStart)
+		layer.addSublayer(rangeEnd)
 		layer.addSublayer(cursor)
 		applyColors()
 		registerForTraitChanges([UITraitUserInterfaceStyle.self, UITraitAccessibilityContrast.self]) { (view: TimelineSurface, _: UITraitCollection) in
@@ -119,7 +125,10 @@ final class TimelineSurface: UIView {
 	private func applyColors() {
 		backgroundColor = UIColor(EditorTheme.surface)
 		cursor.backgroundColor = UIColor(EditorTheme.playhead).resolvedColor(with: traitCollection).cgColor
-		selection.backgroundColor = UIColor(controlColor.selection).resolvedColor(with: traitCollection).withAlphaComponent(0.65).cgColor
+		rangeTrack.backgroundColor = UIColor(EditorTheme.surface).resolvedColor(with: traitCollection).cgColor
+		selection.backgroundColor = UIColor(controlColor.accent).resolvedColor(with: traitCollection).cgColor
+		rangeStart.backgroundColor = selection.backgroundColor
+		rangeEnd.backgroundColor = selection.backgroundColor
 	}
 
 	override func layoutSubviews() {
@@ -141,8 +150,15 @@ final class TimelineSurface: UIView {
 		func x(_ time: CMTime) -> CGFloat { bounds.width * CGFloat(time.seconds / session.duration.seconds) }
 		cursor.frame = CGRect(x: min(max(0, bounds.width - 3), x(session.position)), y: 0, width: 3, height: bounds.height)
 		if let range = session.selection {
-			selection.frame = CGRect(x: x(range.start), y: bounds.height - 12, width: x(range.duration), height: 12)
-		} else { selection.frame = .zero }
+			rangeTrack.frame = CGRect(x: 0, y: bounds.height - 14, width: bounds.width, height: 14)
+			let left = x(range.start)
+			let right = x(range.end)
+			selection.frame = CGRect(x: left, y: bounds.height - 6, width: right - left, height: 4)
+			rangeStart.frame = CGRect(x: left, y: bounds.height - 12, width: 3, height: 10)
+			rangeEnd.frame = CGRect(x: max(left, right - 3), y: bounds.height - 12, width: 3, height: 10)
+		} else {
+			for layer in [rangeTrack, selection, rangeStart, rangeEnd] { layer.frame = .zero }
+		}
 		CATransaction.commit()
 	}
 

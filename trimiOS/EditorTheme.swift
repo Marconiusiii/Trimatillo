@@ -119,3 +119,15 @@ private struct AppearanceModifier: ViewModifier {
 extension View {
 	func editorAppearance() -> some View { modifier(AppearanceModifier()) }
 }
+
+extension View {
+	func editorTouchRow(alignment: Alignment = .center) -> some View {
+		frame(maxWidth: .infinity, minHeight: 48, alignment: alignment)
+			.contentShape(Rectangle())
+	}
+
+	func editorListMargins() -> some View {
+		contentMargins(.all, 0, for: .scrollContent)
+			.listSectionSpacing(0)
+	}
+}

@@ -66,6 +66,7 @@ struct SettingsView: View {
 					Text(verbatim: "© \(year) Marco Salsiccia, \(MailComposerView.version)")
 				}
 			}
+			.editorListMargins()
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
 			.navigationTitle("Settings")
@@ -104,7 +105,7 @@ struct SettingsView: View {
 	}
 
 	private func heading(_ title: String) -> some View {
-		Text(title).accessibilityAddTraits(.isHeader)
+		Text(title).editorTouchRow(alignment: .leading).accessibilityAddTraits(.isHeader)
 	}
 
 	private var supportSection: some View {
@@ -129,7 +130,7 @@ struct SettingsView: View {
 				Button("Retry") { Task { await support.load() } }
 			}
 		} header: {
-			Text("Support Trimatillo").accessibilityAddTraits(.isHeader)
+			heading("Support Trimatillo")
 		}
 	}
 

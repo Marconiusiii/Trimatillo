@@ -70,6 +70,8 @@ struct CuttingBoardView: View {
 	@State private var exporting = false
 	@AccessibilityFocusState(for: .voiceOver) private var exportFocused: Bool
 	@AccessibilityFocusState private var placementFocused: Bool
+	@AccessibilityFocusState private var playheadFocused: Bool
+	@AccessibilityFocusState private var editActionsFocused: Bool
 	@State private var sheetFromMenu = false
 
 	var body: some View {
@@ -78,11 +80,12 @@ struct CuttingBoardView: View {
 				VStack(spacing: 0) {
 					HStack(spacing: 0) {
 						Button(action: closeDirectTouchEditor) {
-							Text("Close").padding(.horizontal).frame(minHeight: 48)
+							Text("Close").padding(.horizontal).frame(minHeight: 48).contentShape(Rectangle())
 						}
 						Text("Direct Touch Editor")
 							.font(.headline)
 							.frame(maxWidth: .infinity, minHeight: 48)
+							.contentShape(Rectangle())
 							.accessibilityAddTraits(.isHeader)
 					}
 					CuttingBoardTouchSurface(session: session, onClose: closeDirectTouchEditor, projectActions: projectActions)
@@ -207,7 +210,8 @@ struct CuttingBoardView: View {
 				cell("Playhead, " + session.positionLabel(format: format))
 			}
 			.accessibilityActions { EditorMenuAction.buttons(editCommands(fromMenu: false)) }
-			.sheet(item: sheetBinding(forMenu: false)) { editorSheet($0) }
+			.accessibilityFocused($playheadFocused)
+			.sheet(item: sheetBinding(forMenu: false), onDismiss: { playheadFocused = true }) { editorSheet($0) }
 			HStack(spacing: 0) {
 				stepButton(forward: false)
 				stepButton(forward: true)
@@ -220,18 +224,19 @@ struct CuttingBoardView: View {
 				let actions = editCommands(fromMenu: true)
 				Menu { EditorMenuAction.buttons(actions) } label: { cell("Edit Actions") }
 					.editorMenuActions("Edit Actions", actions)
-					.sheet(item: sheetBinding(forMenu: true)) { editorSheet($0) }
-				Button { session.undo() } label: { cell("Undo") }
-					.accessibilityActions {
-						if session.canRedo { Button("Redo") { session.redo() } }
-					}
-					.disabled(!session.canUndo && !session.canRedo)
-				if let projectActions {
-					Button(action: projectActions.append) { cell("Append") }
-					Button { session.stop(); session.choosingPlacement = true } label: { cell("Add at Playhead") }
-						.accessibilityFocused($placementFocused)
-					if let update = projectActions.update { Button(action: update) { cell("Save Changes") } }
+					.accessibilityFocused($editActionsFocused)
+					.sheet(item: sheetBinding(forMenu: true), onDismiss: { editActionsFocused = true }) { editorSheet($0) }
+				if !session.canUndo && session.canRedo {
+					Menu { Button("Redo") { session.redo() } } label: { cell("Undo") }
+						.accessibilityAction(named: "Redo") { session.redo() }
 				} else {
+					Button { session.undo() } label: { cell("Undo") }
+						.accessibilityActions {
+							if session.canRedo { Button("Redo") { session.redo() } }
+						}
+						.disabled(!session.canUndo)
+				}
+				if projectActions == nil {
 					Button {
 						session.releaseAudio()
 						exporting = true
@@ -239,10 +244,23 @@ struct CuttingBoardView: View {
 					.accessibilityFocused($exportFocused)
 				}
 			}
+			if let projectActions {
+				ViewThatFits(in: .horizontal) {
+					HStack(spacing: 0) { placementControls(projectActions) }
+					VStack(spacing: 0) { placementControls(projectActions) }
+				}
+			}
 		}
-		.buttonStyle(.plain)
-		.foregroundStyle(color.accent)
+		.buttonStyle(.bordered)
+		.buttonBorderShape(.roundedRectangle(radius: 8))
 		.background(EditorTheme.surface)
+	}
+
+	@ViewBuilder private func placementControls(_ projectActions: BoardProjectActions) -> some View {
+		Button(action: projectActions.append) { cell("Append") }
+		Button { session.stop(); session.choosingPlacement = true } label: { cell("Add at Playhead") }
+			.accessibilityFocused($placementFocused)
+		if let update = projectActions.update { Button(action: update) { cell("Save Changes") } }
 	}
 
 	@ViewBuilder private func editorSheet(_ sheet: BoardSheet) -> some View {
@@ -301,6 +319,7 @@ struct CuttingBoardView: View {
 
 	private func editCommands(fromMenu: Bool) -> [EditorMenuAction] {
 		var actions: [EditorMenuAction] = []
+		if session.canRedo { actions.append(EditorMenuAction("Redo") { session.redo() }) }
 		actions.append(EditorMenuAction("Mark In Here") { session.mark(true) })
 		actions.append(EditorMenuAction("Mark Out Here") { session.mark(false) })
 		if session.state.markIn != nil { actions.append(EditorMenuAction("Clear In") { session.clear(true) }) }
@@ -358,6 +377,7 @@ private struct JumpSheet: View {
 				Button("Jump") { jump() }
 				if let error { Text(error) }
 			}
+			.editorListMargins()
 			.navigationTitle("Jump to Time")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -395,6 +415,7 @@ private struct JoinSheet: View {
 				}
 				if let text = error ?? session.message { Text(text) }
 			}
+			.editorListMargins()
 			.navigationTitle(point.name)
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -480,6 +501,7 @@ private struct ClipExportView: View {
 					}
 				}
 			}
+			.editorListMargins()
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
 			.navigationTitle("Export")
@@ -560,6 +582,7 @@ struct ClipInfoView: View {
 						ForEach(section.rows.indices, id: \.self) { rowIndex in
 							let row = section.rows[rowIndex]
 							LabeledContent(row.key, value: row.value)
+								.editorTouchRow(alignment: .leading)
 								.accessibilityElement(children: .combine)
 						}
 					} header: {
@@ -568,6 +591,7 @@ struct ClipInfoView: View {
 					.listRowBackground(EditorTheme.surface)
 				}
 			}
+			.editorListMargins()
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
 			.navigationTitle("Clip Info")
@@ -587,6 +611,7 @@ struct PrimaryCuttingBoard: View {
 	let close: () -> Void
 	@State private var confirmClose = false
 	@State private var showingInfo = false
+	@AccessibilityFocusState private var infoFocused: Bool
 
 	var body: some View {
 		VStack(spacing: 0) {
@@ -594,7 +619,7 @@ struct PrimaryCuttingBoard: View {
 				Button {
 					session.stop()
 					if session.hasTimelineEdits { confirmClose = true } else { close() }
-				} label: { Text("Close").padding(.horizontal).frame(minHeight: 48) }
+				} label: { Text("Close").padding(.horizontal).frame(minHeight: 48).contentShape(Rectangle()) }
 				.accessibilityIdentifier("sharedBoardClose")
 				.alert("Close this clip and discard unsaved edits?", isPresented: $confirmClose) {
 					Button("Close Clip", role: .destructive, action: close)
@@ -603,11 +628,13 @@ struct PrimaryCuttingBoard: View {
 				Text(session.hasVideo ? "Video Cutting Board" : "Audio Cutting Board")
 					.font(.headline)
 					.frame(maxWidth: .infinity, minHeight: 48)
+					.contentShape(Rectangle())
 					.accessibilityAddTraits(.isHeader)
 				Button { session.stop(); showingInfo = true } label: {
-					Text("Clip Info").padding(.horizontal).frame(minHeight: 48)
+					Text("Clip Info").padding(.horizontal).frame(minHeight: 48).contentShape(Rectangle())
 				}
-				.sheet(isPresented: $showingInfo) { ClipInfoView(session: session) }
+				.accessibilityFocused($infoFocused)
+				.sheet(isPresented: $showingInfo, onDismiss: { infoFocused = true }) { ClipInfoView(session: session) }
 			}
 			CuttingBoardView(projectActions: projectActions, session: session)
 		}

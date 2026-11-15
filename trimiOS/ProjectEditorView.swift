@@ -52,6 +52,7 @@ struct ProjectEditorView: View {
 	@State private var undo: [HistoryEntry] = []
 	@State private var redo: [HistoryEntry] = []
 	@State private var error: String?
+	@State private var previewTrigger = "fullScreenPreview"
 	@State private var fullScreenPreview: PreviewPlayback?
 	@State private var jumping = false
 	@State private var jumpText = ""
@@ -82,9 +83,12 @@ struct ProjectEditorView: View {
 						if hasVideo && !wide {
 							preview.frame(maxWidth: .infinity)
 								.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect))
+								.listRowInsets(EdgeInsets())
 						}
 						projectRows
+							.listRowInsets(EdgeInsets())
 					}
+					.editorListMargins()
 				}
 			}
 			.disabled(busy)
@@ -115,6 +119,7 @@ struct ProjectEditorView: View {
 								projectSheet = nil
 							}
 						}
+						.editorListMargins()
 						.scrollContentBackground(.hidden)
 						.background(EditorTheme.workspace)
 						.navigationTitle("Project Settings")
@@ -157,6 +162,7 @@ struct ProjectEditorView: View {
 			.sheet(item: $renaming, onDismiss: { focus = trigger }) { source in
 				NavigationStack {
 					Form { TextField("Clip Name", text: $clipName) }
+						.editorListMargins()
 						.scrollContentBackground(.hidden)
 						.background(EditorTheme.workspace)
 						.navigationTitle("Rename Clip")
@@ -173,7 +179,7 @@ struct ProjectEditorView: View {
 				}
 				.editorAppearance()
 			}
-			.fullScreenCover(item: $fullScreenPreview, onDismiss: { focus = "fullScreenPreview" }) { preview in
+			.fullScreenCover(item: $fullScreenPreview, onDismiss: { focus = previewTrigger }) { preview in
 				FullScreenPreview(playback: preview)
 			}
 			.fullScreenCover(item: $board, onDismiss: { focus = trigger }) { editing in
@@ -230,9 +236,19 @@ struct ProjectEditorView: View {
 	}
 
 	private var preview: some View {
-		ProjectPreview(player: playback.player)
-			.aspectRatio(pictureAspect, contentMode: .fit)
-			.accessibilityHidden(true)
+		Button {
+			previewTrigger = "projectPreview"
+			fullScreenPreview = playback.makePreview()
+		} label: {
+			ProjectPreview(player: playback.player)
+				.allowsHitTesting(false)
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
+				.contentShape(Rectangle())
+		}
+		.buttonStyle(.plain)
+		.accessibilityLabel("Project Preview")
+		.accessibilityFocused($focus, equals: "projectPreview")
+		.disabled(!playback.ready)
 	}
 
 	@ViewBuilder private var projectRows: some View {
@@ -259,15 +275,15 @@ struct ProjectEditorView: View {
 			Section {
 				let clips = project.displayedClips(on: track)
 				if clips.isEmpty {
-					Text("No clips")
+					Text("No clips").editorTouchRow(alignment: .leading)
 						.accessibilityDropPoint(.center, description: Text("Drop on " + track.title))
 						.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: false) }
 				} else {
 					ScrollView(.horizontal) {
-						HStack {
+						HStack(spacing: 0) {
 							ForEach(clips) { clip in
 								if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
-									clipButton(clip, source: source, track: track)
+									clipButton(clip, source: source, track: track, count: clips.count)
 								}
 							}
 						}
@@ -281,6 +297,8 @@ struct ProjectEditorView: View {
 						if activeTrack == track.id { Image(systemName: "checkmark").accessibilityHidden(true) }
 						Image(systemName: "chevron.down").accessibilityHidden(true)
 					}
+					.padding(.horizontal, 12)
+					.editorTouchRow(alignment: .leading)
 				}
 					.accessibilityValue(activeTrack == track.id ? "Selected" : "")
 					.accessibilityAddTraits(.isHeader)
@@ -298,44 +316,49 @@ struct ProjectEditorView: View {
 		Group {
 			Button { playback.pause(); jumpText = ""; jumping = true } label: {
 				LabeledContent("Playhead", value: time(playback.position))
+					.padding(.horizontal, 12)
+					.editorTouchRow()
 			}
 			.accessibilityFocused($focus, equals: "playhead")
-			HStack {
-				Button { playback.seek(playback.position - project.frame) } label: { Label("Step Back", systemImage: "backward.frame") }
-				Button { playback.toggle() } label: { Label(playback.playing ? "Pause" : "Play", systemImage: playback.playing ? "pause.fill" : "play.fill") }.disabled(!playback.ready)
-				Button { playback.seek(playback.position + project.frame) } label: { Label("Step Forward", systemImage: "forward.frame") }
+			HStack(spacing: 0) {
+				Button { playback.seek(playback.position - project.frame) } label: { Label("Step Back", systemImage: "backward.frame").editorTouchRow() }
+				Button { playback.toggle() } label: { Label(playback.playing ? "Pause" : "Play", systemImage: playback.playing ? "pause.fill" : "play.fill").editorTouchRow() }.disabled(!playback.ready)
+				Button { playback.seek(playback.position + project.frame) } label: { Label("Step Forward", systemImage: "forward.frame").editorTouchRow() }
 				if project.placements.contains(where: { $0.track == .video }) {
-					Button { fullScreenPreview = playback.makePreview() } label: {
-						Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right")
+					Button { previewTrigger = "fullScreenPreview"; fullScreenPreview = playback.makePreview() } label: {
+						Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right").editorTouchRow()
 					}
 					.disabled(!playback.ready)
 					.accessibilityFocused($focus, equals: "fullScreenPreview")
 				}
 			}
 			.labelStyle(.iconOnly)
-			.controlSize(.large)
+			.controlSize(.regular)
+			.buttonBorderShape(.roundedRectangle(radius: 8))
 			.buttonStyle(.bordered)
-			HStack {
+			HStack(spacing: 0) {
 				ForEach([true, false], id: \.self) { isIn in
 					let point = isIn ? project.markIn : project.markOut
-					Button(isIn ? "Mark In" : "Mark Out") {
+					Button {
 						playback.pause()
 						var next = project
 						let value = point?.time == playback.position ? nil : ProjectTime(playback.position)
 						if isIn { next.markIn = value } else { next.markOut = value }
 						let marker = isIn ? "In" : "Out"
 						commit(next, action: (value == nil ? "Clear " : "Mark ") + marker)
-					}
+					} label: { Text(isIn ? "Mark In" : "Mark Out").editorTouchRow() }
 					.accessibilityValue(point.map { time($0.time) } ?? "")
 					.disabled(project.placements.isEmpty)
 				}
-				Menu("Undo") {
+				Menu {
 					Button("Undo") { history(back: true) }.disabled(undo.isEmpty)
 					Button("Redo") { history(back: false) }.disabled(redo.isEmpty)
-				}
+				} label: { Text("Undo").editorTouchRow() }
 				.editorMenuActions("Undo", historyActions)
 				.disabled(undo.isEmpty && redo.isEmpty)
-			}.buttonStyle(.bordered)
+			}
+			.buttonBorderShape(.roundedRectangle(radius: 8))
+			.buttonStyle(.bordered)
 		}
 	}
 
@@ -346,7 +369,7 @@ struct ProjectEditorView: View {
 		return actions
 	}
 
-	private func clipButton(_ clip: ProjectPlacement, source: ProjectMediaSource, track: TimelineTrack) -> some View {
+	private func clipButton(_ clip: ProjectPlacement, source: ProjectMediaSource, track: TimelineTrack, count: Int) -> some View {
 		let name = clip.displayName(for: source)
 		let linked = track.id != clip.trackID
 		let rowID = (linked ? "linked/" : "") + clip.id.uuidString
@@ -358,8 +381,13 @@ struct ProjectEditorView: View {
 				if marked.contains(clip.id) { Image(systemName: "checkmark").accessibilityHidden(true) }
 				Text(name)
 			}
+			.padding(.horizontal, 6)
+			.frame(minHeight: 48)
+			.containerRelativeFrame(.horizontal) { width, _ in max(120, width / CGFloat(count)) }
+			.background(.quaternary, in: RoundedRectangle(cornerRadius: 8).inset(by: 2))
+			.contentShape(Rectangle())
 		}
-		.buttonStyle(.bordered)
+		.buttonStyle(.plain)
 		.accessibilityValue((linked ? "Linked audio, " : "") + (marked.contains(clip.id) ? "Marked, " : "") + "Start " + time(clip.start.time) + ", duration " + time(clip.duration))
 		.contextMenu { EditorMenuAction.buttons(actions) }
 		.focused($keyboardClip, equals: rowID)
@@ -482,10 +510,10 @@ struct ProjectEditorView: View {
 	}
 
 	private func sourcePicker(_ title: String, source: UUID?) -> some View {
-		Menu(title) {
+		Menu {
 			Button("Photo Library") { pick(source, files: false) }
 			Button("Files") { pick(source, files: true) }
-		}
+		} label: { Text(title).editorTouchRow(alignment: .leading) }
 		.accessibilityAction(named: "Photo Library") { pick(source, files: false) }
 		.accessibilityAction(named: "Files") { pick(source, files: true) }
 		.accessibilityFocused($focus, equals: "import")
@@ -784,6 +812,7 @@ private struct TrackEffectsSheet: View {
 				} header: { Text(track.title).accessibilityAddTraits(.isHeader) }
 				if let error { Text(error) }
 			}
+			.editorListMargins()
 			.navigationTitle("Track Effects")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -820,6 +849,7 @@ private struct PlacementSheet: View {
 				if offersAudio { Toggle("Include Clip Audio", isOn: $includeAudio) }
 				if let error { Text(error) }
 			}
+			.editorListMargins()
 			.navigationTitle("Add at Playhead")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -854,6 +884,7 @@ private struct ProjectExportView: View {
 				}
 			}
 			.scrollContentBackground(.hidden)
+			.editorListMargins()
 			.background(EditorTheme.workspace)
 			.navigationTitle("Export")
 			.navigationBarTitleDisplayMode(.inline)

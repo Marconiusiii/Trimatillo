@@ -75,9 +75,15 @@ struct ProjectLauncherView: View {
 						dismiss()
 					}
 				} else {
-					if saved.isEmpty { Text("No saved projects") }
+					if saved.isEmpty {
+						Text("No saved projects")
+							.editorTouchRow()
+							.containerRelativeFrame(.vertical)
+							.contentShape(Rectangle())
+							.listRowInsets(EdgeInsets())
+					}
 					ForEach(saved) { project in
-						Button(project.name) {
+						Button {
 							do {
 								open(try ProjectLibrary.load(project.id))
 								dismiss()
@@ -86,10 +92,11 @@ struct ProjectLauncherView: View {
 							} catch {
 								self.error = "Could not open this project. Restore its project file from backup."
 							}
-						}
+						} label: { Text(project.name).editorTouchRow(alignment: .leading) }
 					}
 				}
 			}
+			.editorListMargins()
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
 			.navigationTitle(mode.rawValue)

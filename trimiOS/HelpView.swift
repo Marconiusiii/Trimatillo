@@ -5,13 +5,14 @@ struct HelpView: View {
 	var body: some View {
 		NavigationStack {
 			List {
-				Text("Start with Quick Start to edit your first clip, or choose a topic below.")
+				Text("Start with Quick Start to edit your first clip, or choose a topic below.").editorTouchRow(alignment: .leading)
 					.listRowBackground(EditorTheme.surface)
 				ForEach(HelpTopic.allCases, id: \.self) { topic in
-					NavigationLink(topic.rawValue, value: topic)
+					NavigationLink(value: topic) { Text(topic.rawValue).editorTouchRow(alignment: .leading) }
 						.listRowBackground(EditorTheme.surface)
 				}
 			}
+			.editorListMargins()
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
 			.navigationTitle("Trimatillo Help")
@@ -20,17 +21,18 @@ struct HelpView: View {
 			}
 			.navigationDestination(for: HelpTopic.self) { topic in
 				List {
-					Text(topic.introduction).listRowBackground(EditorTheme.surface)
+					Text(topic.introduction).editorTouchRow(alignment: .leading).listRowBackground(EditorTheme.surface)
 					ForEach(topic.sections, id: \.title) { section in
 						Section {
 							ForEach(section.rows.indices, id: \.self) { index in
 								let step = section.numbered ? "\(index + 1). " : ""
-								Text(step + section.rows[index])
+								Text(step + section.rows[index]).editorTouchRow(alignment: .leading)
 							}
-						} header: { Text(section.title).accessibilityAddTraits(.isHeader) }
+						} header: { Text(section.title).editorTouchRow(alignment: .leading).accessibilityAddTraits(.isHeader) }
 						.listRowBackground(EditorTheme.surface)
 					}
 				}
+				.editorListMargins()
 				.scrollContentBackground(.hidden)
 				.background(EditorTheme.workspace)
 				.navigationTitle(topic.rawValue)
@@ -109,7 +111,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Enter a Clip Name and choose Save. The project uses that name for the source and its timeline clips.",
 				"Append a second passage from the same source. A clip named Interview becomes Interview A on the timeline, and the new passage is Interview B. Each clip keeps its letter when moved."
 			]), HelpSection("Full Screen Preview", numbered: true, [
-				"Choose Full Screen Preview beside the playback controls to open the assembled project at the playhead.",
+				"Tap Project Preview or choose Full Screen Preview beside the playback controls to open the project at the playhead.",
 				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time.",
 				"Choose Close to return to editing with the playhead at the preview position."
 			]), HelpSection("Add at Playhead", numbered: true, [
@@ -174,7 +176,7 @@ private enum HelpTopic: String, CaseIterable {
 			])]
 		case .cuts:
 			[HelpSection("Select a range", [
-				"Mark In sets the start of a selection at the playhead. Mark Out sets its end. Place Out after In.",
+				"Mark In sets the start of a selection at the playhead. Mark Out sets its end. Place Out after In. A bar along the bottom of the preview shows the range with a tick at each end.",
 				"Move the playhead and set the same marker again to change its position.",
 				"Edit Actions includes commands to clear each marker, play the marked range, and delete the selected passage."
 			]), HelpSection("Trim and review", [
@@ -182,7 +184,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Previous Edit Point and Next Edit Point move among joins, markers, and the start and end of the clip.",
 				"At a join, choose Adjust Edit Point in Edit Actions. The sheet shows the end of the preceding section and the start of the following section.",
 				"In a video, step either boundary to the previous or next frame of the original clip. You can also enter a source time or frame number. Choose Save to apply both boundaries or Cancel to discard the adjustments.",
-				"Choose Undo to reverse a marker change, trim, deletion, or saved join adjustment. Repeat to undo earlier edits.",
+				"Choose Undo to reverse a marker change, trim, deletion, or saved join adjustment. Repeat to undo earlier edits. To reapply an edit, choose Redo in Edit Actions.",
 				"To undo by shaking your device, turn on Shake to Undo in Trimatillo Settings and in the device's Accessibility settings under Touch."
 			])]
 		case .actions:

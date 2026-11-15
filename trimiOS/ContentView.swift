@@ -12,6 +12,7 @@ struct ContentView: View {
 	@State private var projectTrigger = ProjectLauncher.create
 	@AccessibilityFocusState private var projectFocus: ProjectLauncher?
 	@State private var session: CuttingBoardSession?
+	@AccessibilityFocusState private var trimFocused: Bool
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
 	@State private var photo: PhotosPickerItem?
@@ -42,6 +43,7 @@ struct ContentView: View {
 						.tint(color.fill)
 						.controlSize(.large)
 						.disabled(loading)
+						.accessibilityFocused($trimFocused)
 						.photosPicker(isPresented: $pickingPhoto, selection: $photo, matching: .videos, photoLibrary: .shared())
 						.fileImporter(isPresented: $pickingFile, allowedContentTypes: [.audio, .movie]) { result in
 							switch result {
@@ -54,14 +56,14 @@ struct ContentView: View {
 							}
 						}
 					ForEach([ProjectLauncher.create, .open], id: \.self) { mode in
-						Button(mode.rawValue) { projectTrigger = mode; launcher = mode }
+						Button { projectTrigger = mode; launcher = mode } label: { Text(mode.rawValue).editorTouchRow() }
 							.accessibilityFocused($projectFocus, equals: mode)
 							.disabled(loading)
 					}
-					Button("Help") { showingHelp = true }
+					Button { showingHelp = true } label: { Text("Help").editorTouchRow() }
 						.accessibilityFocused($helpFocused)
 						.sheet(isPresented: $showingHelp, onDismiss: { helpFocused = true }) { HelpView() }
-					Button("Settings") { showingSettings = true }
+					Button { showingSettings = true } label: { Text("Settings").editorTouchRow() }
 						.accessibilityFocused($settingsFocused)
 						.sheet(isPresented: $showingSettings, onDismiss: { settingsFocused = true }) { SettingsView(support: support) }
 				}
@@ -92,6 +94,8 @@ struct ContentView: View {
 		.onChange(of: failure) { _, error in
 			if error == nil { handleIncomingFile() }
 		}
+		.onChange(of: pickingFile) { _, open in if !open { trimFocused = true } }
+		.onChange(of: pickingPhoto) { _, open in if !open { trimFocused = true } }
 		.onChange(of: photo) { _, item in
 			guard let item else { return }
 			photo = nil
@@ -148,6 +152,7 @@ struct ContentView: View {
 	private func close() {
 		session?.releaseAudio()
 		session = nil
+		trimFocused = true
 	}
 
 	private func present(_ source: ClipSource) {
@@ -184,10 +189,10 @@ private struct ClipSourceMenu: View {
 	let choose: (ClipSource) -> Void
 
 	var body: some View {
-		Menu(title) {
+		Menu {
 			Button("Photo Library") { choose(.photos) }
 			Button("Files") { choose(.files) }
-		}
+		} label: { Text(title).editorTouchRow() }
 		.accessibilityAction(named: "Photo Library") { choose(.photos) }
 		.accessibilityAction(named: "Files") { choose(.files) }
 	}
@@ -198,22 +203,30 @@ private struct WelcomeView<Actions: View>: View {
 	@ViewBuilder let actions: () -> Actions
 
 	var body: some View {
-		ScrollView {
-			VStack(spacing: 20) {
+		ViewThatFits(in: .vertical) {
+			welcomeContent
+			ScrollView { welcomeContent }
+		}
+	}
+
+	private var welcomeContent: some View {
+		VStack(spacing: 0) {
+			VStack {
 				Image(decorative: "AppIcon60x60")
 					.resizable()
 					.scaledToFit()
 					.frame(width: 104, height: 104)
 				Text("Welcome to Trimatillo")
 					.font(.largeTitle.weight(.semibold))
-					.accessibilityAddTraits(.isHeader)
-				actions()
-				if loading { ProgressView("Opening clip") }
 			}
-			.multilineTextAlignment(.center)
-			.frame(maxWidth: .infinity)
-			.padding()
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
+			.padding(.vertical)
+			.contentShape(Rectangle())
+			.accessibilityElement(children: .combine)
+			.accessibilityAddTraits(.isHeader)
+			actions()
+			if loading { ProgressView("Opening clip").editorTouchRow() }
 		}
-		.defaultScrollAnchor(.center, for: .alignment)
+		.multilineTextAlignment(.center)
 	}
 }
