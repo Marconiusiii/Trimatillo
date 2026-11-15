@@ -186,9 +186,6 @@ struct ProjectEditorView: View {
 				Button("OK") { error = nil }
 			} message: { Text(error ?? "") }
 		}
-		.onChange(of: focus) { _, target in
-			if target == "playhead" { playback.primeScrubAudio() }
-		}
 		.onChange(of: dragging) { _, ids in if ids.isEmpty { dropAnchor = nil } }
 		.onChange(of: playback.failure) { _, message in
 			if let message { error = message; playback.failure = nil }
@@ -305,8 +302,8 @@ struct ProjectEditorView: View {
 
 	private var transport: some View {
 		Group {
-			ProjectTimelineSlider(playhead: playback.playhead, duration: project.duration, frame: project.frame,
-				formatTime: time, scrub: playback.scrub, editingChanged: playback.setScrubbing, step: step, toggle: playback.toggle, focus: $focus)
+			ProjectTimelineSlider(playhead: playback.playhead, playback: playback, duration: project.duration,
+				frame: project.frame, format: format, formatTime: time)
 				.disabled(!playback.ready)
 			Button("Jump to Time", action: openJump)
 				.buttonStyle(EditorButtonStyle())
@@ -1018,43 +1015,163 @@ private struct ProjectExportView: View {
 
 private struct ProjectTimelineSlider: View {
 	@ObservedObject var playhead: ProjectPlayhead
+	let playback: ProjectPlayback
 	let duration: CMTime
 	let frame: CMTime
+	let format: TimecodeFormat
 	let formatTime: (CMTime) -> String
-	let scrub: (CMTime) -> Void
-	let editingChanged: (Bool) -> Void
-	let step: (Int32) -> Void
-	let toggle: () -> Void
-	let focus: AccessibilityFocusState<String?>.Binding
 
 	var body: some View {
-		let value = formatTime(playhead.position)
 		VStack(spacing: 0) {
-			Text("Playhead, " + value)
+			Text("Playhead, " + formatTime(playhead.position))
 				.monospacedDigit()
 				.accessibilityHidden(true)
-			Slider(value: Binding(get: { playhead.position.seconds }, set: { seconds in
-				if seconds >= duration.seconds { scrub(duration) }
-				else {
-					let frames = (seconds / frame.seconds).rounded()
-					scrub(CMTimeMultiplyByFloat64(frame, multiplier: frames))
-				}
-			}), in: 0...max(duration.seconds, frame.seconds)) {
-				Text("Playhead")
-			} onEditingChanged: { editing in
-				editingChanged(editing)
+			ProjectSliderControl(playback: playback, position: playhead.position, duration: duration,
+				frame: frame, format: format, formatTime: formatTime)
+				.frame(minHeight: 44)
+		}
+	}
+}
+
+private struct ProjectSliderControl: UIViewRepresentable {
+	let playback: ProjectPlayback
+	let position: CMTime
+	let duration: CMTime
+	let frame: CMTime
+	let format: TimecodeFormat
+	let formatTime: (CMTime) -> String
+
+	func makeUIView(context: Context) -> TimelineSlider {
+		let slider = TimelineSlider()
+		slider.accessibilityLabel = "Playhead"
+		slider.semanticContentAttribute = .playback
+		return slider
+	}
+
+	func updateUIView(_ slider: TimelineSlider, context: Context) {
+		slider.control = self
+		slider.isEnabled = context.environment.isEnabled
+		slider.display(position)
+	}
+
+	static func dismantleUIView(_ slider: TimelineSlider, coordinator: ()) {
+		slider.finishDrag(announce: false)
+	}
+
+	final class TimelineSlider: UISlider {
+		var control: ProjectSliderControl?
+		private var draggingPlayhead = false
+		private var feedback: Task<Void, Never>?
+		private var spokenValue: String?
+
+		func display(_ time: CMTime) {
+			guard let control else { return }
+			let seconds = control.duration.seconds
+			value = seconds > 0 ? Float(time.seconds / seconds) : 0
+			accessibilityValue = spokenTime(time, control: control)
+		}
+
+		private func spokenTime(_ time: CMTime, control: ProjectSliderControl) -> String {
+			let label = control.formatTime(time)
+			guard control.format == .standard, control.duration.seconds < 10 else { return label }
+			let ticks = CMTimeConvertScale(time, timescale: 1000, method: .roundTowardZero).value
+			return label + String(format: ".%03lld", ticks % 1000)
+		}
+
+		override func accessibilityIncrement() { adjust(forward: true) }
+		override func accessibilityDecrement() { adjust(forward: false) }
+
+		private func adjust(forward: Bool) {
+			guard isEnabled, let control else { return }
+			finishDrag(announce: false)
+			let interval = min(5, control.duration.seconds / 10)
+			let delta = CMTime(seconds: interval, preferredTimescale: 600000)
+			let current = control.playback.position
+			control.playback.seek(forward ? current + delta : current - delta)
+			display(control.playback.position)
+		}
+
+		override func accessibilityPerformMagicTap() -> Bool {
+			guard isEnabled, let control else { return false }
+			finishDrag(announce: false)
+			control.playback.toggle()
+			return true
+		}
+
+		override func accessibilityElementDidBecomeFocused() {
+			super.accessibilityElementDidBecomeFocused()
+			control?.playback.primeScrubAudio()
+		}
+
+		override func accessibilityElementDidLoseFocus() {
+			super.accessibilityElementDidLoseFocus()
+			finishDrag(announce: false)
+		}
+
+		override func beginTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+			guard isEnabled, let control else { return false }
+			_ = super.beginTracking(touch, with: event)
+			control.playback.setScrubbing(true)
+			draggingPlayhead = control.playback.scrubbing
+			spokenValue = nil
+			move(to: touch)
+			return draggingPlayhead
+		}
+
+		override func continueTracking(_ touch: UITouch, with event: UIEvent?) -> Bool {
+			guard draggingPlayhead else { return false }
+			move(to: touch)
+			return true
+		}
+
+		override func endTracking(_ touch: UITouch?, with event: UIEvent?) {
+			if let touch { move(to: touch) }
+			super.endTracking(touch, with: event)
+			finishDrag(announce: true)
+		}
+
+		override func cancelTracking(with event: UIEvent?) {
+			super.cancelTracking(with: event)
+			finishDrag(announce: false)
+		}
+
+		private func move(to touch: UITouch) {
+			guard draggingPlayhead, let control, control.playback.scrubbing else { return }
+			let track = trackRect(forBounds: bounds)
+			let left = thumbRect(forBounds: bounds, trackRect: track, value: minimumValue).midX
+			let right = thumbRect(forBounds: bounds, trackRect: track, value: maximumValue).midX
+			guard left != right else { return }
+			let fraction = min(1, max(0, (touch.location(in: self).x - left) / (right - left)))
+			let frames = (fraction * control.duration.seconds / control.frame.seconds).rounded()
+			let target = fraction == 1 ? control.duration : min(control.duration, CMTimeMultiplyByFloat64(control.frame, multiplier: frames))
+			control.playback.scrub(to: target)
+			display(target)
+			feedback?.cancel()
+			guard UIAccessibility.isVoiceOverRunning else { return }
+			feedback = Task { [weak self] in
+				do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
+				guard control.playback.scrubbing else { return }
+				self?.speakIfNeeded()
 			}
-			.accessibilityValue(value)
-			.accessibilityAction(.magicTap, toggle)
-			.accessibilityAdjustableAction { direction in
-				switch direction {
-				case .increment: step(1)
-				case .decrement: step(-1)
-				@unknown default: break
-				}
+		}
+
+		private func speakIfNeeded() {
+			guard let control, UIAccessibility.isVoiceOverRunning, accessibilityElementIsFocused(),
+				control.playback.scrubbing, control.playback.audibleScrubPosition != control.playback.position else { return }
+			let time = spokenTime(control.playback.position, control: control)
+			if spokenValue != time {
+				spokenValue = time
+				UIAccessibility.post(notification: .announcement, argument: time)
 			}
-			.frame(minHeight: 44)
-			.accessibilityFocused(focus, equals: "playhead")
+		}
+
+		func finishDrag(announce: Bool) {
+			feedback?.cancel()
+			feedback = nil
+			guard draggingPlayhead else { return }
+			draggingPlayhead = false
+			if announce { speakIfNeeded() }
+			control?.playback.setScrubbing(false)
 		}
 	}
 }

@@ -62,7 +62,10 @@ private struct ScrubAudioWindow {
 	private var audioActive = false
 	private var generation = 0
 	private var reverse: Task<Void, Never>?
-	private var scrubbing = false
+	private(set) var scrubbing = false
+	private(set) var audibleScrubPosition: CMTime?
+	private var pictureSeek: Task<Void, Never>?
+	private var scrubAudioFailed = false
 	private var scrubDirection: Int32 = 0
 	private var directionChanges = 0
 	private var pendingScrub: CMTime?
@@ -111,6 +114,8 @@ private struct ScrubAudioWindow {
 		warmup?.cancel()
 		warmup = nil
 		let wasRewinding = reverse != nil
+		pictureSeek?.cancel()
+		pictureSeek = nil
 		scrubTask?.cancel()
 		scrubTask = nil
 		pendingScrub = nil
@@ -221,18 +226,8 @@ private struct ScrubAudioWindow {
 		stop(keepingAudio: true)
 		scrubbing = true
 		scrubDirection = 0
-		if player.currentItem?.audioMix != nil {
-			do {
-				try activateAudio()
-				engine.prepare()
-				try engine.start()
-			} catch {
-				pause()
-				failure = "Could not preview project audio. Check the audio output and try again."
-				return
-			}
-		}
-		scrub(to: position)
+		audibleScrubPosition = nil
+		scrubAudioFailed = false
 	}
 
 	func scrub(to time: CMTime) {
@@ -240,12 +235,22 @@ private struct ScrubAudioWindow {
 		let target = min(duration, max(.zero, time))
 		let direction = CMTimeCompare(target, playhead.position)
 		if direction != 0 {
+			audibleScrubPosition = nil
 			if direction != scrubDirection { directionChanges += 1 }
 			scrubDirection = direction
 		}
 		playhead.position = target
-		player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
-		guard item.audioMix != nil else { return }
+		if pictureSeek == nil {
+			pictureSeek = Task {
+				defer { if !Task.isCancelled { pictureSeek = nil } }
+				while !Task.isCancelled {
+					let requested = playhead.position
+					await player.seek(to: requested, toleranceBefore: .zero, toleranceAfter: .zero)
+					if requested == playhead.position { break }
+				}
+			}
+		}
+		guard item.audioMix != nil, !scrubAudioFailed else { return }
 		pendingScrub = target
 		guard scrubTask == nil else { return }
 		scrubTask = Task {
@@ -273,15 +278,19 @@ private struct ScrubAudioWindow {
 						samples = decoded.grain(at: point)
 					}
 					guard let samples, let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: format) else { continue }
+					try activateAudio()
+					if !engine.isRunning { try engine.start() }
 					node.scheduleBuffer(buffer, at: nil, options: .interrupts, completionCallbackType: .dataPlayedBack) { _ in }
 					if !node.isPlaying { node.play() }
+					audibleScrubPosition = samples.contains { abs($0) > 0.0001 } ? point : nil
 					// Limit replacements while dragging. The first grain is scheduled immediately.
 					try await Task.sleep(for: .milliseconds(35))
 				}
 			} catch {
 				if !Task.isCancelled {
-					setScrubbing(false)
-					failure = "Could not preview project audio. Check the audio output and try again."
+					scrubAudioFailed = true
+					audibleScrubPosition = nil
+					node.stop()
 				}
 			}
 		}

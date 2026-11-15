@@ -108,8 +108,9 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Project playback and navigation", [
 				"Choose Play to preview the timeline. Choose Pause to stop at the current position.",
 				"Choose Rewind or Fast Forward to play in that direction. Repeat to select 1x, 1.5x, 2x, 4x, or 8x. Changing direction starts at 1x.",
-				"Drag the Playhead slider to preview the picture and sound. Lift your finger to leave the playhead on that frame.",
-				"With VoiceOver, focus Playhead, double-tap and hold until you hear three rising tones, then drag left or right. After lifting your finger, use Magic Tap to play or pause at the playhead. Swipe up or down on the slider to move one project frame forward or back.",
+				"Drag across Playhead to preview the project from start to end. Lift to leave the playhead there.",
+				"With VoiceOver, focus Playhead, double-tap and hold until you hear three rising tones, then drag left or right. After lifting your finger, use Magic Tap to play or pause at the playhead. Swipe up or down to move five seconds forward or back. For projects shorter than 50 seconds, each swipe moves one tenth of the timeline.",
+				"When scrub audio is unavailable, VoiceOver reads the timecode after a brief pause in your drag or when you lift.",
 				"Choose Jump to Time to enter a time or frame in your selected timecode format.",
 				"Choose Step Back or Step Forward to move one project frame. In the Actions rotor, choose the 10-frame action or the previous or next edit point. Double-tap to use that action again while the button stays focused.",
 				"Edit points include clip boundaries on the active track, project markers, Start, and End.",
