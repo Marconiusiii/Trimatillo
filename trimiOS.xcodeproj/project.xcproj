@@ -28,6 +28,8 @@
           "target": "TrimatoShare",
           "inclusions": [
             "ClipEditTimeline.swift",
+			"ClipSilenceTrimming.swift",
+			"TrimSilencesView.swift",
             "CuttingBoardKeyboard.swift",
             "CuttingBoardSession.swift",
             "CuttingBoardTouchSurface.swift",

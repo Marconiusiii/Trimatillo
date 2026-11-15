@@ -200,6 +200,12 @@ private enum HelpTopic: String, CaseIterable {
 				"In a video, step either boundary to the previous or next frame of the original clip. You can also enter a source time or frame number. Choose Save to apply both boundaries or Cancel to discard the adjustments.",
 				"Choose Undo to reverse a marker change, trim, deletion, or saved join adjustment. Repeat to undo earlier edits. To reapply an edit, choose Redo in Edit Actions.",
 				"To undo by shaking your device, turn on Shake to Undo in Trimatillo Settings and in the device's Accessibility settings under Touch."
+			]), HelpSection("Trim silences", numbered: true, [
+				"Open Edit Actions and choose Trim Silences. With In and Out set, leave Only Between In and Out on to search that passage.",
+				"Set the silence threshold. A higher value includes louder sounds. Minimum silence sets the shortest pause to find. Retained silence sets how much of each pause to keep, divided between its two ends.",
+				"Choose Find Pauses. For each pause, choose its Play in Context button to hear the original passage. Adjust Start or End to change the cut, or turn off Remove Pause to keep that passage.",
+				"Choose Preview Trimmed Clip to play the selected cuts together. Close the preview to continue reviewing.",
+				"Choose Apply Cuts. Undo restores all the pauses from this operation in one step."
 			])]
 		case .actions:
 			[HelpSection("Actions rotor", [

@@ -489,14 +489,15 @@ final class CuttingBoardSession: ObservableObject {
 		} catch { message = error.localizedDescription }
 	}
 
-	private func apply(_ snapshot: Snapshot, action: String?) throws {
+	private nonisolated static func composition(for timeline: ClipEditTimeline, tracks: [(AVAssetTrack, CMTimeRange)], transform: CGAffineTransform) throws -> AVMutableComposition {
 		let composition = AVMutableComposition()
 		for (track, available) in tracks {
 			guard let output = composition.addMutableTrack(withMediaType: track.mediaType,
 				preferredTrackID: kCMPersistentTrackID_Invalid) else { throw CocoaError(.featureUnsupported) }
 			if track.mediaType == .video { output.preferredTransform = transform }
 			var cursor = CMTime.zero
-			for range in snapshot.timeline.sourceRanges {
+			for range in timeline.sourceRanges {
+				try Task.checkCancellation()
 				let overlap = CMTimeRangeGetIntersection(range, otherRange: available)
 				if overlap.isValid && !overlap.isEmpty {
 					try output.insertTimeRange(overlap, of: track, at: cursor + (overlap.start - range.start))
@@ -504,9 +505,14 @@ final class CuttingBoardSession: ObservableObject {
 				cursor = cursor + range.duration
 			}
 		}
-		if composition.duration < snapshot.timeline.duration {
-			composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: snapshot.timeline.duration))
+		if composition.duration < timeline.duration {
+			composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: timeline.duration))
 		}
+		return composition
+	}
+
+	private func apply(_ snapshot: Snapshot, action: String?, prepared: AVMutableComposition? = nil) throws {
+		let composition = try prepared ?? Self.composition(for: snapshot.timeline, tracks: tracks, transform: transform)
 		stop()
 		if let action { record(action, before: state, after: snapshot) }
 		state = snapshot
@@ -525,6 +531,72 @@ final class CuttingBoardSession: ObservableObject {
 		}
 		installItem(composition)
 		seek(snapshot.position)
+	}
+
+	func silencePauses(range: CMTimeRange, decibels: Int, minimum: Double, retained: Double) async throws -> [SilencePause] {
+		let cuts = try await ClipSilenceTrimming.analyze(asset: editAsset, range: range, decibels: decibels,
+			minimum: minimum, retained: retained)
+		return cuts.enumerated().compactMap { index, cut in
+			var start = cut.start
+			var end = cut.end
+			if hasVideo {
+				let first = frames.lowerBound(start)
+				start = first < frames.count ? frames[first] : duration
+				if end < duration {
+					let last = frames.lowerBound(end)
+					if last >= frames.count || frames[last] != end {
+						end = last > 0 ? frames[last - 1] : .zero
+					}
+				}
+			}
+			guard start < end else { return nil }
+			let limits = CMTimeRange(start: index == 0 ? range.start : cuts[index - 1].end,
+				end: index + 1 == cuts.count ? range.end : cuts[index + 1].start)
+			return SilencePause(id: index, limits: limits, cut: CMTimeRange(start: start, end: end))
+		}
+	}
+
+	private func silenceSnapshot(_ pauses: [SilencePause]) throws -> Snapshot {
+		let cuts = pauses.filter(\.included).map(\.cut)
+		var cursor = CMTime.zero
+		var ranges: [CMTimeRange] = []
+		for cut in cuts {
+			guard cut.start >= cursor, cut.end <= duration, cut.end > cut.start else { throw ClipEditError.invalidSelection }
+			ranges += state.timeline.sourceRanges(in: CMTimeRange(start: cursor, end: cut.start))
+			cursor = cut.end
+		}
+		ranges += state.timeline.sourceRanges(in: CMTimeRange(start: cursor, end: duration))
+		guard !ranges.isEmpty else { throw ClipEditError.entireClip }
+		func mapped(_ time: CMTime) -> CMTime {
+			cuts.reduce(time) { $0 - max(.zero, min(time, $1.end) - $1.start) }
+		}
+		return Snapshot(timeline: ClipEditTimeline(sourceRanges: ranges), position: mapped(position),
+			markIn: state.markIn.map(mapped), markOut: state.markOut.map(mapped))
+	}
+
+	private func preparedSilenceEdit(_ pauses: [SilencePause]) async throws -> (Snapshot, AVMutableComposition) {
+		let snapshot = try silenceSnapshot(pauses)
+		let asset = try await Self.prepareComposition(for: snapshot.timeline, tracks: tracks, transform: transform)
+		try Task.checkCancellation()
+		return (snapshot, asset)
+	}
+
+	@concurrent private static func prepareComposition(for timeline: ClipEditTimeline, tracks: [(AVAssetTrack, CMTimeRange)],
+		transform: CGAffineTransform) async throws -> AVMutableComposition {
+		try composition(for: timeline, tracks: tracks, transform: transform)
+	}
+
+	func silencePreview(_ pauses: [SilencePause]?, context: CMTimeRange? = nil) async throws -> AVPlayerItem {
+		if let context {
+			let timeline = ClipEditTimeline(sourceRanges: state.timeline.sourceRanges(in: context))
+			return AVPlayerItem(asset: try await Self.prepareComposition(for: timeline, tracks: tracks, transform: transform))
+		}
+		return AVPlayerItem(asset: try await preparedSilenceEdit(pauses ?? []).1)
+	}
+
+	func applySilenceCuts(_ pauses: [SilencePause]) async throws {
+		let (snapshot, asset) = try await preparedSilenceEdit(pauses)
+		try apply(snapshot, action: "Trim Silences", prepared: asset)
 	}
 
 	func toggle() {

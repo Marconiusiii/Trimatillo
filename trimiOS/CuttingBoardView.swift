@@ -30,6 +30,7 @@ extension View {
 
 enum BoardSheet: Identifiable, Hashable {
 	case jump
+	case trimSilences
 	case join(Int)
 	var id: Self { self }
 }
@@ -251,6 +252,8 @@ struct CuttingBoardView: View {
 
 	@ViewBuilder private func editorSheet(_ sheet: BoardSheet) -> some View {
 		switch sheet {
+		case .trimSilences:
+			TrimSilencesView(session: session)
 		case .jump:
 			JumpSheet(session: session)
 				.accessibilityAction(.magicTap) { session.toggle() }
@@ -317,6 +320,13 @@ struct CuttingBoardView: View {
 		if session.position > .zero && session.position < session.duration {
 			actions.append(EditorMenuAction("Trim Head to Playhead") { session.trim(head: true) })
 			actions.append(EditorMenuAction("Trim Tail to Playhead") { session.trim(head: false) })
+		}
+		if session.hasAudio {
+			actions.append(EditorMenuAction("Trim Silences") {
+				session.releaseAudio()
+				sheetFromMenu = fromMenu
+				session.sheet = .trimSilences
+			})
 		}
 		return actions
 	}
