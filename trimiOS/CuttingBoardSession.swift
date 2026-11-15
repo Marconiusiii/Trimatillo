@@ -247,6 +247,10 @@ final class CuttingBoardSession: ObservableObject {
 		player.currentItem?.forwardPlaybackEndTime = .invalid
 		reverseTask?.cancel()
 		reverseTask = nil
+		stopAudioPreview()
+	}
+
+	func stopAudioPreview() {
 		previewTask?.cancel()
 		previewTask = nil
 		pendingScrubTime = nil
@@ -443,7 +447,7 @@ final class CuttingBoardSession: ObservableObject {
 
 	func previewBoundary(at time: CMTime, preceding: Bool) {
 		guard hasAudio else { return }
-		stop()
+		stopAudioPreview()
 		let length = CMTime(seconds: 0.15, preferredTimescale: 48000)
 		let start = preceding ? max(.zero, time - length) : time
 		let end = preceding ? time : min(originalDuration, time + length)

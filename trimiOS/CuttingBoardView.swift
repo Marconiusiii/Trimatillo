@@ -432,7 +432,10 @@ private struct JoinSheet: View {
 			}
 		}
 		.onReceive(session.$message) { if let message = $0 { error = message } }
-		.onDisappear { session.stop(); session.message = nil }
+		.onDisappear {
+			session.stopAudioPreview()
+			if session.message != nil { session.message = nil }
+		}
 	}
 
 	private func time(for boundary: Boundary) -> CMTime {
