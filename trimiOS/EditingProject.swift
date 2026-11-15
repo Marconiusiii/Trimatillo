@@ -45,12 +45,23 @@ nonisolated enum PlacementMode { case append, split, overwrite, update }
 nonisolated struct ProjectPlacement: Identifiable, Codable, Equatable {
 	var id = UUID()
 	let sourceID: UUID
+	var labelIndex: Int?
 	var track: ProjectTrack
 	var additionalTrack: String?
 	var omitAudio: Bool?
 	var trackID: String { additionalTrack ?? track.rawValue }
 	var start: ProjectTime
 	var ranges: [ProjectRange]
+	func displayName(for source: ProjectMediaSource) -> String {
+		guard var index = labelIndex, index >= 0 else { return source.displayName }
+		var letters = ""
+		repeat {
+			letters = String(UnicodeScalar(65 + index % 26)!) + letters
+			index = index / 26 - 1
+		} while index >= 0
+		return source.displayName + " " + letters
+	}
+
 	var duration: CMTime { ranges.reduce(.zero) { $0 + $1.length.time } }
 	var end: CMTime { start.time + duration }
 }
@@ -85,6 +96,19 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 		placements.filter { $0.trackID == track.id }.sorted { $0.start.time < $1.start.time }
 	}
 
+	mutating func assignPlacementLabels() {
+		let groups = Dictionary(grouping: placements.indices, by: { placements[$0].sourceID })
+		for indices in groups.values where indices.count > 1 {
+			var used = Set(indices.compactMap { placements[$0].labelIndex })
+			var next = 0
+			for index in indices where placements[index].labelIndex == nil {
+				while used.contains(next) { next += 1 }
+				placements[index].labelIndex = next
+				used.insert(next)
+			}
+		}
+	}
+
 	mutating func createTrack(_ name: String, kind: ProjectTrack) throws -> TimelineTrack {
 		let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !name.isEmpty else { throw ProjectFailure("Enter a track name.") }
@@ -102,7 +126,8 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 			!ranges.isEmpty, ranges.allSatisfy({ $0.isValid && $0.start >= .zero && $0.duration > .zero && $0.end <= source.duration.time }) else {
 			throw ProjectFailure("Choose a compatible track and a valid clip range.")
 		}
-		let clip = ProjectPlacement(id: id ?? UUID(), sourceID: source.id, track: track.kind,
+		let clip = ProjectPlacement(id: id ?? UUID(), sourceID: source.id,
+			labelIndex: id.flatMap { id in placements.first(where: { $0.id == id })?.labelIndex }, track: track.kind,
 			additionalTrack: track.id == track.kind.rawValue ? nil : track.id, omitAudio: omitAudio,
 			start: ProjectTime(start), ranges: ranges.map(ProjectRange.init))
 		if mode == .update {
@@ -125,12 +150,16 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 				let left = existing.slice(from: existing.start.time, to: start)
 				let rightStart = mode == .split ? start : clip.end
 				var right = existing.slice(from: rightStart, to: existing.end)
-				if left != nil { right?.id = UUID() }
+				if left != nil {
+					right?.id = UUID()
+					right?.labelIndex = nil
+				}
 				if mode == .split { right?.start = ProjectTime(clip.end) }
 				return [left, right].compactMap { $0 }
 			}
 		}
 		placements.append(clip)
+		assignPlacementLabels()
 		if picture == nil { picture = source.picture }
 	}
 
@@ -196,8 +225,9 @@ enum ProjectLibrary {
 	static let directory = URL.documentsDirectory.appendingPathComponent("Projects", isDirectory: true)
 
 	static func load(_ url: URL) throws -> EditingProject {
-		let project = try JSONDecoder().decode(EditingProject.self, from: Data(contentsOf: url))
+		var project = try JSONDecoder().decode(EditingProject.self, from: Data(contentsOf: url))
 		guard (1...2).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		project.assignPlacementLabels()
 		return project
 	}
 

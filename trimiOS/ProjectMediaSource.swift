@@ -21,6 +21,8 @@ nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 
 	var id = UUID()
 	let name: String
+	var projectName: String?
+	var displayName: String { projectName ?? name }
 	var reference: Reference
 	let duration: ProjectTime
 	let picture: ProjectPicture?

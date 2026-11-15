@@ -92,6 +92,10 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose a timeline clip to jump to its start or end, remove it, or reopen its Cutting Board. Choose Save Changes to update that placement.",
 				"Choose Play to hear the tracks together and preview the picture. Choose Playhead to enter a position, or use the step buttons to move one project frame. Space plays or pauses, and the arrow keys step.",
 				"Use Mark In and Mark Out or the I and O keys to mark positions. Use the same marker button at that time to clear it. Use the Undo menu to undo or redo a project change."
+			]), HelpSection("Name a project clip", numbered: true, [
+				"Expand Project Media. Open the imported clip's menu or actions and choose Rename Clip.",
+				"Enter a Clip Name and choose Save. The project uses that name for the source and its timeline clips.",
+				"Append a second passage from the same source. A clip named Interview becomes Interview A on the timeline, and the new passage is Interview B. Each clip keeps its letter when moved."
 			]), HelpSection("Full Screen Preview", numbered: true, [
 				"Choose Full Screen Preview beside the playback controls to open the assembled project at the playhead.",
 				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time.",

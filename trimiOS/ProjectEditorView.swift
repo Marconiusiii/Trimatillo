@@ -26,6 +26,8 @@ struct ProjectEditorView: View {
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
 	@State private var photo: PhotosPickerItem?
+	@State private var renaming: ProjectMediaSource?
+	@State private var clipName = ""
 	@State private var reconnect: UUID?
 	@State private var busy = false
 	@State private var revision = 0
@@ -41,7 +43,7 @@ struct ProjectEditorView: View {
 	@Environment(\.scenePhase) private var phase
 
 	var body: some View {
-		ProjectEditorKeyboard(enabled: fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !busy && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(enabled: renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !busy && !pickingPhoto && !pickingFile,
 			perform: projectKey) { editor }
 	}
 
@@ -97,6 +99,25 @@ struct ProjectEditorView: View {
 					return try await ProjectMediaSource.photo(id)
 				}
 			}
+			.sheet(item: $renaming, onDismiss: { focus = trigger }) { source in
+				NavigationStack {
+					Form { TextField("Clip Name", text: $clipName) }
+						.scrollContentBackground(.hidden)
+						.background(EditorTheme.workspace)
+						.navigationTitle("Rename Clip")
+						.navigationBarTitleDisplayMode(.inline)
+						.toolbar {
+							ToolbarItem(placement: .cancellationAction) {
+								Button("Cancel") { renaming = nil }
+							}
+							ToolbarItem(placement: .confirmationAction) {
+								Button("Save") { rename(source) }
+									.disabled(clipName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+							}
+						}
+				}
+				.editorAppearance()
+			}
 			.fullScreenCover(item: $fullScreenPreview, onDismiss: { focus = "fullScreenPreview" }) { preview in
 				FullScreenPreview(playback: preview)
 			}
@@ -119,7 +140,10 @@ struct ProjectEditorView: View {
 			} message: { Text(error ?? "") }
 		}
 		.accessibilityAction(.magicTap) { playback.toggle() }
-		.task(id: revision) { await playback.prepare(project) }
+		.task(id: board == nil ? revision : nil) {
+			guard board == nil else { return }
+			await playback.prepare(project)
+		}
 		.onChange(of: dragging) { _, ids in if ids.isEmpty { dropAnchor = nil } }
 		.onChange(of: playback.failure) { _, message in
 			if let message { error = message; playback.failure = nil }
@@ -143,11 +167,13 @@ struct ProjectEditorView: View {
 		DisclosureGroup("Project Media", isExpanded: $expanded) {
 			sourcePicker("Import Clip", source: nil)
 			ForEach(project.sources) { source in
-				Menu(source.name) {
+				Menu(source.displayName) {
 					Button("Open Cutting Board") { openBoard(source, placement: nil) }
+					Button("Rename Clip") { beginRename(source) }
 					Button("Reconnect from Files") { pick(source.id, files: true) }
 					Button("Reconnect from Photos") { pick(source.id, files: false) }
 				}
+				.accessibilityAction(named: "Rename Clip") { beginRename(source) }
 				.accessibilityFocused($focus, equals: source.id.uuidString)
 			}
 		}
@@ -232,23 +258,24 @@ struct ProjectEditorView: View {
 	}
 
 	private func clipButton(_ clip: ProjectPlacement, source: ProjectMediaSource, track: TimelineTrack) -> some View {
-		Menu {
+		let name = clip.displayName(for: source)
+		return Menu {
 			clipActions(clip, source: source)
 		} label: {
 			HStack {
 				if marked.contains(clip.id) { Image(systemName: "checkmark").accessibilityHidden(true) }
-				Text(source.name)
+				Text(name)
 			}
 		}
 		.buttonStyle(.bordered)
-		.accessibilityLabel(source.name)
+		.accessibilityLabel(name)
 		.accessibilityValue((marked.contains(clip.id) ? "Marked, " : "") + "Start " + time(clip.start.time) + ", duration " + time(clip.duration))
 		.accessibilityActions { clipActions(clip, source: source) }
 		.contextMenu { clipActions(clip, source: source) }
 		.focused($keyboardClip, equals: clip.id)
 		.accessibilityFocused($focus, equals: clip.id.uuidString)
 		.draggable(payload(for: clip))
-		.accessibilityDragPoint(.center, description: Text(source.name))
+		.accessibilityDragPoint(.center, description: Text(name))
 		.modifier(ClipDropTarget { items, after in drop(items, on: track, beside: clip.id, after: after) })
 	}
 
@@ -316,6 +343,21 @@ struct ProjectEditorView: View {
 		}
 	}
 
+	private func beginRename(_ source: ProjectMediaSource) {
+		trigger = source.id.uuidString
+		clipName = source.displayName
+		renaming = source
+	}
+
+	private func rename(_ source: ProjectMediaSource) {
+		var next = project
+		guard let index = next.sources.firstIndex(where: { $0.id == source.id }) else { return }
+		let name = clipName.trimmingCharacters(in: .whitespacesAndNewlines)
+		next.sources[index].projectName = name == source.name ? nil : name
+		renaming = nil
+		if project != next { commit(next) }
+	}
+
 	private func sourcePicker(_ title: String, source: UUID?) -> some View {
 		Menu(title) {
 			Button("Photo Library") { pick(source, files: false) }
@@ -343,6 +385,7 @@ struct ProjectEditorView: View {
 					guard original.duration.time == source.duration.time, (original.picture == nil) == (source.picture == nil),
 						original.hasAudio == source.hasAudio else { throw ProjectFailure("Choose the original clip with the same duration and media type.") }
 					source.id = replacing
+					source.projectName = original.projectName
 					next.sources[index] = source
 				} else { next.sources.append(source) }
 				commit(next)
@@ -358,9 +401,9 @@ struct ProjectEditorView: View {
 			defer { busy = false }
 			do {
 				let access = try await source.open()
-				let session = try await CuttingBoardSession.openReferenced(asset: access.asset, title: source.name, access: access, ranges: placement?.ranges.map(\.range))
+				let session = try await CuttingBoardSession.openReferenced(asset: access.asset, title: placement?.displayName(for: source) ?? source.displayName, access: access, ranges: placement?.ranges.map(\.range))
 				board = ProjectBoard(source: source, placement: placement, session: session)
-			} catch { self.error = "Could not open " + source.name + ". Reconnect the clip in Project Media." }
+			} catch { self.error = "Could not open " + source.displayName + ". Reconnect the clip in Project Media." }
 		}
 	}
 
@@ -389,7 +432,7 @@ struct ProjectEditorView: View {
 
 	private func place(_ editing: ProjectBoard, mode: PlacementMode, track: TimelineTrack, newName: String? = nil, omitAudio: Bool = false) throws {
 		let session = editing.session
-		session.stop()
+		session.releaseAudio()
 		var next = project
 		let destination = try newName.map { try next.createTrack($0, kind: track.kind) } ?? track
 		let updating = mode == .update
@@ -437,7 +480,7 @@ struct ProjectEditorView: View {
 	}
 
 	private func update(_ next: EditingProject) {
-		let rebuild = project.placements != next.placements || project.sources != next.sources || project.tracks != next.tracks || project.trackVolumes != next.trackVolumes
+		let rebuild = project.placements != next.placements || project.sources.map(\.reference) != next.sources.map(\.reference) || project.tracks != next.tracks || project.trackVolumes != next.trackVolumes
 		project = next
 		let valid = Set(next.placements.map(\.id))
 		marked.formIntersection(valid)
@@ -525,9 +568,13 @@ struct ProjectEditorView: View {
 			next.placements.removeAll { $0.id == clip.id }
 			if key != "[" { next.placements.append(left) }
 			if key != "]" {
-				if key == "b" { right.id = UUID() }
+				if key == "b" {
+					right.id = UUID()
+					right.labelIndex = nil
+				}
 				next.placements.append(right)
 			}
+			next.assignPlacementLabels()
 			commit(next)
 		case "\u{8}", UIKeyCommand.inputDelete:
 			if let clip {
