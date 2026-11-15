@@ -35,6 +35,15 @@ import Combine
 
 	deinit { if let observer { player.removeTimeObserver(observer) } }
 
+	func makePreview() -> PreviewPlayback? {
+		guard let item = player.currentItem else { return nil }
+		let forwardRate = max(0, speed)
+		pause()
+		return PreviewPlayback(item: item, start: position, rate: Float(forwardRate)) { [weak self] time in
+			self?.seek(time)
+		}
+	}
+
 	func pause() {
 		let wasRewinding = reverse != nil
 		reverse?.cancel()

@@ -226,6 +226,15 @@ final class CuttingBoardSession: ObservableObject {
 		scopedURL?.stopAccessingSecurityScopedResource()
 	}
 
+	func makePreview() -> PreviewPlayback? {
+		guard let item = player.currentItem else { return nil }
+		let forwardRate = max(0, rate)
+		releaseAudio()
+		return PreviewPlayback(item: item, start: position, rate: Float(forwardRate)) { [weak self] time in
+			self?.seek(time)
+		}
+	}
+
 	func stop() {
 		seekGeneration += 1
 		if rate > 0, player.rate > 0, player.currentTime().isNumeric {

@@ -32,6 +32,7 @@ struct ProjectEditorView: View {
 	@State private var undo: [EditingProject] = []
 	@State private var redo: [EditingProject] = []
 	@State private var error: String?
+	@State private var fullScreenPreview: PreviewPlayback?
 	@State private var jumping = false
 	@State private var jumpText = ""
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
@@ -40,7 +41,7 @@ struct ProjectEditorView: View {
 	@Environment(\.scenePhase) private var phase
 
 	var body: some View {
-		ProjectEditorKeyboard(enabled: board == nil && effects == nil && !jumping && error == nil && !busy && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(enabled: fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !busy && !pickingPhoto && !pickingFile,
 			perform: projectKey) { editor }
 	}
 
@@ -95,6 +96,9 @@ struct ProjectEditorView: View {
 					guard let id = item.itemIdentifier else { throw ProjectFailure("Choose the original video in Photo Library.") }
 					return try await ProjectMediaSource.photo(id)
 				}
+			}
+			.fullScreenCover(item: $fullScreenPreview, onDismiss: { focus = "fullScreenPreview" }) { preview in
+				FullScreenPreview(playback: preview)
 			}
 			.fullScreenCover(item: $board, onDismiss: { focus = trigger }) { editing in
 				CuttingBoardKeyboard(session: editing.session, projectActions: boardActions(editing)) { board = nil }
@@ -195,6 +199,13 @@ struct ProjectEditorView: View {
 				Button { playback.seek(playback.position - project.frame) } label: { Label("Step Back", systemImage: "backward.frame") }
 				Button { playback.toggle() } label: { Label(playback.playing ? "Pause" : "Play", systemImage: playback.playing ? "pause.fill" : "play.fill") }.disabled(!playback.ready)
 				Button { playback.seek(playback.position + project.frame) } label: { Label("Step Forward", systemImage: "forward.frame") }
+				if project.placements.contains(where: { $0.track == .video }) {
+					Button { fullScreenPreview = playback.makePreview() } label: {
+						Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right")
+					}
+					.disabled(!playback.ready)
+					.accessibilityFocused($focus, equals: "fullScreenPreview")
+				}
 			}
 			.labelStyle(.iconOnly)
 			.controlSize(.large)

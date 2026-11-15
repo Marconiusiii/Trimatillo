@@ -1,4 +1,5 @@
 import AVFoundation
+import AVKit
 import SwiftUI
 import UIKit
 
@@ -39,6 +40,8 @@ struct CuttingBoardView: View {
 	@State private var showingDirectTouchEditor = false
 	@AccessibilityFocusState(for: .voiceOver) private var launcherFocused: Bool
 	@AccessibilityFocusState(for: .voiceOver) private var surfaceFocused: Bool
+	@State private var preview: PreviewPlayback?
+	@AccessibilityFocusState private var previewFocused: Bool
 	@State private var exporting = false
 	@AccessibilityFocusState(for: .voiceOver) private var exportFocused: Bool
 	@AccessibilityFocusState private var placementFocused: Bool
@@ -64,6 +67,9 @@ struct CuttingBoardView: View {
 				.sheet(item: $session.sheet, onDismiss: { surfaceFocused = true }) { editorSheet($0) }
 			} else {
 				board
+					.fullScreenCover(item: $preview, onDismiss: { previewFocused = true }) { playback in
+						FullScreenPreview(playback: playback)
+					}
 					.sheet(isPresented: $exporting, onDismiss: { exportFocused = true }) {
 						ClipExportView(session: session)
 					}
@@ -134,6 +140,12 @@ struct CuttingBoardView: View {
 			transportButton("Rewind", "backward.fill", showsSpeed: session.rate < 0) { session.shuttle(-1) }
 			transportButton(session.rate == 0 ? "Play" : "Pause", session.rate == 0 ? "play.fill" : "pause.fill") { session.toggle() }
 			transportButton("Fast Forward", "forward.fill", showsSpeed: session.rate > 0) { session.shuttle(1) }
+			if session.hasVideo {
+				transportButton("Full Screen Preview", "arrow.up.left.and.arrow.down.right") {
+					preview = session.makePreview()
+				}
+				.accessibilityFocused($previewFocused)
+			}
 		}
 		.background(EditorTheme.surface)
 	}
@@ -570,5 +582,107 @@ struct PrimaryCuttingBoard: View {
 		}
 		.editorAppearance()
 		.onDisappear { session.releaseAudio() }
+	}
+}
+
+// Both the app and the Photos share extension present this player.
+@MainActor final class PreviewPlayback: Identifiable {
+	let player: AVPlayer
+	let start: CMTime
+	private let openingRate: Float
+	private var returnPosition: ((CMTime) -> Void)?
+	private(set) var positioned = false
+
+	init(item: AVPlayerItem, start: CMTime, rate: Float, returnPosition: @escaping (CMTime) -> Void) {
+		let previewItem = AVPlayerItem(asset: item.asset)
+		previewItem.videoComposition = item.videoComposition
+		previewItem.audioMix = item.audioMix
+		player = AVPlayer(playerItem: previewItem)
+		self.start = start
+		openingRate = rate
+		self.returnPosition = returnPosition
+	}
+
+	func begin() async {
+		guard !positioned, returnPosition != nil else { return }
+		let finished = await player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
+		guard finished, !Task.isCancelled, returnPosition != nil else { return }
+		positioned = true
+		if openingRate > 0 { player.playImmediately(atRate: openingRate) }
+	}
+
+	func toggle() {
+		guard positioned else { return }
+		if player.timeControlStatus == .paused {
+			if let end = player.currentItem?.duration, end.isNumeric, player.currentTime() >= end {
+				player.seek(to: .zero, toleranceBefore: .zero, toleranceAfter: .zero)
+			}
+			player.play()
+		} else {
+			player.pause()
+		}
+	}
+
+	func finish() {
+		guard let returnPosition else { return }
+		self.returnPosition = nil
+		player.pause()
+		let time = player.currentTime()
+		returnPosition(positioned && time.isNumeric ? time : start)
+	}
+}
+
+struct FullScreenPreview: View {
+	let playback: PreviewPlayback
+	@Environment(\.dismiss) private var dismiss
+	@Environment(\.scenePhase) private var phase
+	@State private var ready = false
+	@State private var failed = false
+
+	var body: some View {
+		NavigationStack {
+			VideoPlayer(player: playback.player)
+				.disabled(!ready)
+				.navigationTitle("Full Screen Preview")
+				.navigationBarTitleDisplayMode(.inline)
+				.toolbar {
+					ToolbarItem(placement: .topBarLeading) {
+						Button("Close") {
+							playback.finish()
+							dismiss()
+						}
+					}
+				}
+		}
+		.editorAppearance()
+		.accessibilityAction(.magicTap) { playback.toggle() }
+		.task {
+			do {
+				try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
+			} catch {
+				failed = true
+				return
+			}
+			await playback.begin()
+			guard !Task.isCancelled else { return }
+			ready = playback.positioned
+			failed = !ready
+			if phase != .active { playback.player.pause() }
+		}
+		.onChange(of: phase) { _, value in
+			if value == .background { playback.player.pause() }
+		}
+		.onReceive(NotificationCenter.default.publisher(for: AVPlayerItem.failedToPlayToEndTimeNotification, object: playback.player.currentItem)) { _ in
+			failed = true
+		}
+		.alert("Could Not Play Preview", isPresented: $failed) {
+			Button("Close") {
+				playback.finish()
+				dismiss()
+			}
+		} message: {
+			Text("Reopen Full Screen Preview to try again.")
+		}
+		.interactiveDismissDisabled()
 	}
 }

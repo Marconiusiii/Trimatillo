@@ -92,6 +92,10 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose a timeline clip to jump to its start or end, remove it, or reopen its Cutting Board. Choose Save Changes to update that placement.",
 				"Choose Play to hear the tracks together and preview the picture. Choose Playhead to enter a position, or use the step buttons to move one project frame. Space plays or pauses, and the arrow keys step.",
 				"Use Mark In and Mark Out or the I and O keys to mark positions. Use the same marker button at that time to clear it. Use the Undo menu to undo or redo a project change."
+			]), HelpSection("Full Screen Preview", numbered: true, [
+				"Choose Full Screen Preview beside the playback controls to open the assembled project at the playhead.",
+				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time.",
+				"Choose Close to return to editing with the playhead at the preview position."
 			]), HelpSection("Add at Playhead", numbered: true, [
 				"Set the project playhead to the destination time before opening the Cutting Board. Mark the source passage and choose Add at Playhead.",
 				"Choose New Track and enter a name, or choose an existing destination track for Overwrite or Split.",
@@ -146,6 +150,10 @@ private enum HelpTopic: String, CaseIterable {
 				"In an audio-only clip, one step moves one thirtieth of a second. Ten steps move one third of a second.",
 				"Choose Playhead, enter seconds or a time separated by colons, then choose Jump.",
 				"For frame entry, choose Frames under Timecode in Settings before opening the clip. On the Cutting Board, choose Playhead, enter a frame number, and choose Jump. Counting starts at zero."
+			]), HelpSection("Full Screen Preview", numbered: true, [
+				"Choose Full Screen Preview beside the playback controls to open the edited clip at the playhead.",
+				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time.",
+				"Choose Close to return to editing with the playhead at the preview position."
 			])]
 		case .cuts:
 			[HelpSection("Select a range", [
