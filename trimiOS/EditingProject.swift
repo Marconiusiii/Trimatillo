@@ -1,5 +1,6 @@
 import AVFoundation
 import Foundation
+import Darwin
 
 nonisolated struct ProjectTime: Codable, Equatable {
 	let value: Int64
@@ -309,6 +310,18 @@ nonisolated enum ProjectLibrary {
 		guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
 		return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
 			.filter { $0.pathExtension == "json" }
+	}
+
+	@MainActor static func delete(_ url: URL) throws {
+		guard url.isFileURL, url.pathExtension == "json",
+			url.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path else {
+			throw CocoaError(.fileWriteNoPermission)
+		}
+		// Unlink only this directory entry, even if it was replaced since the list loaded.
+		try url.withUnsafeFileSystemRepresentation { path in
+			guard let path else { throw CocoaError(.fileWriteInvalidFileName) }
+			guard unlink(path) == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+		}
 	}
 
 	@MainActor static func save(_ project: EditingProject, replacing previous: EditingProject? = nil) throws {

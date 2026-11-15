@@ -3,7 +3,7 @@ import CoreMedia
 
 enum ProjectLauncher: String, Identifiable {
 	case create = "Create Project"
-	case open = "Open Project"
+	case open = "My Projects"
 	var id: Self { self }
 }
 
@@ -64,7 +64,12 @@ struct ProjectLauncherView: View {
 	}
 	@State private var saved: [SavedProject]?
 	@State private var selection: URL?
-	@AccessibilityFocusState private var focusedProject: URL?
+	private enum ProjectFocus: Hashable {
+		case project(URL)
+		case emptyList
+	}
+	@AccessibilityFocusState private var focusedProject: ProjectFocus?
+	@State private var pendingDeletion: SavedProject?
 	@State private var error: String?
 
 	var body: some View {
@@ -72,7 +77,7 @@ struct ProjectLauncherView: View {
 			if mode == .open, let selection {
 				LoadingStatusView("Opening project") {
 					self.selection = nil
-					focusedProject = selection
+					focusedProject = .project(selection)
 				}
 			} else if mode == .open && saved == nil {
 				LoadingStatusView("Loading projects") { dismiss() }
@@ -103,7 +108,7 @@ struct ProjectLauncherView: View {
 				} catch {
 					guard !Task.isCancelled else { return }
 					saved = []
-					self.error = "Could not read saved projects. Reopen Open Project."
+					self.error = "Could not read saved projects. Open My Projects again."
 				}
 			}
 		}
@@ -127,6 +132,22 @@ struct ProjectLauncherView: View {
 		return (projects, unreadable)
 	}
 
+	private func delete(_ project: SavedProject) {
+		guard var projects = saved, let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
+		do {
+			try ProjectLibrary.delete(project.id)
+			projects.remove(at: index)
+			saved = projects
+			if projects.isEmpty {
+				focusedProject = .emptyList
+			} else {
+				focusedProject = .project(projects[min(index, projects.count - 1)].id)
+			}
+		} catch {
+			self.error = "Could not delete " + project.name + ". Reopen My Projects and try again."
+		}
+	}
+
 	private var projectForm: some View {
 		NavigationStack {
 			Form {
@@ -139,6 +160,7 @@ struct ProjectLauncherView: View {
 				} else {
 					if saved?.isEmpty == true {
 						Text("No saved projects")
+							.accessibilityFocused($focusedProject, equals: .emptyList)
 							.editorTouchRow()
 							.containerRelativeFrame(.vertical)
 							.contentShape(Rectangle())
@@ -146,9 +168,22 @@ struct ProjectLauncherView: View {
 					}
 					ForEach(saved ?? []) { project in
 						Button { selection = project.id } label: { Text(project.name).editorTouchRow(alignment: .leading) }
-							.accessibilityFocused($focusedProject, equals: project.id)
+							.accessibilityFocused($focusedProject, equals: .project(project.id))
+							.accessibilityAction(named: "Delete Project") { pendingDeletion = project }
+							.contextMenu {
+								Button("Delete Project", role: .destructive) { pendingDeletion = project }
+							}
 					}
 				}
+			}
+			.alert(Text("Delete \"\(pendingDeletion?.name ?? "")\"?"), isPresented: Binding(
+				get: { pendingDeletion != nil },
+				set: { if !$0 { pendingDeletion = nil } }
+			), presenting: pendingDeletion) { project in
+				Button("Cancel", role: .cancel) { focusedProject = .project(project.id) }
+				Button("Delete Project", role: .destructive) { delete(project) }
+			} message: { _ in
+				Text("This permanently deletes the saved project and its edits.")
 			}
 			.editorListMargins()
 			.scrollContentBackground(.hidden)

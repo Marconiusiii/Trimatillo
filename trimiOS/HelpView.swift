@@ -142,10 +142,13 @@ private enum HelpTopic: String, CaseIterable {
 				"S marks or unmarks a clip. With a clip focused, Space picks it up. Shift-S adds another clip to the drag. Use Left or Right Arrow to choose a destination and press Space to drop. Escape cancels. Command-Option-V drops after the focused clip.",
 				"Command-Option-Left and Command-Option-Right move a clip or marked group earlier or later. Delete removes the selected clips. Command-Z undoes and Command-Shift-Z redoes."
 			]), HelpSection("Reopen and reconnect", numbered: true, [
-				"Choose Close, then Open Project and the project name. Choose Cancel during timeline preparation to return to the main screen. Trimatillo saves each project change as you work.",
-				"If a saved project cannot be read, restore its project file from backup. Choose another project in Open Project to keep editing.",
+				"Choose Close, then My Projects and the project name. Choose Cancel during timeline preparation to return to the main screen. Trimatillo saves each project change as you work.",
+				"If a saved project cannot be read, restore its project file from backup. Choose another project in My Projects to keep editing.",
 				"If a source is unavailable, open Project Media, choose the source, and reconnect it from Files or Photos. Choose the original to restore access for every placement.",
 				"When moving to a new device, restore Trimatillo's project data from your device backup and make the original media available through Files or Photos."
+			]), HelpSection("Delete a project", numbered: true, [
+				"Open My Projects. On the project you want to remove, choose Delete Project from its context menu or accessibility actions.",
+				"Check the project name in the alert, then choose Delete Project. Choose Cancel to keep the project."
 			])]
 		case .first:
 			[HelpSection("Open a clip and trim its ends", numbered: true, [
