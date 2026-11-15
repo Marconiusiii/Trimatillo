@@ -315,28 +315,26 @@ struct ProjectEditorView: View {
 	private var transport: some View {
 		Group {
 			Button { playback.pause(); jumpText = ""; jumping = true } label: {
-				LabeledContent("Playhead", value: time(playback.position))
-					.padding(.horizontal, 12)
-					.editorTouchRow()
+				Text("Playhead, " + time(playback.position))
 			}
+			.buttonStyle(EditorButtonStyle())
 			.accessibilityFocused($focus, equals: "playhead")
 			HStack(spacing: 0) {
-				Button { playback.seek(playback.position - project.frame) } label: { Label("Step Back", systemImage: "backward.frame").editorTouchRow() }
-				Button { playback.toggle() } label: { Label(playback.playing ? "Pause" : "Play", systemImage: playback.playing ? "pause.fill" : "play.fill").editorTouchRow() }.disabled(!playback.ready)
-				Button { playback.seek(playback.position + project.frame) } label: { Label("Step Forward", systemImage: "forward.frame").editorTouchRow() }
+				Button { playback.seek(playback.position - project.frame) } label: { Label("Step Back", systemImage: "backward.frame") }
+				Button { playback.toggle() } label: { Label(playback.playing ? "Pause" : "Play", systemImage: playback.playing ? "pause.fill" : "play.fill") }.disabled(!playback.ready)
+				Button { playback.seek(playback.position + project.frame) } label: { Label("Step Forward", systemImage: "forward.frame") }
 				if project.placements.contains(where: { $0.track == .video }) {
 					Button { previewTrigger = "fullScreenPreview"; fullScreenPreview = playback.makePreview() } label: {
-						Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right").editorTouchRow()
+						Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right")
 					}
 					.disabled(!playback.ready)
 					.accessibilityFocused($focus, equals: "fullScreenPreview")
 				}
 			}
 			.labelStyle(.iconOnly)
-			.controlSize(.regular)
-			.buttonBorderShape(.roundedRectangle(radius: 8))
-			.buttonStyle(.bordered)
-			HStack(spacing: 0) {
+			.buttonStyle(EditorButtonStyle(square: true))
+			.fixedSize(horizontal: false, vertical: true)
+			EditorCommandRow {
 				ForEach([true, false], id: \.self) { isIn in
 					let point = isIn ? project.markIn : project.markOut
 					Button {
@@ -346,19 +344,19 @@ struct ProjectEditorView: View {
 						if isIn { next.markIn = value } else { next.markOut = value }
 						let marker = isIn ? "In" : "Out"
 						commit(next, action: (value == nil ? "Clear " : "Mark ") + marker)
-					} label: { Text(isIn ? "Mark In" : "Mark Out").editorTouchRow() }
+					} label: { Text(isIn ? "Mark In" : "Mark Out") }
 					.accessibilityValue(point.map { time($0.time) } ?? "")
 					.disabled(project.placements.isEmpty)
 				}
 				Menu {
 					Button("Undo") { history(back: true) }.disabled(undo.isEmpty)
 					Button("Redo") { history(back: false) }.disabled(redo.isEmpty)
-				} label: { Text("Undo").editorTouchRow() }
+				} label: { Text("Undo") }
 				.editorMenuActions("Undo", historyActions)
 				.disabled(undo.isEmpty && redo.isEmpty)
 			}
-			.buttonBorderShape(.roundedRectangle(radius: 8))
-			.buttonStyle(.bordered)
+			.buttonStyle(EditorButtonStyle())
+			.fixedSize(horizontal: false, vertical: true)
 		}
 	}
 

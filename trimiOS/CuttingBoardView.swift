@@ -58,7 +58,6 @@ struct BoardProjectActions {
 
 struct CuttingBoardView: View {
 	var projectActions: BoardProjectActions?
-	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@ObservedObject var session: CuttingBoardSession
 	var closeDirectTouchEditor: (() -> Void)?
@@ -175,6 +174,7 @@ struct CuttingBoardView: View {
 				.accessibilityFocused($previewFocused)
 			}
 		}
+		.fixedSize(horizontal: false, vertical: true)
 		.background(EditorTheme.surface)
 	}
 
@@ -183,21 +183,8 @@ struct CuttingBoardView: View {
 			Label { Text(title) } icon: { Image(systemName: symbol) }
 				.labelStyle(.iconOnly)
 				.accessibilityValue(symbol == "pause.fill" ? session.shuttleLabel : "")
-				.frame(maxWidth: .infinity, minHeight: 48)
-				.overlay(alignment: .topTrailing) {
-					if showsSpeed {
-						Text(session.speedLabel)
-							.font(.caption.weight(.semibold))
-							.foregroundStyle(EditorTheme.surface)
-							.padding(.horizontal, 5)
-							.background(color.accent, in: Capsule())
-							.padding(2)
-							.accessibilityHidden(true)
-							.allowsHitTesting(false)
-					}
-				}
-				.contentShape(Rectangle())
 		}
+		.buttonStyle(EditorButtonStyle(square: true, badge: showsSpeed ? session.speedLabel : nil))
 	}
 
 	private var controls: some View {
@@ -207,30 +194,30 @@ struct CuttingBoardView: View {
 				session.stop()
 				session.sheet = .jump
 			} label: {
-				cell("Playhead, " + session.positionLabel(format: format))
+				Text("Playhead, " + session.positionLabel(format: format))
 			}
 			.accessibilityActions { EditorMenuAction.buttons(editCommands(fromMenu: false)) }
 			.accessibilityFocused($playheadFocused)
 			.sheet(item: sheetBinding(forMenu: false), onDismiss: { playheadFocused = true }) { editorSheet($0) }
-			HStack(spacing: 0) {
+			EditorCommandRow {
 				stepButton(forward: false)
 				stepButton(forward: true)
 			}
-			HStack(spacing: 0) {
+			EditorCommandRow {
 				markButton(true)
 				markButton(false)
 			}
-			HStack(spacing: 0) {
+			EditorCommandRow {
 				let actions = editCommands(fromMenu: true)
-				Menu { EditorMenuAction.buttons(actions) } label: { cell("Edit Actions") }
+				Menu { EditorMenuAction.buttons(actions) } label: { Text("Edit Actions") }
 					.editorMenuActions("Edit Actions", actions)
 					.accessibilityFocused($editActionsFocused)
 					.sheet(item: sheetBinding(forMenu: true), onDismiss: { editActionsFocused = true }) { editorSheet($0) }
 				if !session.canUndo && session.canRedo {
-					Menu { Button("Redo") { session.redo() } } label: { cell("Undo") }
+					Menu { Button("Redo") { session.redo() } } label: { Text("Undo") }
 						.accessibilityAction(named: "Redo") { session.redo() }
 				} else {
-					Button { session.undo() } label: { cell("Undo") }
+					Button { session.undo() } label: { Text("Undo") }
 						.accessibilityActions {
 							if session.canRedo { Button("Redo") { session.redo() } }
 						}
@@ -240,27 +227,26 @@ struct CuttingBoardView: View {
 					Button {
 						session.releaseAudio()
 						exporting = true
-					} label: { cell("Export") }
+					} label: { Text("Export") }
 					.accessibilityFocused($exportFocused)
 				}
 			}
 			if let projectActions {
 				ViewThatFits(in: .horizontal) {
-					HStack(spacing: 0) { placementControls(projectActions) }
+					EditorCommandRow { placementControls(projectActions) }
 					VStack(spacing: 0) { placementControls(projectActions) }
 				}
 			}
 		}
-		.buttonStyle(.bordered)
-		.buttonBorderShape(.roundedRectangle(radius: 8))
+		.buttonStyle(EditorButtonStyle())
 		.background(EditorTheme.surface)
 	}
 
 	@ViewBuilder private func placementControls(_ projectActions: BoardProjectActions) -> some View {
-		Button(action: projectActions.append) { cell("Append") }
-		Button { session.stop(); session.choosingPlacement = true } label: { cell("Add at Playhead") }
+		Button(action: projectActions.append) { Text("Append") }
+		Button { session.stop(); session.choosingPlacement = true } label: { Text("Add at Playhead") }
 			.accessibilityFocused($placementFocused)
-		if let update = projectActions.update { Button(action: update) { cell("Save Changes") } }
+		if let update = projectActions.update { Button(action: update) { Text("Save Changes") } }
 	}
 
 	@ViewBuilder private func editorSheet(_ sheet: BoardSheet) -> some View {
@@ -281,19 +267,12 @@ struct CuttingBoardView: View {
 		})
 	}
 
-	private func cell(_ title: String) -> some View {
-		Text(title)
-			.multilineTextAlignment(.center)
-			.frame(maxWidth: .infinity, minHeight: 48, maxHeight: .infinity)
-			.contentShape(Rectangle())
-	}
-
 	private func stepButton(forward: Bool) -> some View {
 		let direction = forward ? "Step Forward " : "Step Back "
 		let single = session.hasVideo ? "One Frame" : "One Thirtieth of a Second"
 		let ten = session.hasVideo ? "10 Frames" : "One Third of a Second"
 		return Button { session.step(forward ? 1 : -1) } label: {
-			cell(direction + single)
+			Text(direction + single)
 		}
 		.accessibilityActions {
 			Button(direction + ten) { session.step(forward ? 10 : -10) }
@@ -307,7 +286,7 @@ struct CuttingBoardView: View {
 		let time = isIn ? session.state.markIn : session.state.markOut
 		let name = isIn ? "In" : "Out"
 		return Button { session.mark(isIn) } label: {
-			cell("Mark " + name + (time.map { ", " + session.timecode($0, format: format) } ?? ""))
+			Text("Mark " + name + (time.map { ", " + session.timecode($0, format: format) } ?? ""))
 		}
 			.accessibilityActions {
 				if let time {

@@ -21,6 +21,12 @@ enum EditorTheme {
 		highDark: 0xFF9688
 	)
 
+	static let faceTop = adaptive(light: 0xFCFCFD, dark: 0x37393D, highLight: 0xFFFFFF, highDark: 0x252629)
+	static let faceBottom = adaptive(light: 0xE5E6E8, dark: 0x2B2D31, highLight: 0xF0F1F2, highDark: 0x17181A)
+	static let pressedBottom = adaptive(light: 0xD4D6D9, dark: 0x202226, highLight: 0xE3E4E5, highDark: 0x101113)
+	static let controlOutline = adaptive(light: 0x67696D, dark: 0x9C9FA4, highLight: 0x44464A, highDark: 0xD2D4D8)
+	static let disabledInk = adaptive(light: 0x505256, dark: 0xB8BABE, highLight: 0x44464A, highDark: 0xD2D4D8)
+
 	static func adaptive(light: Int, dark: Int, highLight: Int, highDark: Int) -> Color {
 		Color(uiColor: UIColor { traits in
 			let high = traits.accessibilityContrast == .high
@@ -129,5 +135,75 @@ extension View {
 	func editorListMargins() -> some View {
 		contentMargins(.all, 0, for: .scrollContent)
 			.listSectionSpacing(0)
+	}
+}
+
+struct EditorButtonStyle: ButtonStyle {
+	let square: Bool
+	let badge: String?
+	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
+	@Environment(\.isEnabled) private var enabled
+	@Environment(\.colorSchemeContrast) private var contrast
+	@ScaledMetric(relativeTo: .body) private var symbolSize: CGFloat = 19
+
+	init(square: Bool = false, badge: String? = nil) {
+		self.square = square
+		self.badge = badge
+	}
+
+	func makeBody(configuration: Configuration) -> some View {
+		let shape = RoundedRectangle(cornerRadius: 4, style: .continuous)
+		let pressed = configuration.isPressed
+		let top = pressed ? EditorTheme.faceBottom : EditorTheme.faceTop
+		let bottom = pressed ? EditorTheme.pressedBottom : EditorTheme.faceBottom
+		VStack(spacing: 0) {
+			Group {
+				if square {
+					configuration.label
+						.font(.system(size: min(symbolSize, 32), weight: .medium))
+						.frame(width: 44, height: 44)
+				} else {
+					configuration.label
+						.multilineTextAlignment(.center)
+						.fixedSize(horizontal: false, vertical: true)
+						.padding(.horizontal, 8)
+						.padding(.vertical, 4)
+						.frame(minWidth: 44, minHeight: 44)
+				}
+			}
+			.foregroundStyle(enabled ? color.accent : EditorTheme.disabledInk)
+			.background(LinearGradient(colors: [top, bottom], startPoint: .top, endPoint: .bottom), in: shape)
+			.overlay {
+				shape.inset(by: contrast == .increased ? 2 : 1)
+					.strokeBorder(LinearGradient(colors: [.white.opacity(pressed ? 0.02 : 0.06), .black.opacity(0.04)],
+						startPoint: .top, endPoint: .bottom), lineWidth: 1)
+					.allowsHitTesting(false)
+			}
+			.overlay {
+				shape.strokeBorder(EditorTheme.controlOutline, style: StrokeStyle(lineWidth: contrast == .increased ? 2 : 1, dash: enabled ? [] : [3, 2]))
+					.allowsHitTesting(false)
+			}
+			if let badge {
+				Text(badge)
+					.font(.caption.weight(.semibold))
+					.foregroundStyle(EditorTheme.surface)
+					.padding(.horizontal, 4)
+					.background(color.accent, in: Capsule())
+					.accessibilityHidden(true)
+			}
+		}
+		.padding(2)
+		.frame(minWidth: 48, maxWidth: .infinity, minHeight: 48, maxHeight: .infinity)
+		.contentShape(Rectangle())
+	}
+}
+
+struct EditorCommandRow<Content: View>: View {
+	@Environment(\.dynamicTypeSize) private var textSize
+	@ViewBuilder var content: () -> Content
+
+	var body: some View {
+		let layout = textSize.isAccessibilitySize ? AnyLayout(VStackLayout(spacing: 0)) : AnyLayout(HStackLayout(spacing: 0))
+		layout { content() }
 	}
 }
