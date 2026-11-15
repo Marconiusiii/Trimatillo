@@ -128,6 +128,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Set the project playhead to the destination time before opening the Cutting Board. Mark the source passage and choose Add at Playhead.",
 				"Choose New Track and enter a name, or choose an existing destination track for Overwrite or Split.",
 				"Overwrite replaces the covered time. The original resumes after the added clip. Split inserts the selection and moves later material on that track forward.",
+				"When a named video track first receives a clip with audio included, its linked audio track appears. The sound follows the video through edits. Adjust its volume in Track Effects.",
 				"For a video cutaway, choose New Track. Turn off Include Clip Audio to keep the underlying sound. Choose Add."
 			]), HelpSection("Track actions and clip movement", numbered: true, [
 				"Use the track headings to navigate. Open a track menu to select the track or open Track Effects. Set Volume and choose Save.",
@@ -232,7 +233,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe right to trim the head of the clip to the playhead.",
 				"Swipe left to trim the tail of the clip to the playhead.",
 				"Swipe down in a project Cutting Board to append the marked portion to the timeline.",
-				"Swipe up in a project Cutting Board to open Add at Playhead."
+				"Swipe up in a project Cutting Board to choose Append to Track, Add to New Track, Overwrite at Playhead, or Insert and Split at Playhead. Choose Cancel to return to Direct Touch."
 			]), HelpSection("Direct Touch Scrubbing", [
 				"In Settings, choose Direct Touch Scrubbing under Editing.",
 				"Absolute is the default. The left edge is the start of the edited clip, the center is halfway through, and the right edge is the end. The playhead jumps to your finger as soon as the hold begins.",

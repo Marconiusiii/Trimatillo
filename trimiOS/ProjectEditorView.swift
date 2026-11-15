@@ -430,7 +430,8 @@ struct ProjectEditorView: View {
 		.draggable(payload(for: clip))
 		.accessibilityDragPoint(.center, description: Text(name))
 		.modifier(ClipDropTarget(name: name) { items, after in
-			drop(items, on: linked ? .primaryVideo : track, beside: clip.id, after: after)
+			guard let destination = project.tracks.first(where: { $0.id == clip.trackID }) else { return false }
+			return drop(items, on: destination, beside: clip.id, after: after)
 		})
 		.editorMenuActions(name, actions)
 	}
@@ -615,9 +616,9 @@ struct ProjectEditorView: View {
 			catch { board.session.message = error.localizedDescription }
 		}
 		return BoardProjectActions(append: { quick(.append) }, split: { quick(.split) }, overwrite: { quick(.overwrite) },
-			update: board.placement == nil ? nil : { quick(.update) }, placementSheet: {
+			update: board.placement == nil ? nil : { quick(.update) }, placementSheet: { directTouch in
 				AnyView(PlacementSheet(tracks: project.tracks.filter { $0.kind == kind }, destination: destination(),
-					offersAudio: kind == .video && board.source.hasAudio) { track, name, mode, omitAudio in
+					offersAudio: kind == .video && board.source.hasAudio, directTouch: directTouch) { track, name, mode, omitAudio in
 					do {
 						try place(board, mode: mode, track: track, newName: name, omitAudio: omitAudio)
 						board.session.choosingPlacement = false
@@ -666,7 +667,7 @@ struct ProjectEditorView: View {
 		var next = next
 		if let point = next.markIn, point.time > next.duration { next.markIn = nil }
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
-		next.version = 2
+		next.version = next.additionalTracks?.contains(where: { $0.linkedVideoID != nil }) == true ? 3 : max(2, next.version)
 		try ProjectLibrary.save(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
@@ -704,12 +705,13 @@ struct ProjectEditorView: View {
 		let focusedRow = keyboardClip ?? focus
 		let focusedID = focusedRow?.split(separator: "/").last.flatMap { UUID(uuidString: String($0)) }
 		let focusedClip = project.placements.first { $0.id == focusedID }
-		let trackID = focusedRow?.hasPrefix("linked/") == true ? TimelineTrack.primaryAudio.id : focusedClip?.trackID ?? activeTrack
+		var trackID = focusedClip?.trackID ?? activeTrack
+		if focusedRow?.hasPrefix("linked/") == true, let partner = project.audioPartner(for: trackID) { trackID = partner.id }
 		guard let track = project.tracks.first(where: { $0.id == trackID }) else { return }
 		let clips = project.displayedClips(on: track)
 		let position = playback.position
 		let clip = focusedClip ?? clips.first { $0.end > position }
-		let destinationTrack = clip?.track == .video && track == .primaryAudio ? TimelineTrack.primaryVideo : track
+		let destinationTrack = clip.flatMap { placement in project.tracks.first { $0.id == placement.trackID } } ?? track
 		var next = project
 		switch key {
 		case " " where !dragging.isEmpty && dropAnchor != nil:
@@ -906,8 +908,10 @@ private struct PlacementSheet: View {
 	let tracks: [TimelineTrack]
 	@State var destination: TimelineTrack
 	let offersAudio: Bool
+	let directTouch: Bool
 	let save: (TimelineTrack, String?, PlacementMode, Bool) -> String?
 	@State private var method = "New Track"
+	@State private var choseMethod = false
 	@State private var name = ""
 	@State private var includeAudio = true
 	@State private var error: String?
@@ -916,30 +920,49 @@ private struct PlacementSheet: View {
 	var body: some View {
 		NavigationStack {
 			Form {
-				Picker("Placement", selection: $method) {
-					ForEach(["New Track", "Overwrite", "Split"], id: \.self) { Text($0) }
-				}
-				if method == "New Track" { TextField("Track Name", text: $name) }
-				else {
-					Picker("Destination Track", selection: Binding(get: { destination.id }, set: { id in if let track = tracks.first(where: { $0.id == id }) { destination = track } })) {
-						ForEach(tracks) { Text($0.title).tag($0.id) }
+				if directTouch && !choseMethod {
+					Button("Append to Track") { error = save(destination, nil, .append, false) }
+					placementChoice("Add to New Track", method: "New Track")
+					placementChoice("Overwrite at Playhead", method: "Overwrite")
+					placementChoice("Insert and Split at Playhead", method: "Split")
+				} else {
+					if !directTouch {
+						Picker("Placement", selection: $method) {
+							ForEach(["New Track", "Overwrite", "Split"], id: \.self) { Text($0) }
+						}
 					}
+					if method == "New Track" { TextField("Track Name", text: $name) }
+					else {
+						Picker("Destination Track", selection: Binding(get: { destination.id }, set: { id in if let track = tracks.first(where: { $0.id == id }) { destination = track } })) {
+							ForEach(tracks) { Text($0.title).tag($0.id) }
+						}
+					}
+					if offersAudio { Toggle("Include Clip Audio", isOn: $includeAudio) }
 				}
-				if offersAudio { Toggle("Include Clip Audio", isOn: $includeAudio) }
 				if let error { Text(error) }
 			}
 			.editorListMargins()
-			.navigationTitle("Add at Playhead")
+			.navigationTitle(directTouch && !choseMethod ? "Clip Placement" : "Add at Playhead")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
 				ToolbarItem(placement: .topBarTrailing) {
-					Button("Add") {
-						error = save(destination, method == "New Track" ? name : nil, method == "Split" ? .split : .overwrite, !includeAudio)
-					}.disabled(method == "New Track" && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+					if !directTouch || choseMethod {
+						Button("Add") {
+							error = save(destination, method == "New Track" ? name : nil, method == "Split" ? .split : .overwrite, !includeAudio)
+						}.disabled(method == "New Track" && name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+					}
 				}
 			}
 		}.editorAppearance()
+	}
+
+	private func placementChoice(_ title: String, method: String) -> some View {
+		Button(title) {
+			self.method = method
+			error = nil
+			choseMethod = true
+		}
 	}
 }
 

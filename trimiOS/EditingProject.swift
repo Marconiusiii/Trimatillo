@@ -35,6 +35,9 @@ nonisolated struct TimelineTrack: Identifiable, Codable, Equatable {
 	let id: String
 	let kind: ProjectTrack
 	let name: String
+	var linkedVideoID: String?
+
+	var videoPartnerID: String? { self == .primaryAudio ? TimelineTrack.primaryVideo.id : linkedVideoID }
 
 	static let primaryVideo = TimelineTrack(id: "Video", kind: .video, name: "Primary Video")
 	static let primaryAudio = TimelineTrack(id: "Audio", kind: .audio, name: "Primary Audio Track")
@@ -99,10 +102,10 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	}
 
 	func displayedClips(on track: TimelineTrack) -> [ProjectPlacement] {
-		guard track == .primaryAudio else { return clips(on: track) }
+		guard let videoID = track.videoPartnerID else { return clips(on: track) }
 		let sourcesWithAudio = Set(sources.filter(\.hasAudio).map(\.id))
 		return placements.filter { clip in
-			clip.trackID == track.id || (clip.trackID == TimelineTrack.primaryVideo.id &&
+			clip.trackID == track.id || (clip.trackID == videoID &&
 				clip.omitAudio != true && sourcesWithAudio.contains(clip.sourceID))
 		}.sorted { $0.start.time < $1.start.time }
 	}
@@ -118,6 +121,29 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 				used.insert(next)
 			}
 		}
+	}
+
+	func audioPartner(for videoID: String) -> TimelineTrack? {
+		tracks.first { $0.videoPartnerID == videoID }
+	}
+
+	private mutating func ensureAudioPartner(for track: TimelineTrack) {
+		guard track.kind == .video, audioPartner(for: track.id) == nil else { return }
+		let existing = tracks
+		var name = track.name
+		var number = 2
+		while existing.contains(where: { $0.kind == .audio && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+			name = track.name + " " + String(number)
+			number += 1
+		}
+		let partner = TimelineTrack(id: "audio-" + track.id, kind: .audio, name: name, linkedVideoID: track.id)
+		additionalTracks = (additionalTracks ?? []) + [partner]
+	}
+
+	fileprivate mutating func restoreAudioPartners() {
+		let audibleSources = Set(sources.filter(\.hasAudio).map(\.id))
+		let videoIDs = Set(placements.filter { $0.track == .video && $0.omitAudio != true && audibleSources.contains($0.sourceID) }.map(\.trackID))
+		for track in tracks where videoIDs.contains(track.id) { ensureAudioPartner(for: track) }
 	}
 
 	mutating func createTrack(_ name: String, kind: ProjectTrack) throws -> TimelineTrack {
@@ -170,6 +196,7 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 			}
 		}
 		placements.append(clip)
+		if source.hasAudio && !omitAudio { ensureAudioPartner(for: track) }
 		assignPlacementLabels()
 		if picture == nil { picture = source.picture }
 	}
@@ -194,6 +221,9 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 			guard let clip = destination.first(where: { $0.id == anchor }) else { throw ProjectFailure("Choose a clip on the destination track.") }
 			start = after ? clip.end : clip.start.time
 		} else { start = destination.last?.end ?? .zero }
+		if track.kind == .video, moving.contains(where: { clip in
+			clip.omitAudio != true && sources.contains { $0.id == clip.sourceID && $0.hasAudio }
+		}) { ensureAudioPartner(for: track) }
 		placements.removeAll { ids.contains($0.id) || $0.trackID == track.id }
 		placements.append(contentsOf: destination)
 		var cursor = start
@@ -258,8 +288,9 @@ nonisolated enum ProjectLibrary {
 
 	static func load(_ url: URL) throws -> EditingProject {
 		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: url))
-		guard (1...2).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		guard (1...3).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
 		try validate(project)
+		if project.version < 3 { project.restoreAudioPartners() }
 		project.assignPlacementLabels()
 		return project
 	}
@@ -283,6 +314,12 @@ nonisolated enum ProjectLibrary {
 		var tracks = [String: ProjectTrack]()
 		for track in project.tracks {
 			guard tracks.updateValue(track.kind, forKey: track.id) == nil else { throw corrupt }
+		}
+		var pairedVideos: Set<String> = [TimelineTrack.primaryVideo.id]
+		for track in project.additionalTracks ?? [] {
+			if let videoID = track.linkedVideoID {
+				guard track.kind == .audio, tracks[videoID] == .video, pairedVideos.insert(videoID).inserted else { throw corrupt }
+			}
 		}
 		for (id, volume) in project.trackVolumes ?? [:] {
 			guard tracks[id] != nil, (0...1).contains(volume) else { throw corrupt }

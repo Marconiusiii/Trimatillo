@@ -53,7 +53,7 @@ struct BoardProjectActions {
 	let split: () -> Void
 	let overwrite: () -> Void
 	let update: (() -> Void)?
-	let placementSheet: () -> AnyView
+	let placementSheet: (_ directTouch: Bool) -> AnyView
 }
 
 struct CuttingBoardView: View {
@@ -109,7 +109,7 @@ struct CuttingBoardView: View {
 			if !showingDirectTouchEditor { session.choosingPlacement = $0 }
 		}), onDismiss: {
 			if closeDirectTouchEditor == nil { placementFocused = true } else { surfaceFocused = true }
-		}) { projectActions?.placementSheet() }
+		}) { projectActions?.placementSheet(closeDirectTouchEditor != nil) }
 		.background(EditorTheme.workspace)
 		.alert("Cutting Board", isPresented: Binding(get: { !showingDirectTouchEditor && session.message != nil && session.sheet == nil }, set: { if !$0 { session.message = nil } })) {
 			Button("OK") { session.message = nil }

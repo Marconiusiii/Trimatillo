@@ -346,7 +346,9 @@ private struct ScrubAudioWindow {
 							if type == .audio, let output = outputs[type] {
 								let parameters = AVMutableAudioMixInputParameters(track: output)
 								var volume = project.trackVolumes?[track.id] ?? 1
-								if track == .primaryVideo { volume *= project.trackVolumes?[TimelineTrack.primaryAudio.id] ?? 1 }
+								if track.kind == .video, let partner = project.audioPartner(for: track.id) {
+									volume *= project.trackVolumes?[partner.id] ?? 1
+								}
 								parameters.setVolume(volume, at: .zero)
 								levels.append(parameters)
 							}
