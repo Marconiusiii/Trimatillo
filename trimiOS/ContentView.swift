@@ -16,7 +16,7 @@ struct ContentView: View {
 	@AccessibilityFocusState private var trimFocused: Bool
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
-	@State private var photo: PhotosPickerItem?
+	@State private var confirmedPhoto: (movie: ImportedMovie, identifier: String?)?
 	@State private var loadingTask: Task<Void, Never>?
 	@State private var failure: String?
 	@State private var showingHelp = false
@@ -46,7 +46,6 @@ struct ContentView: View {
 						.tint(color.fill)
 						.controlSize(.large)
 						.accessibilityFocused($trimFocused)
-						.photosPicker(isPresented: $pickingPhoto, selection: $photo, matching: .videos, photoLibrary: .shared())
 						.fileImporter(isPresented: $pickingFile, allowedContentTypes: [.audio, .movie]) { result in
 							switch result {
 							case .success(let url):
@@ -69,6 +68,14 @@ struct ContentView: View {
 						.sheet(isPresented: $showingSettings, onDismiss: { settingsFocused = true }) { SettingsView(support: support) }
 				}
 			}
+		}
+		.sheet(isPresented: $pickingPhoto, onDismiss: finishPhotoSelection) {
+			PhotoClipPickerView { item in
+				guard let movie = try await item.loadTransferable(type: ImportedMovie.self) else {
+					throw CocoaError(.fileReadCorruptFile)
+				}
+				return (AVURLAsset(url: movie.url), (movie, item.itemIdentifier))
+			} use: { confirmedPhoto = $0 }
 		}
 		.sheet(item: $launcher, onDismiss: { if project == nil { projectFocus = projectTrigger }; handleIncomingFile() }) { mode in
 			ProjectLauncherView(mode: mode) { project = $0 }
@@ -96,17 +103,6 @@ struct ContentView: View {
 			if error == nil { handleIncomingFile() }
 		}
 		.onChange(of: pickingFile) { _, open in if !open { trimFocused = true } }
-		.onChange(of: pickingPhoto) { _, open in if !open { trimFocused = true } }
-		.onChange(of: photo) { _, item in
-			guard let item else { return }
-			photo = nil
-			openClip(errorMessage: "Could not open this video. Select it again in Photo Library.") {
-				guard let movie = try await item.loadTransferable(type: ImportedMovie.self) else {
-					throw CocoaError(.fileReadCorruptFile)
-				}
-				return try await CuttingBoardSession.open(movie.url, importedMovie: movie, photoIdentifier: item.itemIdentifier)
-			}
-		}
 		.alert("Could Not Open Clip", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
 			Button("OK") { failure = nil }
 		} message: { Text(failure ?? "") }
@@ -120,8 +116,21 @@ struct ContentView: View {
 		}
 	}
 
+	private func finishPhotoSelection() {
+		guard let confirmedPhoto else {
+			trimFocused = true
+			handleIncomingFile()
+			return
+		}
+		self.confirmedPhoto = nil
+		openClip(errorMessage: "Could not open this video. Select it again in Photo Library.") {
+			try await CuttingBoardSession.open(confirmedPhoto.movie.url, importedMovie: confirmedPhoto.movie,
+				photoIdentifier: confirmedPhoto.identifier)
+		}
+	}
+
 	private func handleIncomingFile() {
-		guard project == nil, launcher == nil, !incomingFiles.isEmpty, loadingTask == nil, failure == nil, !choosingIncoming else { return }
+		guard project == nil, launcher == nil, !pickingPhoto, confirmedPhoto == nil, !incomingFiles.isEmpty, loadingTask == nil, failure == nil, !choosingIncoming else { return }
 		if session != nil {
 			choosingIncoming = true
 		} else {

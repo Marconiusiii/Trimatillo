@@ -36,7 +36,7 @@ struct ProjectEditorView: View {
 	@State private var expanded = true
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
-	@State private var photo: PhotosPickerItem?
+	@State private var confirmedPhoto: ProjectMediaSource?
 	@State private var renaming: ProjectMediaSource?
 	@State private var clipName = ""
 	@State private var reconnect: UUID?
@@ -134,17 +134,21 @@ struct ProjectEditorView: View {
 				else if case .failure(let problem) = result, (problem as NSError).code != NSUserCancelledError { error = "Could not open the file. Choose it again in Files." }
 				focus = trigger
 			}
-			.photosPicker(isPresented: $pickingPhoto, selection: $photo, matching: .videos, photoLibrary: .shared())
-			.onChange(of: pickingPhoto) { _, presented in if !presented { focus = trigger } }
-			.onChange(of: pickingFile) { _, presented in if !presented { focus = trigger } }
-			.onChange(of: photo) { _, item in
-				guard let item else { return }
-				photo = nil
-				importSource {
+			.sheet(isPresented: $pickingPhoto, onDismiss: {
+				if let source = confirmedPhoto {
+					confirmedPhoto = nil
+					importSource { source }
+				} else { focus = trigger }
+			}) {
+				PhotoClipPickerView { item in
 					guard let id = item.itemIdentifier else { throw ProjectFailure("Choose the original video in Photo Library.") }
-					return try await ProjectMediaSource.photo(id)
-				}
+					let source = try await ProjectMediaSource.photo(id)
+					try Task.checkCancellation()
+					let access = try await source.open()
+					return (access.asset, source)
+				} use: { confirmedPhoto = $0 }
 			}
+			.onChange(of: pickingFile) { _, presented in if !presented { focus = trigger } }
 			.sheet(item: $renaming, onDismiss: { focus = trigger }) { source in
 				NavigationStack {
 					Form { TextField("Clip Name", text: $clipName) }

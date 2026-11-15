@@ -100,6 +100,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Edit the name, resolution, frame rate, or duration and choose Save. Resolution and frame rate apply to project playback and export."
 			]), HelpSection("Arrange clips", numbered: true, [
 				"Expand Project Media. Choose Import Clip, then Photo Library or Files, and select the original.",
+				"In Photo Library, select a video to open Clip Preview. Play or scrub through it, then choose Use Clip to add it to Project Media. Back returns to the picker.",
 				"Choose Open Cutting Board from the source clip's menu or accessibility actions. Trim the clip or cut a marked range.",
 				"Choose Append to add the marked portion after the last clip on the selected compatible track. With fewer than two markers, Append uses the entire current edit. Keep the Cutting Board open to append another passage.",
 				"Primary Audio Track includes the linked sound from Primary Video. The linked clip follows the video through trims, splits, moves, and removal. Use Track Effects on Primary Audio Track to adjust its volume.",
@@ -153,7 +154,7 @@ private enum HelpTopic: String, CaseIterable {
 			])]
 		case .first:
 			[HelpSection("Open a clip and trim its ends", numbered: true, [
-				"Choose Trim a Clip. Choose Photo Library for a video or Files for an audio or video clip. Select your clip. To stop opening it, choose Cancel.",
+				"Choose Trim a Clip. Choose Photo Library for a video or Files for an audio or video clip. Select your clip. For a Photo Library video, choose Use Clip in Clip Preview to open the Cutting Board.",
 				"Choose Play. Pause where you want the clip to begin. Use Step Back or Step Forward to fine-tune the starting position.",
 				"Open Edit Actions and choose Trim Head to Playhead. The clip now starts at the position you chose.",
 				"Play or fast forward to where you want the clip to end. Pause and use the step buttons to refine the position.",
@@ -167,7 +168,8 @@ private enum HelpTopic: String, CaseIterable {
 		case .open:
 			[HelpSection("From the welcome screen", [
 				"Trim a Clip opens the source menu. Choose Photo Library for a video or Files for an audio or video clip.",
-				"Use the picker's search field to find a clip. Select it to open its Cutting Board.",
+				"Use the picker's search field to find a clip. In Photo Library, select a video to open Clip Preview. Use Play, Magic Tap, or the playback slider to check the video.",
+				"Choose Use Clip to open the Cutting Board, or Back to choose another video. Choose Cancel in the picker to return to Trim a Clip.",
 				"Choose Clip Info at the top of the board to read the clip's filename, duration, and available media details."
 			]), HelpSection("From Photos", numbered: true, [
 				"Select one video in Photos and choose Share.",
