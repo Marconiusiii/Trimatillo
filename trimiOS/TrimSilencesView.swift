@@ -5,13 +5,15 @@ struct TrimSilencesView: View {
 	let session: CuttingBoardSession
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@Environment(\.dismiss) private var dismiss
-	@State private var decibels = -40
+	@State private var decibels = -40.0
 	@State private var minimum = 0.6
 	@State private var retained = 0.15
 	@State private var markedOnly = true
 	@State private var pauses: [SilencePause]?
 	@State private var activity: String?
 	@State private var task: Task<Void, Never>?
+	@State private var noPausesMessage: String?
+	@AccessibilityFocusState private var findPausesFocused: Bool
 	@State private var failure: String?
 	@State private var preview: PreviewPlayback?
 	@AccessibilityFocusState private var previewFocus: Int?
@@ -49,6 +51,14 @@ struct TrimSilencesView: View {
 		.fullScreenCover(item: $preview, onDismiss: { previewFocus = previewTrigger }) { playback in
 			FullScreenPreview(playback: playback)
 		}
+		.alert("No Pauses Found", isPresented: Binding(get: { noPausesMessage != nil }, set: {
+			if !$0 { noPausesMessage = nil }
+		})) {
+			Button("OK") {}
+		} message: { Text(noPausesMessage ?? "") }
+		.onChange(of: noPausesMessage) { previous, current in
+			if previous != nil && current == nil { findPausesFocused = true }
+		}
 		.alert("Trim Silences", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
 			Button("OK") { failure = nil }
 		} message: { Text(failure ?? "") }
@@ -56,29 +66,35 @@ struct TrimSilencesView: View {
 
 	private var settings: some View {
 		Group {
-			Stepper("Silence threshold, \(decibels) dB", value: $decibels, in: -80 ... -10)
-			Stepper("Minimum silence, \(minimum.formatted()) seconds", value: $minimum, in: 0.1 ... 10, step: 0.1)
-			Stepper("Retained silence, \(retained.formatted()) seconds", value: $retained, in: 0 ... 2, step: 0.05)
+			valueSlider("Silence threshold", reading: "\(Int(decibels)) dB", value: $decibels, range: -80 ... -10, step: 1)
+			valueSlider("Minimum silence", reading: "\(minimum.formatted()) seconds", value: $minimum, range: 0.1 ... 10, step: 0.1)
+			valueSlider("Retained silence", reading: "\(retained.formatted()) seconds", value: $retained, range: 0 ... 2, step: 0.05)
 			if session.selection != nil {
 				Toggle("Only Between In and Out", isOn: $markedOnly)
 			}
 			Button("Find Pauses") {
 				run("Finding pauses") {
 					let whole = CMTimeRange(start: .zero, duration: session.duration)
-					pauses = try await session.silencePauses(range: markedOnly ? session.selection ?? whole : whole,
-						decibels: decibels, minimum: minimum, retained: retained)
+					let selection = markedOnly ? session.selection : nil
+					let found = try await session.silencePauses(range: selection ?? whole,
+						decibels: Int(decibels), minimum: minimum, retained: retained)
+					try Task.checkCancellation()
+					if found.isEmpty {
+						noPausesMessage = selection == nil ? "No pauses matched these settings in the clip."
+							: "No pauses matched these settings in the marked range."
+					} else {
+						pauses = found
+					}
 				}
 			}
+			.accessibilityFocused($findPausesFocused)
 		}
 	}
 
 	@ViewBuilder private var review: some View {
 		let results = pauses ?? []
-		if results.isEmpty { Text("No pauses found") }
-		if !results.isEmpty {
-			let removed = results.filter(\.included).reduce(CMTime.zero) { $0 + $1.cut.duration }
-			Text("Time to remove, " + session.timecode(removed, format: .milliseconds))
-		}
+		let removed = results.filter(\.included).reduce(CMTime.zero) { $0 + $1.cut.duration }
+		Text("Time to remove, " + session.timecode(removed, format: .milliseconds))
 		let enabled = results.contains(where: \.included)
 		Button("Preview Trimmed Clip") { play(-1) }
 			.disabled(!enabled)
@@ -101,31 +117,66 @@ struct TrimSilencesView: View {
 						end: min(session.duration, pause.cut.end + second)))
 				}
 				.accessibilityFocused($previewFocus, equals: index)
-				boundary(index, start: true)
-				boundary(index, start: false)
+				boundary(index, in: results, start: true)
+				boundary(index, in: results, start: false)
 			} header: { Text("Pause \(index + 1)").accessibilityAddTraits(.isHeader) }
 		}
 
 	}
 
-	private func boundary(_ index: Int, start: Bool) -> some View {
-		let results = pauses ?? []
-		let pause = results[index]
-		let time = start ? pause.cut.start : pause.cut.end
-		func change(_ count: Int) -> (() -> Void)? {
-			let next = session.stepped(from: time, by: count)
-			guard next != time, next >= pause.limits.start, next <= pause.limits.end else { return nil }
-			if start {
-				guard next < pause.cut.end, index == 0 || next >= results[index - 1].cut.end else { return nil }
-			} else {
-				guard next > pause.cut.start, index + 1 == results.count || next <= results[index + 1].cut.start else { return nil }
-			}
-			return {
-				pauses?[index].cut = CMTimeRange(start: start ? next : pause.cut.start, end: start ? pause.cut.end : next)
-			}
+	private func valueSlider(_ name: String, reading: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double) -> some View {
+		VStack(alignment: .leading) {
+			Text(name + ", " + reading)
+				.accessibilityHidden(true)
+			Slider(value: value, in: range, step: step) { Text(name) }
+				.labelsHidden()
+				.accessibilityLabel(Text(name))
+				.accessibilityValue(Text(reading))
 		}
-		return Stepper((start ? "Start, " : "End, ") + session.timecode(time, format: format),
-			onIncrement: change(1), onDecrement: change(-1))
+	}
+
+	private func boundary(_ index: Int, in results: [SilencePause], start: Bool) -> some View {
+		let pause = results[index]
+		let current = start ? pause.cut.start : pause.cut.end
+		let earliest = max(pause.limits.start, index > 0 ? results[index - 1].cut.end : .zero)
+		let latest = min(pause.limits.end, index + 1 < results.count ? results[index + 1].cut.start : session.duration)
+		let lower: Int64
+		let upper: Int64
+		let position: Int64
+		if session.hasVideo {
+			let first = session.frameNumber(at: earliest)
+			let firstTime = session.time(atFrame: first, sourceTime: false) ?? earliest
+			let last = session.frameNumber(at: latest)
+			lower = start ? first + (firstTime < earliest ? 1 : 0) : session.frameNumber(at: pause.cut.start) + 1
+			upper = start ? session.frameNumber(at: pause.cut.end) - 1 : last
+			position = session.frameNumber(at: current)
+		} else {
+			// Keep the original sample offset while moving in Cutting Board audio steps.
+			let scale: CMTimeScale = 30
+			let anchor = pause.limits.start
+			let offset = (current - anchor).convertScale(scale, method: .roundTowardNegativeInfinity)
+			let origin = current - offset
+			let first = (earliest - origin).convertScale(scale, method: .roundTowardPositiveInfinity).value
+			let last = (latest - origin).convertScale(scale, method: .roundTowardNegativeInfinity).value
+			lower = start ? first : max(first, (pause.cut.start - origin).convertScale(scale, method: .roundTowardNegativeInfinity).value + 1)
+			upper = start ? min(last, (pause.cut.end - origin).convertScale(scale, method: .roundTowardPositiveInfinity).value - 1) : last
+			position = offset.value
+		}
+		let value = Binding<Double>(get: { Double(position) }, set: { proposed in
+			let selected = Int64(proposed.rounded())
+			guard selected >= lower, selected <= upper else { return }
+			let next: CMTime
+			if session.hasVideo {
+				guard let time = session.time(atFrame: selected, sourceTime: false) else { return }
+				next = time
+			} else {
+				next = current + CMTime(value: selected - position, timescale: 30)
+			}
+			pauses?[index].cut = CMTimeRange(start: start ? next : pause.cut.start, end: start ? pause.cut.end : next)
+		})
+		return valueSlider(start ? "Start" : "End", reading: session.timecode(current, format: format),
+			value: value, range: Double(lower) ... Double(max(lower + 1, upper)), step: 1)
+			.disabled(lower >= upper)
 	}
 
 	private func play(_ trigger: Int, context: CMTimeRange? = nil) {
