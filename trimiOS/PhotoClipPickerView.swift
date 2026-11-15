@@ -57,6 +57,7 @@ private struct PhotoClipPreview<Clip>: View {
 	@Environment(\.scenePhase) private var phase
 	@State private var clip: Clip?
 	@State private var player: AVPlayer?
+	@State private var statusObservation: AnyCancellable?
 	@State private var ready = false
 	@State private var failure: String?
 
@@ -103,12 +104,16 @@ private struct PhotoClipPreview<Clip>: View {
 				try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
 				clip = candidate
 				let current = AVPlayerItem(asset: asset)
-				player = AVPlayer(playerItem: current)
-				for await status in current.publisher(for: \.status, options: [.initial, .new]).values {
-					try Task.checkCancellation()
-					if status == .failed { playbackFailed(); break }
-					ready = status == .readyToPlay
-				}
+				let previewPlayer = AVPlayer()
+				player = previewPlayer
+				statusObservation = current.publisher(for: \.status, options: [.initial, .new])
+					.receive(on: DispatchQueue.main)
+					.sink { status in
+						guard current === player?.currentItem else { return }
+						if status == .failed { playbackFailed() }
+						else { ready = status == .readyToPlay }
+					}
+				previewPlayer.replaceCurrentItem(with: current)
 			} catch {
 				if !Task.isCancelled {
 					failure = (error as? ProjectFailure)?.localizedDescription ?? "Could not load the preview. Go back and choose the video again."
@@ -119,7 +124,15 @@ private struct PhotoClipPreview<Clip>: View {
 			guard let failed = notification.object as? AVPlayerItem, failed === player?.currentItem else { return }
 			playbackFailed()
 		}
-		.onDisappear { player?.pause() }
+		.onDisappear {
+			statusObservation?.cancel()
+			statusObservation = nil
+			player?.pause()
+			player?.replaceCurrentItem(with: nil)
+			player = nil
+			clip = nil
+			ready = false
+		}
 		.onChange(of: phase) { _, value in
 			if value != .active { player?.pause() }
 		}
