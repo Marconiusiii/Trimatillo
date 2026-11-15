@@ -3,6 +3,7 @@ import PhotosUI
 import Photos
 import UniformTypeIdentifiers
 import AVFoundation
+import Combine
 
 struct ContentView: View {
 	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
@@ -16,7 +17,7 @@ struct ContentView: View {
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
 	@State private var photo: PhotosPickerItem?
-	@State private var loading = false
+	@State private var loadingTask: Task<Void, Never>?
 	@State private var failure: String?
 	@State private var showingHelp = false
 	@State private var showingSettings = false
@@ -28,7 +29,9 @@ struct ContentView: View {
 
 	var body: some View {
 		Group {
-			if let project {
+			if loadingTask != nil {
+				LoadingStatusView("Opening clip", cancel: cancelOpening)
+			} else if let project {
 				ProjectWorkspaceView(project: project) {
 					self.project = nil
 					projectFocus = projectTrigger
@@ -37,12 +40,11 @@ struct ContentView: View {
 			} else if let session {
 				CuttingBoardKeyboard(session: session, close: close).id(ObjectIdentifier(session))
 			} else {
-				WelcomeView(loading: loading) {
+				WelcomeView {
 					ClipSourceMenu(title: "Trim a Clip", choose: present)
 						.buttonStyle(.borderedProminent)
 						.tint(color.fill)
 						.controlSize(.large)
-						.disabled(loading)
 						.accessibilityFocused($trimFocused)
 						.photosPicker(isPresented: $pickingPhoto, selection: $photo, matching: .videos, photoLibrary: .shared())
 						.fileImporter(isPresented: $pickingFile, allowedContentTypes: [.audio, .movie]) { result in
@@ -58,7 +60,6 @@ struct ContentView: View {
 					ForEach([ProjectLauncher.create, .open], id: \.self) { mode in
 						Button { projectTrigger = mode; launcher = mode } label: { Text(mode.rawValue).editorTouchRow() }
 							.accessibilityFocused($projectFocus, equals: mode)
-							.disabled(loading)
 					}
 					Button { showingHelp = true } label: { Text("Help").editorTouchRow() }
 						.accessibilityFocused($helpFocused)
@@ -120,7 +121,7 @@ struct ContentView: View {
 	}
 
 	private func handleIncomingFile() {
-		guard project == nil, launcher == nil, !incomingFiles.isEmpty, !loading, failure == nil, !choosingIncoming else { return }
+		guard project == nil, launcher == nil, !incomingFiles.isEmpty, loadingTask == nil, failure == nil, !choosingIncoming else { return }
 		if session != nil {
 			choosingIncoming = true
 		} else {
@@ -162,20 +163,30 @@ struct ContentView: View {
 		}
 	}
 
+	private func cancelOpening() {
+		loadingTask?.cancel()
+		loadingTask = nil
+		trimFocused = true
+		handleIncomingFile()
+	}
+
 	private func openClip(errorMessage: String, load: @escaping () async throws -> CuttingBoardSession) {
-		loading = true
-		Task {
+		loadingTask = Task {
 			defer {
-				loading = false
-				handleIncomingFile()
+				if !Task.isCancelled {
+					loadingTask = nil
+					handleIncomingFile()
+				}
 			}
 			do {
 				let next = try await load()
+				try await next.waitForOpeningPlayback()
+				try Task.checkCancellation()
 				session?.releaseAudio()
 				showingHelp = false
 				showingSettings = false
 				session = next
-			} catch { failure = errorMessage }
+			} catch { if !Task.isCancelled { failure = errorMessage } }
 		}
 	}
 }
@@ -199,7 +210,6 @@ private struct ClipSourceMenu: View {
 }
 
 private struct WelcomeView<Actions: View>: View {
-	let loading: Bool
 	@ViewBuilder let actions: () -> Actions
 
 	var body: some View {
@@ -225,8 +235,48 @@ private struct WelcomeView<Actions: View>: View {
 			.accessibilityElement(children: .combine)
 			.accessibilityAddTraits(.isHeader)
 			actions()
-			if loading { ProgressView("Opening clip").editorTouchRow() }
 		}
 		.multilineTextAlignment(.center)
+	}
+}
+
+extension CuttingBoardSession {
+	func waitForOpeningPlayback() async throws {
+		try Task.checkCancellation()
+		guard let item = player.currentItem else { throw CocoaError(.fileReadCorruptFile) }
+		let statuses = item.publisher(for: \.status, options: [.initial, .new]).filter { $0 != .unknown }
+		for await status in statuses.values {
+			try Task.checkCancellation()
+			switch status {
+			case .readyToPlay: return
+			case .failed: throw item.error ?? CocoaError(.fileReadCorruptFile)
+			default: continue
+			}
+		}
+		throw CancellationError()
+	}
+}
+
+struct LoadingStatusView: View {
+	let title: LocalizedStringKey
+	let cancel: (() -> Void)?
+
+	init(_ title: LocalizedStringKey, cancel: (() -> Void)? = nil) {
+		self.title = title
+		self.cancel = cancel
+	}
+
+	var body: some View {
+		VStack(spacing: 0) {
+			ProgressView(title)
+				.editorTouchRow()
+			if let cancel {
+				Button("Cancel", role: .cancel, action: cancel)
+					.buttonStyle(EditorButtonStyle())
+					.fixedSize(horizontal: false, vertical: true)
+			}
+		}
+		.frame(maxWidth: .infinity, maxHeight: .infinity)
+		.background(EditorTheme.workspace)
 	}
 }

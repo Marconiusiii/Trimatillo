@@ -58,14 +58,76 @@ struct ProjectLauncherView: View {
 	let mode: ProjectLauncher
 	let open: (EditingProject) -> Void
 	@Environment(\.dismiss) private var dismiss
-	private struct SavedProject: Identifiable {
+	private nonisolated struct SavedProject: Identifiable, Sendable {
 		let id: URL
 		let name: String
 	}
-	@State private var saved: [SavedProject] = []
+	@State private var saved: [SavedProject]?
+	@State private var selection: URL?
+	@AccessibilityFocusState private var focusedProject: URL?
 	@State private var error: String?
 
 	var body: some View {
+		Group {
+			if mode == .open, let selection {
+				LoadingStatusView("Opening project") {
+					self.selection = nil
+					focusedProject = selection
+				}
+			} else if mode == .open && saved == nil {
+				LoadingStatusView("Loading projects") { dismiss() }
+			} else {
+				projectForm
+			}
+		}
+		.task(id: selection) {
+			guard mode == .open else { return }
+			if let selection {
+				do {
+					let project = try await Self.readProject(selection)
+					try Task.checkCancellation()
+					guard self.selection == selection else { return }
+					open(project)
+					dismiss()
+				} catch {
+					guard !Task.isCancelled else { return }
+					self.selection = nil
+					self.error = (error as? ProjectFailure)?.localizedDescription ?? "Could not open this project. Restore its project file from backup."
+				}
+			} else if saved == nil {
+				do {
+					let result = try await Self.listProjects()
+					try Task.checkCancellation()
+					saved = result.projects
+					if result.unreadable { error = "A saved project could not be read. Restore its project file from backup." }
+				} catch {
+					guard !Task.isCancelled else { return }
+					saved = []
+					self.error = "Could not read saved projects. Reopen Open Project."
+				}
+			}
+		}
+		.alert("Project", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+			Button("OK") { error = nil }
+		} message: { Text(error ?? "") }
+		.editorAppearance()
+	}
+
+	@concurrent private static func readProject(_ url: URL) async throws -> EditingProject {
+		try ProjectLibrary.load(url)
+	}
+
+	@concurrent private static func listProjects() async throws -> (projects: [SavedProject], unreadable: Bool) {
+		var unreadable = false
+		let projects = try ProjectLibrary.savedFiles().compactMap { url -> SavedProject? in
+			try Task.checkCancellation()
+			do { return try SavedProject(id: url, name: ProjectLibrary.name(at: url)) }
+			catch { unreadable = true; return nil }
+		}.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
+		return (projects, unreadable)
+	}
+
+	private var projectForm: some View {
 		NavigationStack {
 			Form {
 				if mode == .create {
@@ -75,24 +137,16 @@ struct ProjectLauncherView: View {
 						dismiss()
 					}
 				} else {
-					if saved.isEmpty {
+					if saved?.isEmpty == true {
 						Text("No saved projects")
 							.editorTouchRow()
 							.containerRelativeFrame(.vertical)
 							.contentShape(Rectangle())
 							.listRowInsets(EdgeInsets())
 					}
-					ForEach(saved) { project in
-						Button {
-							do {
-								open(try ProjectLibrary.load(project.id))
-								dismiss()
-							} catch let failure as ProjectFailure {
-								error = failure.localizedDescription
-							} catch {
-								self.error = "Could not open this project. Restore its project file from backup."
-							}
-						} label: { Text(project.name).editorTouchRow(alignment: .leading) }
+					ForEach(saved ?? []) { project in
+						Button { selection = project.id } label: { Text(project.name).editorTouchRow(alignment: .leading) }
+							.accessibilityFocused($focusedProject, equals: project.id)
 					}
 				}
 			}
@@ -102,22 +156,7 @@ struct ProjectLauncherView: View {
 			.navigationTitle(mode.rawValue)
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar { ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } } }
-			.task {
-				guard mode == .open else { return }
-				do {
-					var unreadable = false
-					saved = try ProjectLibrary.savedFiles().compactMap {
-						do { return try SavedProject(id: $0, name: ProjectLibrary.name(at: $0)) }
-						catch { unreadable = true; return nil }
-					}.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
-					if unreadable { error = "A saved project could not be read. Restore its project file from backup." }
-				} catch { self.error = "Could not read saved projects. Reopen Open Project." }
-			}
-			.alert("Project", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-				Button("OK") { error = nil }
-			} message: { Text(error ?? "") }
 		}
-		.editorAppearance()
 	}
 }
 

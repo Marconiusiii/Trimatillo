@@ -20,6 +20,7 @@ import UIKit
 	@Published private(set) var shuttleRate: Double = 0
 	@Published private(set) var playing = false
 	@Published private(set) var ready = false
+	@Published private(set) var preparing = false
 	@Published var failure: String?
 	private var media: [UUID: ProjectMediaAccess] = [:]
 	private var observer: Any?
@@ -217,6 +218,7 @@ import UIKit
 		player.replaceCurrentItem(with: nil)
 		media = [:]
 		duration = project.duration
+		preparing = duration > .zero
 		playhead.position = min(position, duration)
 		guard duration > .zero else { return }
 		let composition = AVMutableComposition()
@@ -317,6 +319,7 @@ import UIKit
 			status = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
 				Task { @MainActor [weak self] in
 					guard let self, self.player.currentItem === item else { return }
+					self.preparing = item.status == .unknown
 					self.ready = item.status == .readyToPlay
 					if item.status == .failed {
 						self.pause()
@@ -325,7 +328,10 @@ import UIKit
 				}
 			}
 		} catch {
-			if generation == request && !Task.isCancelled { failure = "Could not play " + currentName + ". Reconnect the clip in Project Media." }
+			if generation == request {
+				preparing = false
+				if !Task.isCancelled { failure = "Could not play " + currentName + ". Reconnect the clip in Project Media." }
+			}
 		}
 	}
 

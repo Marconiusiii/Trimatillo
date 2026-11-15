@@ -231,7 +231,7 @@ nonisolated struct ProjectFailure: LocalizedError {
 	var errorDescription: String? { message }
 }
 
-enum ProjectLibrary {
+nonisolated enum ProjectLibrary {
 	static let directory = URL.documentsDirectory.appendingPathComponent("Projects", isDirectory: true)
 
 	// Projects store edit decisions and references, never the media payload.
@@ -311,7 +311,7 @@ enum ProjectLibrary {
 			.filter { $0.pathExtension == "json" }
 	}
 
-	static func save(_ project: EditingProject, replacing previous: EditingProject? = nil) throws {
+	@MainActor static func save(_ project: EditingProject, replacing previous: EditingProject? = nil) throws {
 		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
 		let url = directory.appending(component: project.id.uuidString + ".json")
 		if let previous, try load(url) != previous {

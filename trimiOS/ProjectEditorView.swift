@@ -40,7 +40,7 @@ struct ProjectEditorView: View {
 	@State private var renaming: ProjectMediaSource?
 	@State private var clipName = ""
 	@State private var reconnect: UUID?
-	@State private var busy = false
+	@State private var clipTask: Task<Void, Never>?
 	@State private var projectSheet: ProjectSheet?
 	@State private var undo: [HistoryEntry] = []
 	@State private var redo: [HistoryEntry] = []
@@ -53,8 +53,14 @@ struct ProjectEditorView: View {
 	@AccessibilityFocusState private var focus: String?
 	@State private var trigger: String?
 
+	private var preparingTimeline: Bool {
+		board == nil && !project.placements.isEmpty && (preparedRevision != revision || playback.preparing)
+	}
+
+	private var loading: Bool { clipTask != nil || preparingTimeline }
+
 	var body: some View {
-		ProjectEditorKeyboard(enabled: projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !busy && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(enabled: projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
 			undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
@@ -64,32 +70,22 @@ struct ProjectEditorView: View {
 
 	private var editor: some View {
 		NavigationStack {
-			GeometryReader { geometry in
-				let hasVideo = project.placements.contains { $0.track == .video }
-				let wide = geometry.size.width > geometry.size.height && geometry.size.width > 550
-				HStack(spacing: 0) {
-					if hasVideo && wide {
-						preview.frame(width: geometry.size.width * 0.45)
-					}
-					List {
-						if hasVideo && !wide {
-							preview.frame(maxWidth: .infinity)
-								.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect))
-								.listRowInsets(EdgeInsets())
-						}
-						projectRows
-							.listRowInsets(EdgeInsets())
-					}
-					.editorListMargins()
+			Group {
+				if clipTask != nil {
+					LoadingStatusView("Opening clip", cancel: cancelClipLoad)
+				} else if preparingTimeline {
+					LoadingStatusView("Preparing timeline", cancel: close)
+				} else {
+					editorLayout
 				}
 			}
-			.disabled(busy)
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
 			.navigationTitle(project.name)
 			.navigationBarTitleDisplayMode(.inline)
+			.toolbar(loading ? .hidden : .visible, for: .navigationBar)
 			.toolbar {
-				ToolbarItem(placement: .topBarLeading) { Button("Close", action: close).disabled(busy) }
+				ToolbarItem(placement: .topBarLeading) { Button("Close", action: close) }
 				ToolbarItem(placement: .principal) {
 					Text(project.name).font(.headline).accessibilityAddTraits(.isHeader)
 				}
@@ -98,7 +94,6 @@ struct ProjectEditorView: View {
 					Menu("Project Actions") { EditorMenuAction.buttons(actions) }
 						.editorMenuActions("Project Actions", actions)
 						.accessibilityFocused($focus, equals: "projectActions")
-						.disabled(busy)
 				}
 			}
 			.sheet(item: $projectSheet, onDismiss: { focus = "projectActions" }) { sheet in
@@ -192,11 +187,33 @@ struct ProjectEditorView: View {
 				Button("OK") { error = nil }
 			} message: { Text(error ?? "") }
 		}
-		.accessibilityAction(.magicTap) { playback.toggle() }
 		.onChange(of: dragging) { _, ids in if ids.isEmpty { dropAnchor = nil } }
 		.onChange(of: playback.failure) { _, message in
 			if let message { error = message; playback.failure = nil }
 		}
+	}
+
+	private var editorLayout: some View {
+		GeometryReader { geometry in
+			let hasVideo = project.placements.contains { $0.track == .video }
+			let wide = geometry.size.width > geometry.size.height && geometry.size.width > 550
+			HStack(spacing: 0) {
+				if hasVideo && wide {
+					preview.frame(width: geometry.size.width * 0.45)
+				}
+				List {
+					if hasVideo && !wide {
+						preview.frame(maxWidth: .infinity)
+							.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect))
+							.listRowInsets(EdgeInsets())
+					}
+					projectRows
+						.listRowInsets(EdgeInsets())
+				}
+				.editorListMargins()
+			}
+		}
+		.accessibilityAction(.magicTap) { playback.toggle() }
 	}
 
 	private var projectActions: [EditorMenuAction] {
@@ -293,7 +310,6 @@ struct ProjectEditorView: View {
 			}
 		}
 		if let seconds = project.targetSeconds { LabeledContent("Project Duration", value: time(CMTime(seconds: seconds, preferredTimescale: 60000))) }
-		if busy { ProgressView("Opening clip") }
 	}
 
 	private var transport: some View {
@@ -566,13 +582,19 @@ struct ProjectEditorView: View {
 		if files { pickingFile = true } else { pickingPhoto = true }
 	}
 
+	private func cancelClipLoad() {
+		clipTask?.cancel()
+		clipTask = nil
+		focus = trigger
+	}
+
 	private func importSource(_ load: @escaping () async throws -> ProjectMediaSource) {
 		let replacing = reconnect
-		busy = true
-		Task {
-			defer { busy = false; focus = trigger }
+		clipTask = Task {
+			defer { if !Task.isCancelled { clipTask = nil; focus = trigger } }
 			do {
 				var source = try await load()
+				try Task.checkCancellation()
 				var next = project
 				if let replacing, let index = next.sources.firstIndex(where: { $0.id == replacing }) {
 					let original = next.sources[index]
@@ -583,21 +605,23 @@ struct ProjectEditorView: View {
 					next.sources[index] = source
 				} else { next.sources.append(source) }
 				commit(next, action: replacing == nil ? "Import Clip" : "Reconnect Clip")
-			} catch { self.error = error.localizedDescription }
+			} catch { if !Task.isCancelled { self.error = error.localizedDescription } }
 		}
 	}
 
 	private func openBoard(_ source: ProjectMediaSource, placement: ProjectPlacement?, rowID: String? = nil) {
 		playback.pause()
 		trigger = rowID ?? (placement?.id ?? source.id).uuidString
-		busy = true
-		Task {
-			defer { busy = false }
+		clipTask = Task {
+			defer { if !Task.isCancelled { clipTask = nil } }
 			do {
 				let access = try await source.open()
+				try Task.checkCancellation()
 				let session = try await CuttingBoardSession.openReferenced(asset: access.asset, title: placement?.displayName(for: source) ?? source.displayName, access: access, ranges: placement?.ranges.map(\.range))
+				try await session.waitForOpeningPlayback()
+				try Task.checkCancellation()
 				board = ProjectBoard(source: source, placement: placement, session: session)
-			} catch { self.error = "Could not open " + source.displayName + ". Reconnect the clip in Project Media." }
+			} catch { if !Task.isCancelled { self.error = "Could not open " + source.displayName + ". Reconnect the clip in Project Media." } }
 		}
 	}
 
