@@ -141,14 +141,16 @@ extension View {
 struct EditorButtonStyle: ButtonStyle {
 	let square: Bool
 	let badge: String?
+	let reservesBadgeSpace: Bool
 	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	@Environment(\.isEnabled) private var enabled
 	@Environment(\.colorSchemeContrast) private var contrast
 	@ScaledMetric(relativeTo: .body) private var symbolSize: CGFloat = 19
 
-	init(square: Bool = false, badge: String? = nil) {
+	init(square: Bool = false, badge: String? = nil, reservesBadgeSpace: Bool = false) {
 		self.square = square
 		self.badge = badge
+		self.reservesBadgeSpace = reservesBadgeSpace
 	}
 
 	func makeBody(configuration: Configuration) -> some View {
@@ -183,12 +185,13 @@ struct EditorButtonStyle: ButtonStyle {
 				shape.strokeBorder(EditorTheme.controlOutline, style: StrokeStyle(lineWidth: contrast == .increased ? 2 : 1, dash: enabled ? [] : [3, 2]))
 					.allowsHitTesting(false)
 			}
-			if let badge {
-				Text(badge)
+			if reservesBadgeSpace || badge != nil {
+				Text(badge ?? "1x")
 					.font(.caption.weight(.semibold))
 					.foregroundStyle(EditorTheme.surface)
 					.padding(.horizontal, 4)
 					.background(color.accent, in: Capsule())
+					.opacity(badge == nil ? 0 : 1)
 					.accessibilityHidden(true)
 			}
 		}

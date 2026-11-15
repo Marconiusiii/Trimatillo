@@ -109,7 +109,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Play to preview the timeline. Choose Pause to stop at the current position.",
 				"Choose Rewind or Fast Forward to play in that direction. Repeat to select 1x, 1.5x, 2x, 4x, or 8x. Changing direction starts at 1x.",
 				"Drag the Playhead slider to preview the picture and sound. Lift your finger to leave the playhead on that frame.",
-				"With VoiceOver, focus Playhead, double-tap and hold until you hear three rising tones, then drag left or right. Swipe up or down on the slider to move one project frame forward or back.",
+				"With VoiceOver, focus Playhead, double-tap and hold until you hear three rising tones, then drag left or right. After lifting your finger, use Magic Tap to play or pause at the playhead. Swipe up or down on the slider to move one project frame forward or back.",
 				"Choose Jump to Time to enter a time or frame in your selected timecode format.",
 				"Choose Step Back or Step Forward to move one project frame. In the Actions rotor, choose the 10-frame action or the previous or next edit point. Double-tap to use that action again while the button stays focused.",
 				"Edit points include clip boundaries on the active track, project markers, Start, and End.",
@@ -119,7 +119,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Enter a Clip Name and choose Save. The project uses that name for the source and its timeline clips.",
 				"Append a second passage from the same source. A clip named Interview becomes Interview A on the timeline, and the new passage is Interview B. Each clip keeps its letter when moved."
 			]), HelpSection("Full Screen Preview", numbered: true, [
-				"Tap Project Preview or choose Full Screen Preview beside the playback controls to open the project at the playhead.",
+				"Pause or step to the picture you want to inspect. With VoiceOver, focus Video frame to explore the image.",
+				"Choose Full Screen Preview beside the playback controls to open the project at the playhead.",
 				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time.",
 				"Choose Close to return to editing with the playhead at the preview position."
 			]), HelpSection("Add at Playhead", numbered: true, [

@@ -1,9 +1,43 @@
 import AVFoundation
 import Combine
 import UIKit
+import Observation
 
 @MainActor final class ProjectPlayhead: ObservableObject {
 	@Published var position: CMTime = .zero
+}
+
+@MainActor @Observable final class ProjectTransportState {
+	var playing = false
+	var shuttleRate: Double = 0
+}
+
+private struct ScrubAudioWindow {
+	let startFrame: Int64
+	let samples: [Float]
+
+	static func frame(at time: CMTime) -> Int64 {
+		CMTimeConvertScale(time, timescale: 48000, method: .roundHalfAwayFromZero).value
+	}
+
+	func contains(_ time: CMTime) -> Bool {
+		let frame = Self.frame(at: time) - startFrame
+		return frame >= 0 && frame < Int64(samples.count / 2)
+	}
+
+	func grain(at time: CMTime) -> [Float]? {
+		let offset = Int(Self.frame(at: time) - startFrame) * 2
+		guard offset >= 0, offset < samples.count else { return nil }
+		let end = min(offset + 4800 * 2, samples.count)
+		return Array(samples[offset..<end])
+	}
+
+	static func read(item: AVPlayerItem, at time: CMTime) async throws -> Self {
+		let start = max(0, frame(at: time) - 9600)
+		let samples = try await FrameAudioSamples.read(asset: item.asset, mix: item.audioMix,
+			at: CMTime(value: start, timescale: 48000), length: 0.8)
+		return Self(startFrame: start, samples: samples)
+	}
 }
 
 @MainActor final class ProjectPlayback: ObservableObject {
@@ -17,8 +51,8 @@ import UIKit
 		return playhead.position
 	}
 	private var ended: AnyCancellable?
-	@Published private(set) var shuttleRate: Double = 0
-	@Published private(set) var playing = false
+	let transport = ProjectTransportState()
+	private var playing: Bool { transport.playing }
 	@Published private(set) var ready = false
 	@Published private(set) var preparing = false
 	@Published var failure: String?
@@ -29,8 +63,12 @@ import UIKit
 	private var generation = 0
 	private var reverse: Task<Void, Never>?
 	private var scrubbing = false
+	private var scrubDirection: Int32 = 0
+	private var directionChanges = 0
 	private var pendingScrub: CMTime?
 	private var scrubTask: Task<Void, Never>?
+	private var warmup: Task<Void, Never>?
+	private var window: ScrubAudioWindow?
 	private let engine = AVAudioEngine()
 	private let node = AVAudioPlayerNode()
 	private let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
@@ -67,7 +105,11 @@ import UIKit
 		}
 	}
 
-	func pause() {
+	func pause() { stop(keepingAudio: false) }
+
+	private func stop(keepingAudio: Bool) {
+		warmup?.cancel()
+		warmup = nil
 		let wasRewinding = reverse != nil
 		scrubTask?.cancel()
 		scrubTask = nil
@@ -80,11 +122,11 @@ import UIKit
 			engine.stop()
 		}
 		speed = 0
-		if shuttleRate != 0 { shuttleRate = 0 }
+		if transport.shuttleRate != 0 { transport.shuttleRate = 0 }
 		player.pause()
 		if !wasRewinding, playing, player.currentTime().isNumeric { playhead.position = min(duration, player.currentTime()) }
-		if playing { playing = false }
-		if audioActive {
+		if playing { transport.playing = false }
+		if audioActive && !keepingAudio {
 			try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 			audioActive = false
 		}
@@ -93,7 +135,10 @@ import UIKit
 	func toggle() {
 		guard ready else { return }
 		if playing { pause(); return }
-		if scrubbing { setScrubbing(false) }
+		if scrubbing {
+			stop(keepingAudio: true)
+			seek(position)
+		}
 		if position >= duration { seek(.zero) }
 		playForward(1)
 	}
@@ -112,15 +157,15 @@ import UIKit
 			speed = rate
 			if rate == 1 { player.play() }
 			else { player.playImmediately(atRate: Float(rate)) }
-			playing = true
+			transport.playing = true
 		} catch { failure = "Could not start project audio. Check the audio output and choose Play again." }
 	}
 
 	func shuttle(forward: Bool) {
 		guard ready else { return }
-		let current = forward ? shuttleRate : -shuttleRate
+		let current = forward ? transport.shuttleRate : -transport.shuttleRate
 		guard let next = [1.0, 1.5, 2, 4, 8].first(where: { $0 > current }) else { return }
-		pause()
+		stop(keepingAudio: true)
 		if forward {
 			if position >= duration { seek(.zero) }
 			playForward(next)
@@ -130,7 +175,7 @@ import UIKit
 			do {
 				try activateAudio()
 			} catch { failure = "Could not rewind. Check the audio output and try again."; return }
-			playing = true
+			transport.playing = true
 			speed = -next
 			reverse = Task {
 				do {
@@ -148,50 +193,90 @@ import UIKit
 			}
 		}
 		if playing {
-			shuttleRate = speed
+			transport.shuttleRate = speed
 			UIAccessibility.post(notification: .announcement, argument: (forward ? "Forward " : "Rewind ") + next.formatted() + "x")
+		}
+	}
+
+	func primeScrubAudio() {
+		guard ready, !playing, !scrubbing, let item = player.currentItem, item.audioMix != nil else { return }
+		let target = position
+		guard window?.contains(target) != true else { return }
+		warmup?.cancel()
+		warmup = Task {
+			guard let decoded = try? await ScrubAudioWindow.read(item: item, at: target),
+				!Task.isCancelled, player.currentItem === item else { return }
+			window = decoded
 		}
 	}
 
 	func setScrubbing(_ active: Bool) {
 		guard active != scrubbing else { return }
-		pause()
-		if active, ready {
-			scrubbing = true
-			scrub(to: position)
-		} else {
+		if !active {
+			pause()
 			seek(position)
+			return
 		}
+		guard ready else { return }
+		stop(keepingAudio: true)
+		scrubbing = true
+		scrubDirection = 0
+		if player.currentItem?.audioMix != nil {
+			do {
+				try activateAudio()
+				engine.prepare()
+				try engine.start()
+			} catch {
+				pause()
+				failure = "Could not preview project audio. Check the audio output and try again."
+				return
+			}
+		}
+		scrub(to: position)
 	}
 
 	func scrub(to time: CMTime) {
-		guard scrubbing, let item = player.currentItem else {
-			seek(time)
-			return
+		guard scrubbing, let item = player.currentItem else { return }
+		let target = min(duration, max(.zero, time))
+		let direction = CMTimeCompare(target, playhead.position)
+		if direction != 0 {
+			if direction != scrubDirection { directionChanges += 1 }
+			scrubDirection = direction
 		}
-		playhead.position = min(duration, max(.zero, time))
-		pendingScrub = playhead.position
+		playhead.position = target
+		player.seek(to: target, toleranceBefore: .zero, toleranceAfter: .zero)
+		guard item.audioMix != nil else { return }
+		pendingScrub = target
 		guard scrubTask == nil else { return }
-		// Preview the latest position instead of queuing each touch behind a decode.
 		scrubTask = Task {
 			defer { if !Task.isCancelled { scrubTask = nil } }
 			do {
-				while let point = pendingScrub {
+				while var point = pendingScrub {
 					try Task.checkCancellation()
 					pendingScrub = nil
-					player.seek(to: point, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
-					if let mix = item.audioMix {
-						let samples = try await FrameAudioSamples.read(asset: item.asset, mix: mix, at: point)
-						try Task.checkCancellation()
+					if point >= duration {
 						node.stop()
-						if let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: format) {
-							try activateAudio()
-							if !engine.isRunning { try engine.start() }
-							node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in }
-							node.play()
-						}
+						continue
 					}
-					try await Task.sleep(for: .milliseconds(65))
+					var samples = window?.grain(at: point)
+					if samples == nil {
+						let previousDirectionChanges = directionChanges
+						let decoded = try await ScrubAudioWindow.read(item: item, at: point)
+						try Task.checkCancellation()
+						window = decoded
+						if let latest = pendingScrub, decoded.contains(latest) {
+							point = latest
+							pendingScrub = nil
+						} else if previousDirectionChanges != directionChanges || pendingScrub == duration {
+							continue
+						}
+						samples = decoded.grain(at: point)
+					}
+					guard let samples, let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: format) else { continue }
+					node.scheduleBuffer(buffer, at: nil, options: .interrupts, completionCallbackType: .dataPlayedBack) { _ in }
+					if !node.isPlaying { node.play() }
+					// Limit replacements while dragging. The first grain is scheduled immediately.
+					try await Task.sleep(for: .milliseconds(35))
 				}
 			} catch {
 				if !Task.isCancelled {
@@ -212,6 +297,7 @@ import UIKit
 		generation += 1
 		let request = generation
 		pause()
+		window = nil
 		ready = false
 		status = nil
 		ended = nil
@@ -321,6 +407,7 @@ import UIKit
 					guard let self, self.player.currentItem === item else { return }
 					self.preparing = item.status == .unknown
 					self.ready = item.status == .readyToPlay
+					if self.ready { self.primeScrubAudio() }
 					if item.status == .failed {
 						self.pause()
 						self.failure = "Could not play the timeline. Reconnect the affected clip in Project Media."

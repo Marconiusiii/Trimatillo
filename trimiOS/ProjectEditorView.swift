@@ -45,7 +45,6 @@ struct ProjectEditorView: View {
 	@State private var undo: [HistoryEntry] = []
 	@State private var redo: [HistoryEntry] = []
 	@State private var error: String?
-	@State private var previewTrigger = "fullScreenPreview"
 	@State private var fullScreenPreview: PreviewPlayback?
 	@State private var jumping = false
 	@State private var jumpText = ""
@@ -166,7 +165,7 @@ struct ProjectEditorView: View {
 				}
 				.editorAppearance()
 			}
-			.fullScreenCover(item: $fullScreenPreview, onDismiss: { focus = previewTrigger }) { preview in
+			.fullScreenCover(item: $fullScreenPreview, onDismiss: { focus = "fullScreenPreview" }) { preview in
 				FullScreenPreview(playback: preview)
 			}
 			.fullScreenCover(item: $board, onDismiss: { focus = trigger }) { editing in
@@ -186,6 +185,9 @@ struct ProjectEditorView: View {
 			.alert("Project", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
 				Button("OK") { error = nil }
 			} message: { Text(error ?? "") }
+		}
+		.onChange(of: focus) { _, target in
+			if target == "playhead" { playback.primeScrubAudio() }
 		}
 		.onChange(of: dragging) { _, ids in if ids.isEmpty { dropAnchor = nil } }
 		.onChange(of: playback.failure) { _, message in
@@ -237,19 +239,8 @@ struct ProjectEditorView: View {
 	}
 
 	private var preview: some View {
-		Button {
-			previewTrigger = "projectPreview"
-			fullScreenPreview = playback.makePreview()
-		} label: {
-			ProjectPreview(player: playback.player)
-				.allowsHitTesting(false)
-				.frame(maxWidth: .infinity, maxHeight: .infinity)
-				.contentShape(Rectangle())
-		}
-		.buttonStyle(.plain)
-		.accessibilityLabel("Project Preview")
-		.accessibilityFocused($focus, equals: "projectPreview")
-		.disabled(!playback.ready)
+		ProjectPreview(player: playback.player)
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
 	}
 
 	@ViewBuilder private var projectRows: some View {
@@ -315,7 +306,7 @@ struct ProjectEditorView: View {
 	private var transport: some View {
 		Group {
 			ProjectTimelineSlider(playhead: playback.playhead, duration: project.duration, frame: project.frame,
-				formatTime: time, scrub: playback.scrub, editingChanged: playback.setScrubbing, step: step, focus: $focus)
+				formatTime: time, scrub: playback.scrub, editingChanged: playback.setScrubbing, step: step, toggle: playback.toggle, focus: $focus)
 				.disabled(!playback.ready)
 			Button("Jump to Time", action: openJump)
 				.buttonStyle(EditorButtonStyle())
@@ -323,12 +314,12 @@ struct ProjectEditorView: View {
 				.disabled(!playback.ready)
 			HStack(spacing: 0) {
 				stepButton(forward: false)
-				shuttleButton(forward: false)
-				Button { playback.toggle() } label: { Label(playback.playing ? "Pause" : "Play", systemImage: playback.playing ? "pause.fill" : "play.fill") }
-				shuttleButton(forward: true)
+				ProjectShuttleButton(playback: playback, forward: false)
+				ProjectPlayButton(playback: playback)
+				ProjectShuttleButton(playback: playback, forward: true)
 				stepButton(forward: true)
 				if project.placements.contains(where: { $0.track == .video }) {
-					Button { previewTrigger = "fullScreenPreview"; fullScreenPreview = playback.makePreview() } label: {
+					Button { fullScreenPreview = playback.makePreview() } label: {
 						Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right")
 					}
 					.disabled(!playback.ready)
@@ -401,15 +392,6 @@ struct ProjectEditorView: View {
 			points.filter { $0 < position }.max() ?? .zero
 		playback.seek(destination)
 		UIAccessibility.post(notification: .announcement, argument: "Edit Point, " + time(destination))
-	}
-
-	private func shuttleButton(forward: Bool) -> some View {
-		let rate = playback.shuttleRate
-		let active = forward ? rate > 0 : rate < 0
-		return Button { playback.shuttle(forward: forward) } label: {
-			Label(forward ? "Fast Forward" : "Rewind", systemImage: forward ? "forward.fill" : "backward.fill")
-		}
-		.buttonStyle(EditorButtonStyle(square: true, badge: active ? abs(rate).formatted() + "x" : nil))
 	}
 
 	private func setMarker(_ isIn: Bool, to point: ProjectTime?) {
@@ -832,17 +814,54 @@ struct ProjectEditorView: View {
 	}
 }
 
-private struct ProjectPreview: UIViewControllerRepresentable {
+private struct ProjectShuttleButton: View {
+	let playback: ProjectPlayback
+	let forward: Bool
+
+	var body: some View {
+		let rate = playback.transport.shuttleRate
+		let active = forward ? rate > 0 : rate < 0
+		let name = forward ? "Fast Forward" : "Rewind"
+		Button { playback.shuttle(forward: forward) } label: {
+			Image(systemName: forward ? "forward.fill" : "backward.fill")
+				.accessibilityHidden(true)
+		}
+		.accessibilityLabel(Text(name))
+		.buttonStyle(EditorButtonStyle(square: true, badge: active ? abs(rate).formatted() + "x" : nil, reservesBadgeSpace: true))
+	}
+}
+
+private struct ProjectPlayButton: View {
+	let playback: ProjectPlayback
+
+	var body: some View {
+		let playing = playback.transport.playing
+		Button(action: playback.toggle) {
+			Label(playing ? "Pause" : "Play", systemImage: playing ? "pause.fill" : "play.fill")
+		}
+	}
+}
+
+private struct ProjectPreview: UIViewRepresentable {
 	let player: AVPlayer
 
-	func makeUIViewController(context: Context) -> AVPlayerViewController {
-		let controller = AVPlayerViewController()
-		controller.showsPlaybackControls = false
-		controller.player = player
-		return controller
+	final class FrameView: UIView {
+		override class var layerClass: AnyClass { AVPlayerLayer.self }
 	}
 
-	func updateUIViewController(_ controller: AVPlayerViewController, context: Context) {}
+	func makeUIView(context: Context) -> FrameView {
+		let view = FrameView()
+		view.backgroundColor = .black
+		view.isAccessibilityElement = true
+		view.accessibilityLabel = "Video frame"
+		view.accessibilityTraits = .image
+		return view
+	}
+
+	func updateUIView(_ view: FrameView, context: Context) {
+		let layer = view.layer as! AVPlayerLayer
+		if layer.player !== player { layer.player = player }
+	}
 }
 
 private struct ClipDropTarget: ViewModifier {
@@ -1005,6 +1024,7 @@ private struct ProjectTimelineSlider: View {
 	let scrub: (CMTime) -> Void
 	let editingChanged: (Bool) -> Void
 	let step: (Int32) -> Void
+	let toggle: () -> Void
 	let focus: AccessibilityFocusState<String?>.Binding
 
 	var body: some View {
@@ -1025,6 +1045,7 @@ private struct ProjectTimelineSlider: View {
 				editingChanged(editing)
 			}
 			.accessibilityValue(value)
+			.accessibilityAction(.magicTap, toggle)
 			.accessibilityAdjustableAction { direction in
 				switch direction {
 				case .increment: step(1)
