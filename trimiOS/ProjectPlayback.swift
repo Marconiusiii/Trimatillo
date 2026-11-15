@@ -27,6 +27,9 @@ import UIKit
 	private var audioActive = false
 	private var generation = 0
 	private var reverse: Task<Void, Never>?
+	private var scrubbing = false
+	private var pendingScrub: CMTime?
+	private var scrubTask: Task<Void, Never>?
 	private let engine = AVAudioEngine()
 	private let node = AVAudioPlayerNode()
 	private let format = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
@@ -65,9 +68,13 @@ import UIKit
 
 	func pause() {
 		let wasRewinding = reverse != nil
+		scrubTask?.cancel()
+		scrubTask = nil
+		pendingScrub = nil
 		reverse?.cancel()
 		reverse = nil
-		if wasRewinding {
+		if wasRewinding || scrubbing {
+			scrubbing = false
 			node.stop()
 			engine.stop()
 		}
@@ -85,16 +92,22 @@ import UIKit
 	func toggle() {
 		guard ready else { return }
 		if playing { pause(); return }
+		if scrubbing { setScrubbing(false) }
 		if position >= duration { seek(.zero) }
 		playForward(1)
 	}
 
+	private func activateAudio() throws {
+		guard !audioActive else { return }
+		let session = AVAudioSession.sharedInstance()
+		try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+		try session.setActive(true)
+		audioActive = true
+	}
+
 	private func playForward(_ rate: Double) {
 		do {
-			let session = AVAudioSession.sharedInstance()
-			try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
-			try session.setActive(true)
-			audioActive = true
+			try activateAudio()
 			speed = rate
 			if rate == 1 { player.play() }
 			else { player.playImmediately(atRate: Float(rate)) }
@@ -114,10 +127,7 @@ import UIKit
 			if position <= .zero { seek(duration) }
 			let start = position
 			do {
-				let audio = AVAudioSession.sharedInstance()
-				try audio.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
-				try audio.setActive(true)
-				audioActive = true
+				try activateAudio()
 			} catch { failure = "Could not rewind. Check the audio output and try again."; return }
 			playing = true
 			speed = -next
@@ -142,8 +152,57 @@ import UIKit
 		}
 	}
 
+	func setScrubbing(_ active: Bool) {
+		guard active != scrubbing else { return }
+		pause()
+		if active, ready {
+			scrubbing = true
+			scrub(to: position)
+		} else {
+			seek(position)
+		}
+	}
+
+	func scrub(to time: CMTime) {
+		guard scrubbing, let item = player.currentItem else {
+			seek(time)
+			return
+		}
+		playhead.position = min(duration, max(.zero, time))
+		pendingScrub = playhead.position
+		guard scrubTask == nil else { return }
+		// Preview the latest position instead of queuing each touch behind a decode.
+		scrubTask = Task {
+			defer { if !Task.isCancelled { scrubTask = nil } }
+			do {
+				while let point = pendingScrub {
+					try Task.checkCancellation()
+					pendingScrub = nil
+					player.seek(to: point, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
+					if let mix = item.audioMix {
+						let samples = try await FrameAudioSamples.read(asset: item.asset, mix: mix, at: point)
+						try Task.checkCancellation()
+						node.stop()
+						if let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: format) {
+							try activateAudio()
+							if !engine.isRunning { try engine.start() }
+							node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { _ in }
+							node.play()
+						}
+					}
+					try await Task.sleep(for: .milliseconds(65))
+				}
+			} catch {
+				if !Task.isCancelled {
+					setScrubbing(false)
+					failure = "Could not preview project audio. Check the audio output and try again."
+				}
+			}
+		}
+	}
+
 	func seek(_ time: CMTime) {
-		if playing { pause() }
+		if playing || scrubbing { pause() }
 		playhead.position = min(duration, max(.zero, time))
 		player.seek(to: position, toleranceBefore: .zero, toleranceAfter: .zero)
 	}

@@ -47,7 +47,6 @@ struct ProjectEditorView: View {
 	@State private var error: String?
 	@State private var previewTrigger = "fullScreenPreview"
 	@State private var fullScreenPreview: PreviewPlayback?
-	@State private var jumpTrigger = "jump"
 	@State private var jumping = false
 	@State private var jumpText = ""
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
@@ -180,13 +179,13 @@ struct ProjectEditorView: View {
 			}
 			.alert("Jump to Time", isPresented: $jumping) {
 				TextField(format == .frames ? "Frame" : "Time", text: $jumpText)
-				Button("Cancel", role: .cancel) { focus = jumpTrigger }
+				Button("Cancel", role: .cancel) { focus = "jump" }
 				Button("Jump") {
 					if format == .frames, let index = Int32(jumpText), index >= 0 {
 						playback.seek(CMTimeMultiply(project.frame, multiplier: index))
 					} else if format != .frames, let time = CuttingBoardSession.parse(jumpText) { playback.seek(time) }
 					else { error = "Enter a valid playhead position and choose Jump." }
-					focus = jumpTrigger
+					focus = "jump"
 				}
 			}
 			.alert("Project", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
@@ -300,9 +299,9 @@ struct ProjectEditorView: View {
 	private var transport: some View {
 		Group {
 			ProjectTimelineSlider(playhead: playback.playhead, duration: project.duration, frame: project.frame,
-				formatTime: time, seek: playback.seek, step: step, focus: $focus) { openJump(from: "playhead") }
+				formatTime: time, scrub: playback.scrub, editingChanged: playback.setScrubbing, step: step, focus: $focus)
 				.disabled(!playback.ready)
-			Button("Jump to Time") { openJump(from: "jump") }
+			Button("Jump to Time", action: openJump)
 				.buttonStyle(EditorButtonStyle())
 				.accessibilityFocused($focus, equals: "jump")
 				.disabled(!playback.ready)
@@ -352,8 +351,7 @@ struct ProjectEditorView: View {
 		}
 	}
 
-	private func openJump(from control: String) {
-		jumpTrigger = control
+	private func openJump() {
 		playback.pause()
 		jumpText = ""
 		jumping = true
@@ -980,10 +978,10 @@ private struct ProjectTimelineSlider: View {
 	let duration: CMTime
 	let frame: CMTime
 	let formatTime: (CMTime) -> String
-	let seek: (CMTime) -> Void
+	let scrub: (CMTime) -> Void
+	let editingChanged: (Bool) -> Void
 	let step: (Int32) -> Void
 	let focus: AccessibilityFocusState<String?>.Binding
-	let jump: () -> Void
 
 	var body: some View {
 		let value = formatTime(playhead.position)
@@ -992,13 +990,15 @@ private struct ProjectTimelineSlider: View {
 				.monospacedDigit()
 				.accessibilityHidden(true)
 			Slider(value: Binding(get: { playhead.position.seconds }, set: { seconds in
-				if seconds >= duration.seconds { seek(duration) }
+				if seconds >= duration.seconds { scrub(duration) }
 				else {
 					let frames = (seconds / frame.seconds).rounded()
-					seek(CMTimeMultiplyByFloat64(frame, multiplier: frames))
+					scrub(CMTimeMultiplyByFloat64(frame, multiplier: frames))
 				}
 			}), in: 0...max(duration.seconds, frame.seconds)) {
 				Text("Playhead")
+			} onEditingChanged: { editing in
+				editingChanged(editing)
 			}
 			.accessibilityValue(value)
 			.accessibilityAdjustableAction { direction in
@@ -1010,7 +1010,6 @@ private struct ProjectTimelineSlider: View {
 			}
 			.frame(minHeight: 44)
 			.accessibilityFocused(focus, equals: "playhead")
-			.accessibilityAction(named: "Jump to Time", jump)
 		}
 	}
 }
