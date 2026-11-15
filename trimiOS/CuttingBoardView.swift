@@ -387,22 +387,36 @@ private struct JumpSheet: View {
 }
 
 private struct JoinSheet: View {
-	@ObservedObject var session: CuttingBoardSession
+	private enum Boundary: String, Identifiable {
+		case outgoing = "Outgoing Out Point"
+		case incoming = "Incoming In Point"
+		var id: Self { self }
+	}
+
+	let session: CuttingBoardSession
 	let point: ClipEditTimeline.EditPoint
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@Environment(\.dismiss) private var dismiss
-	@State private var precedingEntry: TimeEntry?
-	@State private var followingEntry: TimeEntry?
+	@State private var outgoing: CMTime
+	@State private var incoming: CMTime
+	@State private var editor: Boundary?
+	@State private var trigger: Boundary?
+	@AccessibilityFocusState private var focused: Boundary?
 	@State private var error: String?
+
+	init(session: CuttingBoardSession, point: ClipEditTimeline.EditPoint) {
+		self.session = session
+		self.point = point
+		_outgoing = State(initialValue: point.inTime)
+		_incoming = State(initialValue: point.outTime)
+	}
 
 	var body: some View {
 		NavigationStack {
 			Form {
-				if let preceding = Binding($precedingEntry), let following = Binding($followingEntry) {
-					boundary("Outgoing Out Point", entry: preceding, other: following.wrappedValue, preceding: true)
-					boundary("Incoming In Point", entry: following, other: preceding.wrappedValue, preceding: false)
-				}
-				if let text = error ?? session.message { Text(text) }
+				button(.outgoing)
+				button(.incoming)
+				if let error { Text(error) }
 			}
 			.editorListMargins()
 			.navigationTitle(point.name)
@@ -412,80 +426,112 @@ private struct JoinSheet: View {
 				ToolbarItem(placement: .confirmationAction) { Button("Save") { save() } }
 			}
 		}
-		.onAppear {
-			precedingEntry = TimeEntry(point.inTime, session: session, format: format, source: true)
-			followingEntry = TimeEntry(point.outTime, session: session, format: format, source: true)
+		.sheet(item: $editor, onDismiss: { focused = trigger }) { boundary in
+			BoundaryTimeEditor(title: boundary.rawValue, session: session, format: format, time: time(for: boundary)) { time in
+				update(time, for: boundary)
+			}
 		}
+		.onReceive(session.$message) { if let message = $0 { error = message } }
 		.onDisappear { session.stop(); session.message = nil }
 	}
 
-	private func boundary(_ title: String, entry: Binding<TimeEntry>, other: TimeEntry, preceding: Bool) -> some View {
-		func positionInClip(_ draft: TimeEntry) -> CMTime {
-			let time = draft.value(session: session, format: format, source: true) ?? draft.exact
-			return min(point.followingEnd, max(point.precedingStart, time))
-		}
-		let current = positionInClip(entry.wrappedValue)
-		let opposite = positionInClip(other)
-		let lower = preceding ? point.precedingStart : max(point.precedingStart, opposite)
-		let upper = preceding ? min(point.followingEnd, opposite) : point.followingEnd
-		let first: Int64
-		let last: Int64
-		let position: Int64
-		let origin = preceding ? point.inTime : point.outTime
-		if session.hasVideo {
-			let lowerFrame = session.frameNumber(at: lower, sourceTime: true)
-			let upperFrame = session.frameNumber(at: upper, sourceTime: true)
-			first = lowerFrame + ((session.time(atFrame: lowerFrame, sourceTime: true) ?? lower) <= lower ? 1 : 0)
-			last = upperFrame - ((session.time(atFrame: upperFrame, sourceTime: true) ?? upper) >= upper ? 1 : 0)
-			position = session.frameNumber(at: current, sourceTime: true)
-		} else {
-			first = (lower - origin).convertScale(30, method: .roundTowardNegativeInfinity).value + 1
-			last = (upper - origin).convertScale(30, method: .roundTowardPositiveInfinity).value - 1
-			position = (current - origin).convertScale(30, method: .roundHalfAwayFromZero).value
-		}
-		let value = Binding<Double>(get: { Double(max(first, min(position, last))) }, set: { proposed in
-			let index = Int64(proposed.rounded())
-			guard index >= first, index <= last else { return }
-			let next: CMTime
-			if session.hasVideo {
-				guard let frame = session.time(atFrame: index, sourceTime: true) else { return }
-				next = frame
-			} else {
-				next = origin + CMTime(value: index, timescale: 30)
+	private func time(for boundary: Boundary) -> CMTime {
+		boundary == .outgoing ? outgoing : incoming
+	}
+
+	private func button(_ boundary: Boundary) -> some View {
+		let reading = session.timecode(time(for: boundary), format: format, sourceTime: true)
+		return Button {
+			trigger = boundary
+			editor = boundary
+		} label: {
+			HStack {
+				Text(boundary.rawValue)
+				Spacer()
+				Text(reading).accessibilityHidden(true)
 			}
-			guard next != current, next > lower, next < upper else { return }
-			entry.wrappedValue = TimeEntry(next, session: session, format: format, source: true)
-			error = nil
-			session.previewBoundary(at: next, preceding: preceding)
-		})
-		let reading = session.timecode(current, format: format, sourceTime: true)
-		return Section {
-			VStack(alignment: .leading) {
-				Text(title + ", " + reading).accessibilityHidden(true)
-				Slider(value: value, in: Double(first)...Double(max(first + 1, last)), step: 1) {
-					Text(point.name + " " + title)
-				}
-				.labelsHidden()
-				.accessibilityValue(Text(reading))
-				.disabled(first >= last)
-			}
-			TextField(title + (format == .frames ? ", source frame" : ", source time"), text: entry.text)
-				.autocorrectionDisabled()
 		}
+		.accessibilityValue(Text(reading))
+		.accessibilityAdjustableAction { direction in
+			let count: Int
+			switch direction {
+			case .increment: count = 1
+			case .decrement: count = -1
+			@unknown default: return
+			}
+			let next = session.stepped(from: time(for: boundary), by: count, sourceTime: true)
+			_ = update(next, for: boundary)
+		}
+		.accessibilityFocused($focused, equals: boundary)
+	}
+
+	private func update(_ next: CMTime, for boundary: Boundary) -> Bool {
+		let lower = boundary == .outgoing ? point.precedingStart : outgoing
+		let upper = boundary == .outgoing ? incoming : point.followingEnd
+		guard next.isNumeric, next > lower, next < upper else { return false }
+		guard next != time(for: boundary) else { return true }
+		if boundary == .outgoing { outgoing = next } else { incoming = next }
+		error = nil
+		session.previewBoundary(at: next, preceding: boundary == .outgoing)
+		return true
 	}
 
 	private func save() {
-		guard let inTime = precedingEntry?.value(session: session, format: format, source: true),
-			let outTime = followingEntry?.value(session: session, format: format, source: true) else {
-			error = "Enter a valid source position for each boundary."
+		do {
+			try session.saveJoin(point, inTime: outgoing, outTime: incoming)
+			dismiss()
+		} catch { self.error = error.localizedDescription }
+	}
+}
+
+private struct BoundaryTimeEditor: View {
+	let title: String
+	let session: CuttingBoardSession
+	let format: TimecodeFormat
+	let confirm: (CMTime) -> Bool
+	@Environment(\.dismiss) private var dismiss
+	@State private var entry: TimeEntry
+	@State private var error: String?
+	@FocusState private var typing: Bool
+
+	init(title: String, session: CuttingBoardSession, format: TimecodeFormat, time: CMTime, confirm: @escaping (CMTime) -> Bool) {
+		self.title = title
+		self.session = session
+		self.format = format
+		self.confirm = confirm
+		_entry = State(initialValue: TimeEntry(time, session: session, format: format, source: true))
+	}
+
+	var body: some View {
+		NavigationStack {
+			Form {
+				TextField(format == .frames ? "Source frame" : "Source time", text: $entry.text)
+					.focused($typing)
+					.autocorrectionDisabled()
+					.onSubmit { accept() }
+				if let error { Text(error) }
+			}
+			.editorListMargins()
+			.navigationTitle(title)
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+				ToolbarItem(placement: .confirmationAction) { Button("Done") { accept() } }
+			}
+		}
+		.onAppear { typing = true }
+	}
+
+	private func accept() {
+		guard let time = entry.value(session: session, format: format, source: true) else {
+			error = format == .frames ? "Enter a valid source frame number." : "Enter a valid source time."
 			return
 		}
-		do {
-			try session.saveJoin(point, inTime: inTime, outTime: outTime)
-			dismiss()
-		} catch ClipEditError.invalidSelection {
-			error = "Keep both points inside the adjoining media and place the Outgoing Out Point before the Incoming In Point."
-		} catch { self.error = error.localizedDescription }
+		guard confirm(time) else {
+			error = "Enter a position inside the adjoining media with the Outgoing Out Point before the Incoming In Point."
+			return
+		}
+		dismiss()
 	}
 }
 
