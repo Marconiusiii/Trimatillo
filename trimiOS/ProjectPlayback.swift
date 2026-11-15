@@ -161,7 +161,9 @@ import Combine
 							outputs[type] = composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid)
 							if type == .audio, let output = outputs[type] {
 								let parameters = AVMutableAudioMixInputParameters(track: output)
-								parameters.setVolume(project.trackVolumes?[track.id] ?? 1, at: .zero)
+								var volume = project.trackVolumes?[track.id] ?? 1
+								if track == .primaryVideo { volume *= project.trackVolumes?[TimelineTrack.primaryAudio.id] ?? 1 }
+								parameters.setVolume(volume, at: .zero)
 								levels.append(parameters)
 							}
 						}

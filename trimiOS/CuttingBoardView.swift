@@ -3,6 +3,31 @@ import AVKit
 import SwiftUI
 import UIKit
 
+struct EditorMenuAction: Identifiable {
+	let title: String
+	let perform: () -> Void
+	var id: String { title }
+
+	init(_ title: String, _ perform: @escaping () -> Void) {
+		self.title = title
+		self.perform = perform
+	}
+
+	static func buttons(_ actions: [Self]) -> some View {
+		ForEach(actions) { action in
+			Button(action.title, action: action.perform)
+		}
+	}
+}
+
+extension View {
+	func editorMenuActions(_ label: String, _ actions: [EditorMenuAction]) -> some View {
+		actions.reduce(accessibilityLabel(Text(label))) { control, action in
+			control.accessibilityAction(named: Text(action.title), action.perform)
+		}
+	}
+}
+
 enum BoardSheet: Identifiable, Hashable {
 	case jump
 	case join(Int)
@@ -181,7 +206,7 @@ struct CuttingBoardView: View {
 			} label: {
 				cell("Playhead, " + session.positionLabel(format: format))
 			}
-			.accessibilityActions { editActions(fromMenu: false) }
+			.accessibilityActions { EditorMenuAction.buttons(editCommands(fromMenu: false)) }
 			.sheet(item: sheetBinding(forMenu: false)) { editorSheet($0) }
 			HStack(spacing: 0) {
 				stepButton(forward: false)
@@ -192,7 +217,9 @@ struct CuttingBoardView: View {
 				markButton(false)
 			}
 			HStack(spacing: 0) {
-				Menu { editActions(fromMenu: true) } label: { cell("Edit Actions") }
+				let actions = editCommands(fromMenu: true)
+				Menu { EditorMenuAction.buttons(actions) } label: { cell("Edit Actions") }
+					.editorMenuActions("Edit Actions", actions)
 					.sheet(item: sheetBinding(forMenu: true)) { editorSheet($0) }
 				Button { session.undo() } label: { cell("Undo") }
 					.accessibilityActions {
@@ -272,26 +299,28 @@ struct CuttingBoardView: View {
 			}
 	}
 
-	@ViewBuilder private func editActions(fromMenu: Bool) -> some View {
-		Button("Mark In Here") { session.mark(true) }
-		Button("Mark Out Here") { session.mark(false) }
-		if session.state.markIn != nil { Button("Clear In") { session.clear(true) } }
-		if session.state.markOut != nil { Button("Clear Out") { session.clear(false) } }
+	private func editCommands(fromMenu: Bool) -> [EditorMenuAction] {
+		var actions: [EditorMenuAction] = []
+		actions.append(EditorMenuAction("Mark In Here") { session.mark(true) })
+		actions.append(EditorMenuAction("Mark Out Here") { session.mark(false) })
+		if session.state.markIn != nil { actions.append(EditorMenuAction("Clear In") { session.clear(true) }) }
+		if session.state.markOut != nil { actions.append(EditorMenuAction("Clear Out") { session.clear(false) }) }
 		if let range = session.selection {
-			Button("Play Marked Range") { session.playMarked() }
+			actions.append(EditorMenuAction("Play Marked Range") { session.playMarked() })
 			if range.duration < session.duration {
-				Button("Delete Marked Range") { session.delete(range) }
+				actions.append(EditorMenuAction("Delete Marked Range") { session.delete(range) })
 			}
 		}
 		if session.currentJoin != nil {
-			Button("Adjust Edit Point") { sheetFromMenu = fromMenu; session.showJoin() }
+			actions.append(EditorMenuAction("Adjust Edit Point") { sheetFromMenu = fromMenu; session.showJoin() })
 		}
-		Button("Previous Edit Point") { session.navigate(false) }
-		Button("Next Edit Point") { session.navigate(true) }
+		actions.append(EditorMenuAction("Previous Edit Point") { session.navigate(false) })
+		actions.append(EditorMenuAction("Next Edit Point") { session.navigate(true) })
 		if session.position > .zero && session.position < session.duration {
-			Button("Trim Head to Playhead") { session.trim(head: true) }
-			Button("Trim Tail to Playhead") { session.trim(head: false) }
+			actions.append(EditorMenuAction("Trim Head to Playhead") { session.trim(head: true) })
+			actions.append(EditorMenuAction("Trim Tail to Playhead") { session.trim(head: false) })
 		}
+		return actions
 	}
 }
 
@@ -444,6 +473,8 @@ private struct ClipExportView: View {
 							Button("Photos") { destination = .photos }
 							Button("Files") { destination = .files }
 						}
+						.accessibilityAction(named: "Photos") { destination = .photos }
+						.accessibilityAction(named: "Files") { destination = .files }
 					} else {
 						Button("Save as New Clip") { destination = .files }
 					}

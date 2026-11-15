@@ -96,6 +96,15 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 		placements.filter { $0.trackID == track.id }.sorted { $0.start.time < $1.start.time }
 	}
 
+	func displayedClips(on track: TimelineTrack) -> [ProjectPlacement] {
+		guard track == .primaryAudio else { return clips(on: track) }
+		let sourcesWithAudio = Set(sources.filter(\.hasAudio).map(\.id))
+		return placements.filter { clip in
+			clip.trackID == track.id || (clip.trackID == TimelineTrack.primaryVideo.id &&
+				clip.omitAudio != true && sourcesWithAudio.contains(clip.sourceID))
+		}.sorted { $0.start.time < $1.start.time }
+	}
+
 	mutating func assignPlacementLabels() {
 		let groups = Dictionary(grouping: placements.indices, by: { placements[$0].sourceID })
 		for indices in groups.values where indices.count > 1 {

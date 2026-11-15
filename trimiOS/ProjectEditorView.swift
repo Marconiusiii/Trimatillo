@@ -20,7 +20,7 @@ struct ProjectEditorView: View {
 	@State private var dropAfter = false
 	@State private var dragging: Set<UUID> = []
 	@State private var effects: TimelineTrack?
-	@FocusState private var keyboardClip: UUID?
+	@FocusState private var keyboardClip: String?
 	@State private var expanded = true
 	@State private var board: ProjectBoard?
 	@State private var pickingFile = false
@@ -167,19 +167,24 @@ struct ProjectEditorView: View {
 		DisclosureGroup("Project Media", isExpanded: $expanded) {
 			sourcePicker("Import Clip", source: nil)
 			ForEach(project.sources) { source in
-				Menu(source.displayName) {
-					Button("Open Cutting Board") { openBoard(source, placement: nil) }
-					Button("Rename Clip") { beginRename(source) }
-					Button("Reconnect from Files") { pick(source.id, files: true) }
-					Button("Reconnect from Photos") { pick(source.id, files: false) }
+				let actions = [
+					EditorMenuAction("Open Cutting Board") { openBoard(source, placement: nil) },
+					EditorMenuAction("Rename Clip") { beginRename(source) },
+					EditorMenuAction("Reconnect from Files") { pick(source.id, files: true) },
+					EditorMenuAction("Reconnect from Photos") { pick(source.id, files: false) }
+				]
+				Menu { EditorMenuAction.buttons(actions) } label: {
+					Text(source.displayName)
+						.frame(maxWidth: .infinity, alignment: .leading)
+						.contentShape(Rectangle())
 				}
-				.accessibilityAction(named: "Rename Clip") { beginRename(source) }
+				.editorMenuActions(source.displayName, actions)
 				.accessibilityFocused($focus, equals: source.id.uuidString)
 			}
 		}
 		ForEach(project.tracks) { track in
 			Section {
-				let clips = project.clips(on: track)
+				let clips = project.displayedClips(on: track)
 				if clips.isEmpty {
 					Text("No clips")
 						.accessibilityDropPoint(.center, description: Text("Drop on " + track.title))
@@ -196,7 +201,8 @@ struct ProjectEditorView: View {
 					}
 				}
 			} header: {
-				Menu { trackActions(track) } label: {
+				let actions = trackActions(track)
+				Menu { EditorMenuAction.buttons(actions) } label: {
 					HStack {
 						Text(track.title)
 						if activeTrack == track.id { Image(systemName: "checkmark").accessibilityHidden(true) }
@@ -205,10 +211,10 @@ struct ProjectEditorView: View {
 				}
 					.accessibilityValue(activeTrack == track.id ? "Selected" : "")
 					.accessibilityAddTraits(.isHeader)
-					.accessibilityActions { trackActions(track) }
-					.contextMenu { trackActions(track) }
+					.contextMenu { EditorMenuAction.buttons(actions) }
 					.accessibilityFocused($focus, equals: track.id)
 					.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: true) }
+					.editorMenuActions(track.title, actions)
 			}
 		}
 		if let seconds = project.targetSeconds { LabeledContent("Project Duration", value: time(CMTime(seconds: seconds, preferredTimescale: 60000))) }
@@ -252,15 +258,27 @@ struct ProjectEditorView: View {
 				Menu("Undo") {
 					Button("Undo") { history(back: true) }.disabled(undo.isEmpty)
 					Button("Redo") { history(back: false) }.disabled(redo.isEmpty)
-				}.disabled(undo.isEmpty && redo.isEmpty)
+				}
+				.editorMenuActions("Undo", historyActions)
+				.disabled(undo.isEmpty && redo.isEmpty)
 			}.buttonStyle(.bordered)
 		}
 	}
 
+	private var historyActions: [EditorMenuAction] {
+		var actions: [EditorMenuAction] = []
+		if !undo.isEmpty { actions.append(EditorMenuAction("Undo") { history(back: true) }) }
+		if !redo.isEmpty { actions.append(EditorMenuAction("Redo") { history(back: false) }) }
+		return actions
+	}
+
 	private func clipButton(_ clip: ProjectPlacement, source: ProjectMediaSource, track: TimelineTrack) -> some View {
 		let name = clip.displayName(for: source)
+		let linked = track.id != clip.trackID
+		let rowID = (linked ? "linked/" : "") + clip.id.uuidString
+		let actions = clipActions(clip, source: source, rowID: rowID, linked: linked)
 		return Menu {
-			clipActions(clip, source: source)
+			EditorMenuAction.buttons(actions)
 		} label: {
 			HStack {
 				if marked.contains(clip.id) { Image(systemName: "checkmark").accessibilityHidden(true) }
@@ -268,23 +286,27 @@ struct ProjectEditorView: View {
 			}
 		}
 		.buttonStyle(.bordered)
-		.accessibilityLabel(name)
-		.accessibilityValue((marked.contains(clip.id) ? "Marked, " : "") + "Start " + time(clip.start.time) + ", duration " + time(clip.duration))
-		.accessibilityActions { clipActions(clip, source: source) }
-		.contextMenu { clipActions(clip, source: source) }
-		.focused($keyboardClip, equals: clip.id)
-		.accessibilityFocused($focus, equals: clip.id.uuidString)
+		.accessibilityValue((linked ? "Linked audio, " : "") + (marked.contains(clip.id) ? "Marked, " : "") + "Start " + time(clip.start.time) + ", duration " + time(clip.duration))
+		.contextMenu { EditorMenuAction.buttons(actions) }
+		.focused($keyboardClip, equals: rowID)
+		.accessibilityFocused($focus, equals: rowID)
 		.draggable(payload(for: clip))
 		.accessibilityDragPoint(.center, description: Text(name))
-		.modifier(ClipDropTarget { items, after in drop(items, on: track, beside: clip.id, after: after) })
+		.modifier(ClipDropTarget(name: name) { items, after in
+			drop(items, on: linked ? .primaryVideo : track, beside: clip.id, after: after)
+		})
+		.editorMenuActions(name, actions)
 	}
 
-	@ViewBuilder private func trackActions(_ track: TimelineTrack) -> some View {
-		Button("Select Track") { keyboardClip = nil; activeTrack = track.id; focus = track.id }
-		Button("Track Effects") { trigger = track.id; playback.pause(); effects = track }
-		if !dragging.isEmpty && project.clips(on: track).isEmpty && project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == track.kind }) {
-			Button("Drop on Track") { move(dragging, on: track, beside: nil, after: false) }
+	private func trackActions(_ track: TimelineTrack) -> [EditorMenuAction] {
+		var actions = [
+			EditorMenuAction("Select Track") { keyboardClip = nil; activeTrack = track.id; focus = track.id },
+			EditorMenuAction("Track Effects") { trigger = track.id; playback.pause(); effects = track }
+		]
+		if !dragging.isEmpty && project.displayedClips(on: track).isEmpty && project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == track.kind }) {
+			actions.append(EditorMenuAction("Drop on Track") { move(dragging, on: track, beside: nil, after: false) })
 		}
+		return actions
 	}
 
 	private func payload(for clip: ProjectPlacement) -> String {
@@ -308,10 +330,13 @@ struct ProjectEditorView: View {
 	@discardableResult private func move(_ ids: Set<UUID>, on track: TimelineTrack, beside clip: UUID?, after: Bool) -> Bool {
 		var next = project
 		do {
+			let subject = ids.count == 1 ? ids.first.flatMap(clipName(for:)) ?? "Clip" : "Clips"
+			let destination = clip.flatMap(clipName(for:)).map { (after ? "after " : "before ") + $0 } ?? ("on " + track.title)
 			try next.move(ids, to: track, beside: clip, after: after)
 			try save(next)
 			dragging.removeAll()
 			activeTrack = track.id
+			UIAccessibility.post(notification: .announcement, argument: subject + " dropped " + destination)
 			return true
 		} catch { self.error = error.localizedDescription; return false }
 	}
@@ -320,27 +345,51 @@ struct ProjectEditorView: View {
 		if marked.contains(id) { marked.remove(id) } else { marked.insert(id) }
 	}
 
-	@ViewBuilder private func clipActions(_ clip: ProjectPlacement, source: ProjectMediaSource) -> some View {
-		Button("Open Cutting Board") { openBoard(source, placement: clip) }
-		Button(marked.contains(clip.id) ? "Unmark for Editing" : "Mark for Editing") { toggleMark(clip.id) }
+	private func clipName(for id: UUID) -> String? {
+		guard let clip = project.placements.first(where: { $0.id == id }),
+			let source = project.sources.first(where: { $0.id == clip.sourceID }) else { return nil }
+		return clip.displayName(for: source)
+	}
+
+	private func startDrag(_ clip: ProjectPlacement) {
+		dragging = marked.contains(clip.id) ? marked : [clip.id]
+		announceDrag()
+	}
+
+	private func addToDrag(_ clip: ProjectPlacement) {
+		if dragging.insert(clip.id).inserted { announceDrag() }
+	}
+
+	private func announceDrag() {
+		let subject = dragging.count == 1 ? dragging.first.flatMap(clipName(for:)) : nil
+		UIAccessibility.post(notification: .announcement, argument: "Dragging " + (subject ?? "\(dragging.count) clips"))
+	}
+
+	private func clipActions(_ clip: ProjectPlacement, source: ProjectMediaSource, rowID: String, linked: Bool) -> [EditorMenuAction] {
+		let name = clip.displayName(for: source)
+		var actions = [
+			EditorMenuAction("Open Cutting Board") { openBoard(source, placement: clip, rowID: rowID) },
+			EditorMenuAction(marked.contains(clip.id) ? "Unmark for Editing" : "Mark for Editing") { toggleMark(clip.id) }
+		]
 		if dragging.isEmpty {
-			Button("Start Drag") { dragging = marked.contains(clip.id) ? marked : [clip.id] }
+			actions.append(EditorMenuAction("Start Drag") { startDrag(clip) })
 		} else {
 			if !dragging.contains(clip.id), let track = project.tracks.first(where: { $0.id == clip.trackID }),
 				project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == clip.track }) {
-				Button("Add to Drag") { dragging.insert(clip.id) }
-				Button("Drop Before") { move(dragging, on: track, beside: clip.id, after: false) }
-				Button("Drop After") { move(dragging, on: track, beside: clip.id, after: true) }
+				actions.append(EditorMenuAction("Add to Drag") { addToDrag(clip) })
+				actions.append(EditorMenuAction("Drop Before " + name) { move(dragging, on: track, beside: clip.id, after: false) })
+				actions.append(EditorMenuAction("Drop After " + name) { move(dragging, on: track, beside: clip.id, after: true) })
 			}
-			Button("Cancel Drag") { dragging.removeAll() }
+			actions.append(EditorMenuAction("Cancel Drag") { dragging.removeAll() })
 		}
-		Button("Go to Start") { playback.seek(clip.start.time) }
-		Button("Go to End") { playback.seek(clip.end) }
-		Button("Remove from Track") {
+		actions.append(EditorMenuAction("Go to Start") { playback.seek(clip.start.time) })
+		actions.append(EditorMenuAction("Go to End") { playback.seek(clip.end) })
+		actions.append(EditorMenuAction(linked ? "Remove Linked Clip Pair" : "Remove from Track") {
 			var next = project
 			next.placements.removeAll { $0.id == clip.id }
 			commit(next)
-		}
+		})
+		return actions
 	}
 
 	private func beginRename(_ source: ProjectMediaSource) {
@@ -362,7 +411,10 @@ struct ProjectEditorView: View {
 		Menu(title) {
 			Button("Photo Library") { pick(source, files: false) }
 			Button("Files") { pick(source, files: true) }
-		}.accessibilityFocused($focus, equals: "import")
+		}
+		.accessibilityAction(named: "Photo Library") { pick(source, files: false) }
+		.accessibilityAction(named: "Files") { pick(source, files: true) }
+		.accessibilityFocused($focus, equals: "import")
 	}
 
 	private func pick(_ id: UUID?, files: Bool) {
@@ -393,9 +445,9 @@ struct ProjectEditorView: View {
 		}
 	}
 
-	private func openBoard(_ source: ProjectMediaSource, placement: ProjectPlacement?) {
+	private func openBoard(_ source: ProjectMediaSource, placement: ProjectPlacement?, rowID: String? = nil) {
 		playback.pause()
-		trigger = (placement?.id ?? source.id).uuidString
+		trigger = rowID ?? (placement?.id ?? source.id).uuidString
 		busy = true
 		Task {
 			defer { busy = false }
@@ -490,13 +542,15 @@ struct ProjectEditorView: View {
 	}
 
 	private func projectKey(_ key: String, flags: UIKeyModifierFlags) {
-		let focusedID = keyboardClip ?? focus.flatMap(UUID.init(uuidString:))
+		let focusedRow = keyboardClip ?? focus
+		let focusedID = focusedRow?.split(separator: "/").last.flatMap { UUID(uuidString: String($0)) }
 		let focusedClip = project.placements.first { $0.id == focusedID }
-		let trackID = focusedClip?.trackID ?? activeTrack
+		let trackID = focusedRow?.hasPrefix("linked/") == true ? TimelineTrack.primaryAudio.id : focusedClip?.trackID ?? activeTrack
 		guard let track = project.tracks.first(where: { $0.id == trackID }) else { return }
-		let clips = project.clips(on: track)
+		let clips = project.displayedClips(on: track)
 		let position = playback.position
 		let clip = focusedClip ?? clips.first { $0.end > position }
+		let destinationTrack = clip?.track == .video && track == .primaryAudio ? TimelineTrack.primaryVideo : track
 		var next = project
 		switch key {
 		case " " where !dragging.isEmpty && dropAnchor != nil:
@@ -505,21 +559,21 @@ struct ProjectEditorView: View {
 				move(dragging, on: destination, beside: anchor.id, after: dropAfter)
 			}
 		case " " where focusedClip != nil:
-			if dragging.isEmpty, let clip { dragging = marked.contains(clip.id) ? marked : [clip.id] }
-			else if let clip, !dragging.contains(clip.id) { move(dragging, on: track, beside: clip.id, after: true) }
+			if dragging.isEmpty, let clip { startDrag(clip) }
+			else if let clip, !dragging.contains(clip.id) { move(dragging, on: destinationTrack, beside: clip.id, after: true) }
 			else { dragging.removeAll() }
 		case " ", "k": playback.toggle()
 		case "j", "l": playback.shuttle(forward: key == "l")
 		case "s":
 			if let clip {
 				if flags.contains(.shift), !dragging.isEmpty {
-					if project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == clip.track }) { dragging.insert(clip.id) }
+					if project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == clip.track }) { addToDrag(clip) }
 				} else { toggleMark(clip.id) }
 			}
 		case UIKeyCommand.inputEscape: dragging.removeAll(); dropAnchor = nil
-		case "v": if !dragging.isEmpty { move(dragging, on: track, beside: clip?.id, after: true) }
+		case "v": if !dragging.isEmpty { move(dragging, on: destinationTrack, beside: clip?.id, after: true) }
 		case "c", "\r":
-			if let clip, let source = project.sources.first(where: { $0.id == clip.sourceID }) { openBoard(source, placement: clip) }
+			if let clip, let source = project.sources.first(where: { $0.id == clip.sourceID }) { openBoard(source, placement: clip, rowID: focusedClip == nil ? nil : focusedRow) }
 		case "z": history(back: !flags.contains(.shift))
 		case "t": UIAccessibility.post(notification: .announcement, argument: time(position))
 		case "i", "o":
@@ -544,13 +598,14 @@ struct ProjectEditorView: View {
 				let group = dragging.isEmpty ? (marked.contains(clip.id) ? marked : [clip.id]) : dragging
 				let current = clips.firstIndex { $0.id == (dropAnchor ?? clip.id) } ?? 0
 				let indices = forward ? Array(clips.indices.dropFirst(current + 1)) : Array(clips.indices.prefix(current).reversed())
-				if let index = indices.first(where: { !group.contains(clips[$0].id) }) {
-					if dragging.isEmpty { move(group, on: track, beside: clips[index].id, after: forward) }
+				if let index = indices.first(where: { !group.contains(clips[$0].id) && clips[$0].track == clip.track }) {
+					if dragging.isEmpty { move(group, on: destinationTrack, beside: clips[index].id, after: forward) }
 					else {
 						dropAnchor = clips[index].id
 						dropAfter = forward
-						focus = clips[index].id.uuidString
-						keyboardClip = clips[index].id
+						let rowID = (clips[index].trackID == track.id ? "" : "linked/") + clips[index].id.uuidString
+						focus = rowID
+						keyboardClip = rowID
 					}
 				}
 			} else if flags.contains(.command) || key == "'" || key == ";" {
@@ -611,14 +666,15 @@ private struct ProjectPreview: UIViewControllerRepresentable {
 }
 
 private struct ClipDropTarget: ViewModifier {
+	let name: String
 	let perform: ([String], Bool) -> Bool
 	@State private var width: CGFloat = 0
 
 	func body(content: Content) -> some View {
 		content.onGeometryChange(for: CGFloat.self) { $0.size.width } action: { width = $0 }
 			.dropDestination(for: String.self) { items, location in perform(items, location.x >= width / 2) }
-			.accessibilityDropPoint(.leading, description: Text("Drop Before"))
-			.accessibilityDropPoint(.trailing, description: Text("Drop After"))
+			.accessibilityDropPoint(.leading, description: Text("Drop Before " + name))
+			.accessibilityDropPoint(.trailing, description: Text("Drop After " + name))
 	}
 }
 

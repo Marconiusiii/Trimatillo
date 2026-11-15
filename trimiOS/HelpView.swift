@@ -87,8 +87,9 @@ private enum HelpTopic: String, CaseIterable {
 				"To set a length to aim for, turn on Use Set Project Duration and enter the Duration in Seconds. Clips can extend beyond that duration. Choose Create."
 			]), HelpSection("Arrange clips", numbered: true, [
 				"Expand Project Media. Choose Import Clip, then Photo Library or Files, and select the original.",
-				"Choose the source name and Open Cutting Board. Trim the clip or cut a marked range.",
+				"Choose Open Cutting Board from the source clip's menu or accessibility actions. Trim the clip or cut a marked range.",
 				"Choose Append to add the marked portion after the last clip on the selected compatible track. With fewer than two markers, Append uses the entire current edit. Keep the Cutting Board open to append another passage.",
+				"Primary Audio Track includes the linked sound from Primary Video. The linked clip follows the video through trims, splits, moves, and removal. Use Track Effects on Primary Audio Track to adjust its volume.",
 				"Choose a timeline clip to jump to its start or end, remove it, or reopen its Cutting Board. Choose Save Changes to update that placement.",
 				"Choose Play to hear the tracks together and preview the picture. Choose Playhead to enter a position, or use the step buttons to move one project frame. Space plays or pauses, and the arrow keys step.",
 				"Use Mark In and Mark Out or the I and O keys to mark positions. Use the same marker button at that time to clear it. Use the Undo menu to undo or redo a project change."
@@ -107,8 +108,8 @@ private enum HelpTopic: String, CaseIterable {
 				"For a video cutaway, choose New Track. Turn off Include Clip Audio to keep the underlying sound. Choose Add."
 			]), HelpSection("Track actions and clip movement", numbered: true, [
 				"Use the track headings to navigate. Open a track menu to select the track or open Track Effects. Set Volume and choose Save.",
-				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it.",
-				"On the destination clip, choose Drop Before or Drop After. On an empty compatible track, choose Drop on Track. Cancel Drag abandons the move. Undo reverses a completed move.",
+				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it. The drag announcement gives the clip name for one clip and the count for a group.",
+				"On the destination clip, choose Drop Before or Drop After followed by the destination clip name. The confirmation identifies where the clip or group landed. On an empty compatible track, choose Drop on Track. Cancel Drag abandons the move. Undo reverses a completed move.",
 				"You can also drag a clip onto the leading or trailing half of another clip to place it before or after that clip."
 			]), HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",

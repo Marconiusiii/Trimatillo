@@ -188,6 +188,8 @@ private struct ClipSourceMenu: View {
 			Button("Photo Library") { choose(.photos) }
 			Button("Files") { choose(.files) }
 		}
+		.accessibilityAction(named: "Photo Library") { choose(.photos) }
+		.accessibilityAction(named: "Files") { choose(.files) }
 	}
 }
 
