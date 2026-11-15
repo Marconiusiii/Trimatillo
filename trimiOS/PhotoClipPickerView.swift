@@ -8,10 +8,12 @@ struct PhotoClipPickerView<Clip>: View {
 	let use: (Clip) -> Void
 
 	@Environment(\.dismiss) private var dismiss
+	@State private var showingPreview = false
+	@State private var confirmed = false
 	@State private var selection: [PhotosPickerItem] = []
 
 	var body: some View {
-		NavigationStack(path: $selection) {
+		NavigationStack {
 			PhotosPicker(selection: $selection, maxSelectionCount: 1, selectionBehavior: .continuous,
 				matching: .videos, photoLibrary: .shared()) { Text("Photo Library") }
 				.photosPickerStyle(.inline)
@@ -21,12 +23,26 @@ struct PhotoClipPickerView<Clip>: View {
 				.toolbar {
 					ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
 				}
-				.navigationDestination(for: PhotosPickerItem.self) { item in
+				.onChange(of: selection) { _, items in
+					if !items.isEmpty { showingPreview = true }
+				}
+		}
+		.sheet(isPresented: $showingPreview, onDismiss: {
+			if confirmed { dismiss() }
+		}) {
+			if let item = selection.first {
+				NavigationStack {
 					PhotoClipPreview(item: item, prepare: prepare) { clip in
 						use(clip)
-						dismiss()
+						confirmed = true
+						showingPreview = false
+					}
+					.toolbar {
+						ToolbarItem(placement: .topBarLeading) { Button("Back") { showingPreview = false } }
 					}
 				}
+				.editorAppearance()
+			}
 		}
 		.editorAppearance()
 	}

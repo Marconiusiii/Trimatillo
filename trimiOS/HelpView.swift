@@ -100,7 +100,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Edit the name, resolution, frame rate, or duration and choose Save. Resolution and frame rate apply to project playback and export."
 			]), HelpSection("Arrange clips", numbered: true, [
 				"Expand Project Media. Choose Import Clip, then Photo Library or Files, and select the original.",
-				"In Photo Library, select a video to open Clip Preview. Play or scrub through it, then choose Use Clip to add it to Project Media. Back returns to the picker.",
+				"In Photo Library, select a video to open Clip Preview. Play or scrub through it, then choose Use Clip to add it to Project Media. Back returns to the picker with the video selected.",
 				"Choose Open Cutting Board from the source clip's menu or accessibility actions. Trim the clip or cut a marked range.",
 				"Choose Append to add the marked portion after the last clip on the selected compatible track. With fewer than two markers, Append uses the entire current edit. Keep the Cutting Board open to append another passage.",
 				"Primary Audio Track includes the linked sound from Primary Video. The linked clip follows the video through trims, splits, moves, and removal. Use Track Effects on Primary Audio Track to adjust its volume.",
@@ -169,7 +169,7 @@ private enum HelpTopic: String, CaseIterable {
 			[HelpSection("From the welcome screen", [
 				"Trim a Clip opens the source menu. Choose Photo Library for a video or Files for an audio or video clip.",
 				"Use the picker's search field to find a clip. In Photo Library, select a video to open Clip Preview. Use Play, Magic Tap, or the playback slider to check the video.",
-				"Choose Use Clip to open the Cutting Board, or Back to choose another video. Choose Cancel in the picker to return to Trim a Clip.",
+				"Choose Use Clip to open the Cutting Board, or Back to return to the picker with that video selected. Choose Cancel in the picker to return to Trim a Clip.",
 				"Choose Clip Info at the top of the board to read the clip's filename, duration, and available media details."
 			]), HelpSection("From Photos", numbered: true, [
 				"Select one video in Photos and choose Share.",
@@ -206,8 +206,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Open Edit Actions and choose Trim Silences. With In and Out set, leave Only Between In and Out on to search that passage.",
 				"Adjust the Silence threshold slider. A higher value includes louder sounds. Minimum silence sets the shortest pause to find. Retained silence sets how much of each pause to keep, divided between its two ends.",
 				"Choose Find Pauses. If No Pauses Found appears, choose OK to return to Find Pauses. Adjust the settings to search again.",
-				"For each pause, choose its Play in Context button to hear the original passage. Move the Start or End slider to change the cut, or turn off Remove Pause to keep that passage.",
-				"Choose Preview Trimmed Clip to play the selected cuts together. Close the preview to continue reviewing.",
+				"For each pause, choose its numbered preview button to play the original passage in context. Close the preview to return to that button. Move the pause's Start or End slider to change the cut, or turn off Remove Pause to keep that passage.",
+				"Time to remove shows the total duration of the selected cuts. Choose Preview Trimmed Clip to open Trimmed Silence Preview and play those cuts together. Choose Close to return to Preview Trimmed Clip.",
 				"Choose Apply Cuts. Undo restores all the pauses from this operation in one step."
 			])]
 		case .actions:

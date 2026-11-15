@@ -15,7 +15,7 @@ struct TrimSilencesView: View {
 	@State private var noPausesMessage: String?
 	@AccessibilityFocusState private var findPausesFocused: Bool
 	@State private var failure: String?
-	@State private var preview: PreviewPlayback?
+	@State private var showingPreview = false
 	@AccessibilityFocusState private var previewFocus: Int?
 	@State private var previewTrigger = -1
 
@@ -48,8 +48,8 @@ struct TrimSilencesView: View {
 		.editorAppearance()
 		.interactiveDismissDisabled(activity != nil)
 		.onDisappear { task?.cancel() }
-		.fullScreenCover(item: $preview, onDismiss: { previewFocus = previewTrigger }) { playback in
-			FullScreenPreview(playback: playback)
+		.fullScreenCover(isPresented: $showingPreview, onDismiss: { previewFocus = previewTrigger }) {
+			SilencePreviewSheet(session: session, pauses: pauses ?? [], index: previewTrigger)
 		}
 		.alert("No Pauses Found", isPresented: Binding(get: { noPausesMessage != nil }, set: {
 			if !$0 { noPausesMessage = nil }
@@ -94,7 +94,13 @@ struct TrimSilencesView: View {
 	@ViewBuilder private var review: some View {
 		let results = pauses ?? []
 		let removed = results.filter(\.included).reduce(CMTime.zero) { $0 + $1.cut.duration }
-		Text("Time to remove, " + session.timecode(removed, format: .milliseconds))
+		let milliseconds = removed.convertScale(1000, method: .roundHalfAwayFromZero).value
+		let digits = [1000, 100, 10].firstIndex { milliseconds.isMultiple(of: Int64($0)) } ?? 3
+		let duration = Duration.milliseconds(milliseconds).formatted(.units(allowed: [.hours, .minutes, .seconds],
+			width: .wide, fractionalPart: .show(length: digits)))
+		Text("Time to remove, " + duration)
+			.accessibilityLabel("Time to remove")
+			.accessibilityValue(Text(duration))
 		let enabled = results.contains(where: \.included)
 		Button("Preview Trimmed Clip") { play(-1) }
 			.disabled(!enabled)
@@ -111,11 +117,7 @@ struct TrimSilencesView: View {
 			let pause = results[index]
 			Section {
 				Toggle("Remove Pause \(index + 1)", isOn: Binding(get: { pause.included }, set: { pauses?[index].included = $0 }))
-				Button("Play Pause \(index + 1) in Context") {
-					let second = CMTime(value: 1, timescale: 1)
-					play(index, context: CMTimeRange(start: max(.zero, pause.cut.start - second),
-						end: min(session.duration, pause.cut.end + second)))
-				}
+				Button("Open Pause \(index + 1) Preview") { play(index) }
 				.accessibilityFocused($previewFocus, equals: index)
 				boundary(index, in: results, start: true)
 				boundary(index, in: results, start: false)
@@ -130,7 +132,6 @@ struct TrimSilencesView: View {
 				.accessibilityHidden(true)
 			Slider(value: value, in: range, step: step) { Text(name) }
 				.labelsHidden()
-				.accessibilityLabel(Text(name))
 				.accessibilityValue(Text(reading))
 		}
 	}
@@ -174,18 +175,14 @@ struct TrimSilencesView: View {
 			}
 			pauses?[index].cut = CMTimeRange(start: start ? next : pause.cut.start, end: start ? pause.cut.end : next)
 		})
-		return valueSlider(start ? "Start" : "End", reading: session.timecode(current, format: format),
+		return valueSlider("Pause \(index + 1) " + (start ? "Start" : "End"), reading: session.timecode(current, format: format),
 			value: value, range: Double(lower) ... Double(max(lower + 1, upper)), step: 1)
 			.disabled(lower >= upper)
 	}
 
-	private func play(_ trigger: Int, context: CMTimeRange? = nil) {
+	private func play(_ trigger: Int) {
 		previewTrigger = trigger
-		run("Preparing preview") {
-			let item = try await session.silencePreview(pauses, context: context)
-			try Task.checkCancellation()
-			preview = PreviewPlayback(item: item, start: .zero, rate: 1) { _ in }
-		}
+		showingPreview = true
 	}
 
 	private func run(_ label: String, operation: @escaping @MainActor () async throws -> Void) {
@@ -195,6 +192,57 @@ struct TrimSilencesView: View {
 			defer { activity = nil; task = nil }
 			do { try await operation() }
 			catch { if !Task.isCancelled { failure = error.localizedDescription } }
+		}
+	}
+}
+
+private struct SilencePreviewSheet: View {
+	let session: CuttingBoardSession
+	let pauses: [SilencePause]
+	let index: Int
+	@Environment(\.dismiss) private var dismiss
+	@State private var playback: PreviewPlayback?
+	@State private var failed = false
+
+	private var title: String { index < 0 ? "Trimmed Silence Preview" : "Pause \(index + 1) Preview" }
+
+	var body: some View {
+		Group {
+			if let playback {
+				FullScreenPreview(playback: playback, title: title)
+			} else {
+				NavigationStack {
+					Group {
+						if failed {
+							Text("Could not prepare the preview. Close it and open it again.")
+						} else {
+							ProgressView("Preparing preview")
+						}
+					}
+					.navigationBarTitleDisplayMode(.inline)
+					.toolbar {
+						ToolbarItem(placement: .topBarLeading) { Button("Close") { dismiss() } }
+						ToolbarItem(placement: .principal) {
+							Text(title).font(.headline).accessibilityAddTraits(.isHeader)
+						}
+					}
+				}
+			}
+		}
+		.editorAppearance()
+		.task {
+			guard playback == nil else { return }
+			do {
+				var context: CMTimeRange?
+				if index >= 0 {
+					let cut = pauses[index].cut
+					let second = CMTime(value: 1, timescale: 1)
+					context = CMTimeRange(start: max(.zero, cut.start - second), end: min(session.duration, cut.end + second))
+				}
+				let item = try await session.silencePreview(pauses, context: context)
+				try Task.checkCancellation()
+				playback = PreviewPlayback(item: item, start: .zero, rate: 1) { _ in }
+			} catch { if !Task.isCancelled { failed = true } }
 		}
 	}
 }

@@ -681,6 +681,7 @@ struct PrimaryCuttingBoard: View {
 
 struct FullScreenPreview: View {
 	let playback: PreviewPlayback
+	var title = "Full Screen Preview"
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.scenePhase) private var phase
 	@State private var ready = false
@@ -690,7 +691,7 @@ struct FullScreenPreview: View {
 		NavigationStack {
 			VideoPlayer(player: playback.player)
 				.disabled(!ready)
-				.navigationTitle("Full Screen Preview")
+				.navigationTitle(title)
 				.navigationBarTitleDisplayMode(.inline)
 				.toolbar {
 					ToolbarItem(placement: .topBarLeading) {
@@ -698,6 +699,9 @@ struct FullScreenPreview: View {
 							playback.finish()
 							dismiss()
 						}
+					}
+					ToolbarItem(placement: .principal) {
+						Text(title).font(.headline).accessibilityAddTraits(.isHeader)
 					}
 				}
 		}
@@ -728,7 +732,7 @@ struct FullScreenPreview: View {
 				dismiss()
 			}
 		} message: {
-			Text("Reopen Full Screen Preview to try again.")
+			Text("Reopen the preview to try again.")
 		}
 		.interactiveDismissDisabled()
 	}
