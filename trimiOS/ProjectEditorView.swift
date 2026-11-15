@@ -54,6 +54,7 @@ struct ProjectEditorView: View {
 	@State private var error: String?
 	@State private var previewTrigger = "fullScreenPreview"
 	@State private var fullScreenPreview: PreviewPlayback?
+	@State private var jumpTrigger = "jump"
 	@State private var jumping = false
 	@State private var jumpText = ""
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
@@ -187,13 +188,13 @@ struct ProjectEditorView: View {
 			}
 			.alert("Jump to Time", isPresented: $jumping) {
 				TextField(format == .frames ? "Frame" : "Time", text: $jumpText)
-				Button("Cancel", role: .cancel) { focus = "playhead" }
+				Button("Cancel", role: .cancel) { focus = jumpTrigger }
 				Button("Jump") {
 					if format == .frames, let index = Int32(jumpText), index >= 0 {
 						playback.seek(CMTimeMultiply(project.frame, multiplier: index))
 					} else if format != .frames, let time = CuttingBoardSession.parse(jumpText) { playback.seek(time) }
 					else { error = "Enter a valid playhead position and choose Jump." }
-					focus = "playhead"
+					focus = jumpTrigger
 				}
 			}
 			.alert("Project", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
@@ -314,15 +315,19 @@ struct ProjectEditorView: View {
 
 	private var transport: some View {
 		Group {
-			Button { playback.pause(); jumpText = ""; jumping = true } label: {
-				Text("Playhead, " + time(playback.position))
-			}
-			.buttonStyle(EditorButtonStyle())
-			.accessibilityFocused($focus, equals: "playhead")
+			ProjectTimelineSlider(playhead: playback.playhead, duration: project.duration, frame: project.frame,
+				formatTime: time, seek: playback.seek, step: step, focus: $focus) { openJump(from: "playhead") }
+				.disabled(!playback.ready)
+			Button("Jump to Time") { openJump(from: "jump") }
+				.buttonStyle(EditorButtonStyle())
+				.accessibilityFocused($focus, equals: "jump")
+				.disabled(!playback.ready)
 			HStack(spacing: 0) {
-				Button { playback.seek(playback.position - project.frame) } label: { Label("Step Back", systemImage: "backward.frame") }
-				Button { playback.toggle() } label: { Label(playback.playing ? "Pause" : "Play", systemImage: playback.playing ? "pause.fill" : "play.fill") }.disabled(!playback.ready)
-				Button { playback.seek(playback.position + project.frame) } label: { Label("Step Forward", systemImage: "forward.frame") }
+				stepButton(forward: false)
+				shuttleButton(forward: false)
+				Button { playback.toggle() } label: { Label(playback.playing ? "Pause" : "Play", systemImage: playback.playing ? "pause.fill" : "play.fill") }
+				shuttleButton(forward: true)
+				stepButton(forward: true)
 				if project.placements.contains(where: { $0.track == .video }) {
 					Button { previewTrigger = "fullScreenPreview"; fullScreenPreview = playback.makePreview() } label: {
 						Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right")
@@ -331,6 +336,7 @@ struct ProjectEditorView: View {
 					.accessibilityFocused($focus, equals: "fullScreenPreview")
 				}
 			}
+			.disabled(!playback.ready)
 			.labelStyle(.iconOnly)
 			.buttonStyle(EditorButtonStyle(square: true))
 			.fixedSize(horizontal: false, vertical: true)
@@ -339,12 +345,14 @@ struct ProjectEditorView: View {
 					let point = isIn ? project.markIn : project.markOut
 					Button {
 						playback.pause()
-						var next = project
-						let value = point?.time == playback.position ? nil : ProjectTime(playback.position)
-						if isIn { next.markIn = value } else { next.markOut = value }
-						let marker = isIn ? "In" : "Out"
-						commit(next, action: (value == nil ? "Clear " : "Mark ") + marker)
+						setMarker(isIn, to: point?.time == playback.position ? nil : ProjectTime(playback.position))
 					} label: { Text(isIn ? "Mark In" : "Mark Out") }
+					.accessibilityActions {
+						if let point {
+							Button(isIn ? "Go to In" : "Go to Out") { playback.seek(point.time) }
+							Button(isIn ? "Clear In" : "Clear Out") { setMarker(isIn, to: nil) }
+						}
+					}
 					.accessibilityValue(point.map { time($0.time) } ?? "")
 					.disabled(project.placements.isEmpty)
 				}
@@ -358,6 +366,58 @@ struct ProjectEditorView: View {
 			.buttonStyle(EditorButtonStyle())
 			.fixedSize(horizontal: false, vertical: true)
 		}
+	}
+
+	private func openJump(from control: String) {
+		jumpTrigger = control
+		playback.pause()
+		jumpText = ""
+		jumping = true
+	}
+
+	private func step(_ count: Int32) {
+		playback.seek(playback.position + CMTimeMultiply(project.frame, multiplier: count))
+	}
+
+	private func stepButton(forward: Bool) -> some View {
+		let direction = forward ? "Step Forward" : "Step Back"
+		let count: Int32 = forward ? 1 : -1
+		return Button { step(count) } label: {
+			Label(direction + " One Frame", systemImage: forward ? "forward.frame" : "backward.frame")
+		}
+		.accessibilityActions {
+			Button(direction + " 10 Frames") { step(count * 10) }
+			Button(forward ? "Next Edit Point" : "Previous Edit Point") {
+				if let track = project.tracks.first(where: { $0.id == activeTrack }) {
+					navigate(forward: forward, clips: project.displayedClips(on: track))
+				}
+			}
+		}
+	}
+
+	private func navigate(forward: Bool, clips: [ProjectPlacement]) {
+		let points = [CMTime.zero, project.duration] + clips.flatMap { [$0.start.time, $0.end] } +
+			[project.markIn?.time, project.markOut?.time].compactMap { $0 }
+		let position = playback.position
+		let destination = forward ? points.filter { $0 > position }.min() ?? project.duration :
+			points.filter { $0 < position }.max() ?? .zero
+		playback.seek(destination)
+		UIAccessibility.post(notification: .announcement, argument: "Edit Point, " + time(destination))
+	}
+
+	private func shuttleButton(forward: Bool) -> some View {
+		let rate = playback.shuttleRate
+		let active = forward ? rate > 0 : rate < 0
+		return Button { playback.shuttle(forward: forward) } label: {
+			Label(forward ? "Fast Forward" : "Rewind", systemImage: forward ? "forward.fill" : "backward.fill")
+		}
+		.buttonStyle(EditorButtonStyle(square: true, badge: active ? abs(rate).formatted() + "x" : nil))
+	}
+
+	private func setMarker(_ isIn: Bool, to point: ProjectTime?) {
+		var next = project
+		if isIn { next.markIn = point } else { next.markOut = point }
+		commit(next, action: (point == nil ? "Clear " : "Mark ") + (isIn ? "In" : "Out"))
 	}
 
 	private var historyActions: [EditorMenuAction] {
@@ -692,10 +752,7 @@ struct ProjectEditorView: View {
 		case "t": UIAccessibility.post(notification: .announcement, argument: time(position))
 		case "i", "o":
 			playback.pause()
-			let point = flags.contains(.alternate) ? nil : ProjectTime(playback.position)
-			if key == "i" { next.markIn = point } else { next.markOut = point }
-			let marker = key == "i" ? "In" : "Out"
-			commit(next, action: (point == nil ? "Clear " : "Mark ") + marker)
+			setMarker(key == "i", to: flags.contains(.alternate) ? nil : ProjectTime(playback.position))
 		case UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow:
 			if flags.contains(.alternate), let index = project.tracks.firstIndex(of: track) {
 				let target = index + (key == UIKeyCommand.inputUpArrow ? -1 : 1)
@@ -724,12 +781,10 @@ struct ProjectEditorView: View {
 					}
 				}
 			} else if flags.contains(.command) || key == "'" || key == ";" {
-				let points = ([CMTime.zero, project.duration] + clips.flatMap { [$0.start.time, $0.end] } +
-					[project.markIn?.time, project.markOut?.time].compactMap { $0 }).sorted()
-				playback.seek(forward ? points.first(where: { $0 > position }) ?? project.duration : points.last(where: { $0 < position }) ?? .zero)
+				navigate(forward: forward, clips: clips)
 			} else {
 				let count: Int32 = flags.contains(.shift) ? 10 : 1
-				playback.seek(position + CMTimeMultiply(project.frame, multiplier: forward ? count : -count))
+				step(forward ? count : -count)
 			}
 		case "[", "]", "b":
 			guard let clip, clip.start.time < position, position < clip.end,
@@ -757,7 +812,11 @@ struct ProjectEditorView: View {
 	}
 
 	private func time(_ value: CMTime) -> String {
-		if format == .frames { return "Frame " + String(Int64((value.seconds / project.frame.seconds).rounded(.towardZero))) }
+		if format == .frames {
+			let frame = project.frame
+			let ticks = CMTimeConvertScale(value, timescale: frame.timescale, method: .roundTowardZero).value
+			return "Frame " + String(ticks / frame.value)
+		}
 		let milliseconds = format == .milliseconds
 		let scale: Int32 = milliseconds ? 1000 : 1
 		let ticks = CMTimeConvertScale(value, timescale: scale, method: .roundTowardZero).value
@@ -929,5 +988,45 @@ private struct ProjectExportView: View {
 		.alert("Could Not Export Project", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
 			Button("OK") { failure = nil }
 		} message: { Text(failure ?? "") }
+	}
+}
+
+private struct ProjectTimelineSlider: View {
+	@ObservedObject var playhead: ProjectPlayhead
+	let duration: CMTime
+	let frame: CMTime
+	let formatTime: (CMTime) -> String
+	let seek: (CMTime) -> Void
+	let step: (Int32) -> Void
+	let focus: AccessibilityFocusState<String?>.Binding
+	let jump: () -> Void
+
+	var body: some View {
+		let value = formatTime(playhead.position)
+		VStack(spacing: 0) {
+			Text("Playhead, " + value)
+				.monospacedDigit()
+				.accessibilityHidden(true)
+			Slider(value: Binding(get: { playhead.position.seconds }, set: { seconds in
+				if seconds >= duration.seconds { seek(duration) }
+				else {
+					let frames = (seconds / frame.seconds).rounded()
+					seek(CMTimeMultiplyByFloat64(frame, multiplier: frames))
+				}
+			}), in: 0...max(duration.seconds, frame.seconds)) {
+				Text("Playhead")
+			}
+			.accessibilityValue(value)
+			.accessibilityAdjustableAction { direction in
+				switch direction {
+				case .increment: step(1)
+				case .decrement: step(-1)
+				@unknown default: break
+				}
+			}
+			.frame(minHeight: 44)
+			.accessibilityFocused(focus, equals: "playhead")
+			.accessibilityAction(named: "Jump to Time", jump)
+		}
 	}
 }

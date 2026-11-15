@@ -104,8 +104,15 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Append to add the marked portion after the last clip on the selected compatible track. With fewer than two markers, Append uses the entire current edit. Keep the Cutting Board open to append another passage.",
 				"Primary Audio Track includes the linked sound from Primary Video. The linked clip follows the video through trims, splits, moves, and removal. Use Track Effects on Primary Audio Track to adjust its volume.",
 				"Choose a timeline clip to jump to its start or end, remove it, or reopen its Cutting Board. Choose Save Changes to update that placement.",
-				"Choose Play to hear the tracks together and preview the picture. Choose Playhead to enter a position, or use the step buttons to move one project frame. Space plays or pauses, and the arrow keys step.",
-				"Use Mark In and Mark Out or the I and O keys to mark positions. Use the same marker button at that time to clear it. Use the Undo menu to undo or redo a project change."
+				"Use the Undo menu to undo or redo a project change."
+			]), HelpSection("Project playback and navigation", [
+				"Choose Play to preview the timeline. Choose Pause to stop at the current position.",
+				"Choose Rewind or Fast Forward to play in that direction. Repeat to select 1x, 1.5x, 2x, 4x, or 8x. Changing direction starts at 1x.",
+				"Drag the Playhead slider to a position on the project timeline. With VoiceOver, swipe up or down on the slider to move one project frame forward or back.",
+				"Choose Jump to Time, or use the slider's Jump to Time action, to enter a time or frame in your selected timecode format.",
+				"Choose Step Back or Step Forward to move one project frame. In the Actions rotor, choose the 10-frame action or the previous or next edit point. Double-tap to use that action again while the button stays focused.",
+				"Edit points include clip boundaries on the active track, project markers, Start, and End.",
+				"Choose Mark In or Mark Out to set a marker. Its actions let you go to it or clear it. Pressing the marker button at its marked position also clears it."
 			]), HelpSection("Name a project clip", numbered: true, [
 				"Expand Project Media. Open the imported clip's menu or actions and choose Rename Clip.",
 				"Enter a Clip Name and choose Save. The project uses that name for the source and its timeline clips.",

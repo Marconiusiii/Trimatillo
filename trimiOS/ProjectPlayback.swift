@@ -1,9 +1,23 @@
 import AVFoundation
 import Combine
+import UIKit
+
+@MainActor final class ProjectPlayhead: ObservableObject {
+	@Published var position: CMTime = .zero
+}
 
 @MainActor final class ProjectPlayback: ObservableObject {
 	let player = AVPlayer()
-	@Published private(set) var position: CMTime = .zero
+	let playhead = ProjectPlayhead()
+	var position: CMTime {
+		if playing, reverse == nil {
+			let time = player.currentTime()
+			if time.isNumeric { return max(.zero, min(time, duration)) }
+		}
+		return playhead.position
+	}
+	private var ended: AnyCancellable?
+	@Published private(set) var shuttleRate: Double = 0
 	@Published private(set) var playing = false
 	@Published private(set) var ready = false
 	@Published var failure: String?
@@ -27,8 +41,7 @@ import Combine
 				guard let self, self.playing, self.reverse == nil else { return }
 				let time = self.player.currentTime()
 				guard time.isNumeric else { return }
-				self.position = min(time, self.duration)
-				if (time >= self.duration || time <= .zero) && self.player.rate == 0 { self.pause() }
+				self.playhead.position = min(time, self.duration)
 			}
 		}
 	}
@@ -54,12 +67,15 @@ import Combine
 		let wasRewinding = reverse != nil
 		reverse?.cancel()
 		reverse = nil
-		node.stop()
-		engine.stop()
+		if wasRewinding {
+			node.stop()
+			engine.stop()
+		}
 		speed = 0
+		if shuttleRate != 0 { shuttleRate = 0 }
 		player.pause()
-		if !wasRewinding, playing, player.currentTime().isNumeric { position = min(duration, player.currentTime()) }
-		playing = false
+		if !wasRewinding, playing, player.currentTime().isNumeric { playhead.position = min(duration, player.currentTime()) }
+		if playing { playing = false }
 		if audioActive {
 			try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
 			audioActive = false
@@ -80,14 +96,15 @@ import Combine
 			try session.setActive(true)
 			audioActive = true
 			speed = rate
-			player.playImmediately(atRate: Float(rate))
+			if rate == 1 { player.play() }
+			else { player.playImmediately(atRate: Float(rate)) }
 			playing = true
 		} catch { failure = "Could not start project audio. Check the audio output and choose Play again." }
 	}
 
 	func shuttle(forward: Bool) {
 		guard ready else { return }
-		let current = forward ? speed : -speed
+		let current = forward ? shuttleRate : -shuttleRate
 		guard let next = [1.0, 1.5, 2, 4, 8].first(where: { $0 > current }) else { return }
 		pause()
 		if forward {
@@ -109,7 +126,7 @@ import Combine
 					let hasAudio = try await !item.asset.loadTracks(withMediaType: .audio).isEmpty
 					try await ReverseAudioPlayback.run(from: start, speed: next, asset: item.asset, mix: item.audioMix,
 						hasAudio: hasAudio, engine: engine, node: node, format: format) { time in
-						position = time
+						playhead.position = time
 						player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
 					}
 					try Task.checkCancellation()
@@ -119,11 +136,15 @@ import Combine
 				}
 			}
 		}
+		if playing {
+			shuttleRate = speed
+			UIAccessibility.post(notification: .announcement, argument: (forward ? "Forward " : "Rewind ") + next.formatted() + "x")
+		}
 	}
 
 	func seek(_ time: CMTime) {
-		pause()
-		position = min(duration, max(.zero, time))
+		if playing { pause() }
+		playhead.position = min(duration, max(.zero, time))
 		player.seek(to: position, toleranceBefore: .zero, toleranceAfter: .zero)
 	}
 
@@ -133,10 +154,11 @@ import Combine
 		pause()
 		ready = false
 		status = nil
+		ended = nil
 		player.replaceCurrentItem(with: nil)
 		media = [:]
 		duration = project.duration
-		position = min(position, duration)
+		playhead.position = min(position, duration)
 		guard duration > .zero else { return }
 		let composition = AVMutableComposition()
 		var sources: [UUID: ProjectMediaAccess] = [:]
@@ -224,6 +246,13 @@ import Combine
 				item.videoComposition = video
 			}
 			media = sources
+			ended = NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification, object: item)
+				.receive(on: DispatchQueue.main)
+				.sink { [weak self, weak item] _ in
+					guard let self, let item, self.player.currentItem === item,
+						self.playing, self.speed > 0, self.player.currentTime() >= self.duration else { return }
+					self.pause()
+				}
 			player.replaceCurrentItem(with: item)
 			seek(position)
 			status = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
