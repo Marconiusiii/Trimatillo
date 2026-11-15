@@ -77,6 +77,7 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	var version = 1
 	var name: String
 	var picture: ProjectPicture?
+	var matchesMedia: Bool?
 	var targetSeconds: Double?
 	var sources: [ProjectMediaSource] = []
 	var placements: [ProjectPlacement] = []

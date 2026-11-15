@@ -73,8 +73,16 @@ private enum HelpTopic: String, CaseIterable {
 		case .actions: "Use the VoiceOver Actions rotor on Cutting Board controls to move the playhead, set markers, and make cuts."
 		case .touch: "Use gestures on the Direct Touch editing surface to move through a clip and edit it."
 		case .keys: "Use a connected keyboard on the primary Cutting Board to control playback, set markers, and edit."
-		case .save: "Choose Export on the Cutting Board to update the original clip or save an edited copy."
+		case .save: "Save an edited clip from the Cutting Board or export a project timeline from Project Actions."
 		}
+	}
+
+	private static var projectExport: HelpSection {
+		HelpSection("Export a project", numbered: true, [
+			"Open Project Actions beside the project name and choose Export. Export includes the full timeline and its track volumes.",
+			"For video, choose Photos to save a new video to the library, or Files to choose a folder. For an audio project, choose Files to save an M4A.",
+			"In Files, keep the project name or enter a filename, then choose Save."
+		])
 	}
 
 	var sections: [HelpSection] {
@@ -85,6 +93,9 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Same as Media to use the size and frame rate of the first video you place on the timeline. To set your own, choose a resolution and enter a frame rate.",
 				"Choose Custom to enter a width and height. With Lock Aspect Ratio on, changing one dimension adjusts the other.",
 				"To set a length to aim for, turn on Use Set Project Duration and enter the Duration in Seconds. Clips can extend beyond that duration. Choose Create."
+			]), HelpSection("Change project settings", numbered: true, [
+				"Open Project Actions beside the project name and choose Project Settings.",
+				"Edit the name, resolution, frame rate, or duration and choose Save. Resolution and frame rate apply to project playback and export."
 			]), HelpSection("Arrange clips", numbered: true, [
 				"Expand Project Media. Choose Import Clip, then Photo Library or Files, and select the original.",
 				"Choose Open Cutting Board from the source clip's menu or accessibility actions. Trim the clip or cut a marked range.",
@@ -109,9 +120,9 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Track actions and clip movement", numbered: true, [
 				"Use the track headings to navigate. Open a track menu to select the track or open Track Effects. Set Volume and choose Save.",
 				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it. The drag announcement gives the clip name for one clip and the count for a group.",
-				"On the destination clip, choose Drop Before or Drop After followed by the destination clip name. The confirmation identifies where the clip or group landed. On an empty compatible track, choose Drop on Track. Cancel Drag abandons the move. Undo reverses a completed move.",
+				"On the destination clip, choose Drop Before or Drop After followed by the destination clip name. The confirmation identifies where the clip or group landed. On an empty compatible track, choose Drop on Track. Cancel Drag abandons the move. After a drop, choose Undo or shake the device to restore the previous order. A group move takes one undo.",
 				"You can also drag a clip onto the leading or trailing half of another clip to place it before or after that clip."
-			]), HelpSection("Project keyboard commands", [
+			]), Self.projectExport, HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
 				"On the project timeline, Space or K plays or pauses. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
 				"I and O mark In and Out. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
@@ -233,7 +244,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Command-Z undoes the last edit."
 			])]
 		case .save:
-			[HelpSection("Export from the Cutting Board", [
+			[Self.projectExport, HelpSection("Export from the Cutting Board", [
 				"Save Changes to Original updates the selected Photos video or replaces a writable MOV, MP4, or M4A original in Files.",
 				"Save as New Clip creates a separate clip. For video, choose Photos or Files. For audio, use the Files picker.",
 				"In Files, select the folder, change the suggested filename if desired, and choose Save.",

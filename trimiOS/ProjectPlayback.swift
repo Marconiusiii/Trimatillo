@@ -35,6 +35,12 @@ import Combine
 
 	deinit { if let observer { player.removeTimeObserver(observer) } }
 
+	func exportTimeline(named name: String) -> ProjectExport? {
+		guard ready, let item = player.currentItem else { return nil }
+		pause()
+		return ProjectExport(name: name, item: item, duration: duration, sources: Array(media.values))
+	}
+
 	func makePreview() -> PreviewPlayback? {
 		guard let item = player.currentItem else { return nil }
 		let forwardRate = max(0, speed)
@@ -240,5 +246,39 @@ import Combine
 		instruction.timeRange = CMTimeRange(start: start, end: end)
 		instruction.layerInstructions = []
 		return instruction
+	}
+}
+
+@MainActor struct ProjectExport {
+	let name: String
+	let item: AVPlayerItem
+	let duration: CMTime
+	// Keep security-scoped files open through rendering.
+	let sources: [ProjectMediaAccess]
+	var hasVideo: Bool { item.videoComposition != nil }
+
+	func render() async throws -> ExportFile {
+		let preset = hasVideo ? AVAssetExportPresetHighestQuality : AVAssetExportPresetAppleM4A
+		guard let exporter = AVAssetExportSession(asset: item.asset, presetName: preset) else {
+			throw ProjectFailure("Could not prepare the export. Reopen the project and try again.")
+		}
+		exporter.videoComposition = item.videoComposition
+		exporter.audioMix = item.audioMix
+		exporter.timeRange = CMTimeRange(start: .zero, duration: duration)
+		let type: AVFileType = hasVideo ? (exporter.supportedFileTypes.contains(.mp4) ? .mp4 : .mov) : .m4a
+		guard exporter.supportedFileTypes.contains(type) else {
+			throw ProjectFailure("Could not export this media format. Check the project settings and try again.")
+		}
+		let directory = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString, directoryHint: .isDirectory)
+		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
+		let forbidden = CharacterSet(charactersIn: "/:").union(.controlCharacters)
+		let cleaned = name.components(separatedBy: forbidden).joined(separator: "-").trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+		let stem = String(decoding: cleaned.utf8.prefix(240), as: UTF8.self)
+		let file = directory.appending(component: stem.isEmpty ? "Project" : stem)
+			.appendingPathExtension(type == .mp4 ? "mp4" : type == .mov ? "mov" : "m4a")
+		let output = ExportFile(url: file)
+		try await exporter.export(to: file, as: type)
+		try Task.checkCancellation()
+		return output
 	}
 }

@@ -3,6 +3,7 @@ import UIKit
 
 struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 	let enabled: Bool
+	let undoShake: () -> Bool
 	let perform: (String, UIKeyModifierFlags) -> Void
 	@ViewBuilder let content: () -> Content
 
@@ -12,16 +13,26 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 
 	func updateUIViewController(_ controller: Controller, context: Context) {
 		controller.rootView = content()
+		controller.undoShake = enabled ? undoShake : nil
 		controller.performKey = enabled ? perform : nil
 	}
 
 	final class Controller: UIHostingController<Content> {
+		var undoShake: (() -> Bool)?
 		var performKey: ((String, UIKeyModifierFlags) -> Void)?
 		override var canBecomeFirstResponder: Bool { true }
 
 		override func viewDidAppear(_ animated: Bool) {
 			super.viewDidAppear(animated)
 			becomeFirstResponder()
+		}
+
+		override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
+			guard motion == .motionShake, presentedViewController == nil,
+				UIAccessibility.isShakeToUndoEnabled, EditorPreferences.shakeEnabled, undoShake?() == true else {
+				super.motionEnded(motion, with: event)
+				return
+			}
 		}
 
 		override var keyCommands: [UIKeyCommand]? {

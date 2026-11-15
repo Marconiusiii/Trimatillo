@@ -10,6 +10,22 @@ private struct ProjectBoard: Identifiable {
 	let session: CuttingBoardSession
 }
 
+private struct HistoryEntry {
+	let project: EditingProject
+	let action: String
+}
+
+private enum ProjectSheet: Identifiable {
+	case settings
+	case export(ProjectExport)
+	var id: String {
+		switch self {
+		case .settings: "settings"
+		case .export: "export"
+		}
+	}
+}
+
 struct ProjectEditorView: View {
 	@State var project: EditingProject
 	let close: () -> Void
@@ -30,9 +46,11 @@ struct ProjectEditorView: View {
 	@State private var clipName = ""
 	@State private var reconnect: UUID?
 	@State private var busy = false
+	@State private var projectSheet: ProjectSheet?
+	@State private var preparedRevision: Int?
 	@State private var revision = 0
-	@State private var undo: [EditingProject] = []
-	@State private var redo: [EditingProject] = []
+	@State private var undo: [HistoryEntry] = []
+	@State private var redo: [HistoryEntry] = []
 	@State private var error: String?
 	@State private var fullScreenPreview: PreviewPlayback?
 	@State private var jumping = false
@@ -43,8 +61,12 @@ struct ProjectEditorView: View {
 	@Environment(\.scenePhase) private var phase
 
 	var body: some View {
-		ProjectEditorKeyboard(enabled: renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !busy && !pickingPhoto && !pickingFile,
-			perform: projectKey) { editor }
+		ProjectEditorKeyboard(enabled: projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !busy && !pickingPhoto && !pickingFile,
+			undoShake: {
+				guard !undo.isEmpty else { return false }
+				history(back: true)
+				return true
+			}, perform: projectKey) { editor }
 	}
 
 	private var editor: some View {
@@ -72,6 +94,39 @@ struct ProjectEditorView: View {
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) { Button("Close") { playback.pause(); close() }.disabled(busy) }
+				ToolbarItem(placement: .principal) {
+					Text(project.name).font(.headline).accessibilityAddTraits(.isHeader)
+				}
+				ToolbarItem(placement: .topBarTrailing) {
+					let actions = projectActions
+					Menu("Project Actions") { EditorMenuAction.buttons(actions) }
+						.editorMenuActions("Project Actions", actions)
+						.accessibilityFocused($focus, equals: "projectActions")
+						.disabled(busy)
+				}
+			}
+			.sheet(item: $projectSheet, onDismiss: { focus = "projectActions" }) { sheet in
+				switch sheet {
+				case .settings:
+					NavigationStack {
+						Form {
+							ProjectSettingsForm(project: project, saving: true) { updated in
+								if updated != project { try save(updated, action: "Project Settings") }
+								projectSheet = nil
+							}
+						}
+						.scrollContentBackground(.hidden)
+						.background(EditorTheme.workspace)
+						.navigationTitle("Project Settings")
+						.navigationBarTitleDisplayMode(.inline)
+						.toolbar {
+							ToolbarItem(placement: .topBarLeading) { Button("Cancel") { projectSheet = nil } }
+						}
+					}
+					.editorAppearance()
+				case .export(let timeline):
+					ProjectExportView(timeline: timeline)
+				}
 			}
 			.sheet(item: $effects, onDismiss: { focus = trigger }) { track in
 				TrackEffectsSheet(track: track, volume: project.trackVolumes?[track.id] ?? 1) { volume in
@@ -79,7 +134,7 @@ struct ProjectEditorView: View {
 					var levels = next.trackVolumes ?? [:]
 					levels[track.id] = volume
 					next.trackVolumes = levels
-					do { try save(next); effects = nil; return nil }
+					do { try save(next, action: "Track Effects"); effects = nil; return nil }
 					catch { return error.localizedDescription }
 				}
 			}
@@ -142,7 +197,9 @@ struct ProjectEditorView: View {
 		.accessibilityAction(.magicTap) { playback.toggle() }
 		.task(id: board == nil ? revision : nil) {
 			guard board == nil else { return }
+			let preparing = revision
 			await playback.prepare(project)
+			if !Task.isCancelled { preparedRevision = preparing }
 		}
 		.onChange(of: dragging) { _, ids in if ids.isEmpty { dropAnchor = nil } }
 		.onChange(of: playback.failure) { _, message in
@@ -150,6 +207,22 @@ struct ProjectEditorView: View {
 		}
 		.onChange(of: phase) { _, phase in if phase != .active { playback.pause() } }
 		.onDisappear { playback.pause() }
+	}
+
+	private var projectActions: [EditorMenuAction] {
+		var actions = [EditorMenuAction("Project Settings") { playback.pause(); projectSheet = .settings }]
+		if !project.placements.isEmpty {
+			actions.append(EditorMenuAction("Export") {
+				guard preparedRevision == revision, let timeline = playback.exportTimeline(named: project.name) else {
+					error = playback.player.currentItem?.status == .failed || playback.player.currentItem == nil && preparedRevision == revision
+						? "Could not open the timeline. Reconnect its clips in Project Media and choose Export again."
+						: "The timeline is loading. Choose Export again when Play is available."
+					return
+				}
+				projectSheet = .export(timeline)
+			})
+		}
+		return actions
 	}
 
 	private var pictureAspect: CGFloat {
@@ -250,7 +323,8 @@ struct ProjectEditorView: View {
 						var next = project
 						let value = point?.time == playback.position ? nil : ProjectTime(playback.position)
 						if isIn { next.markIn = value } else { next.markOut = value }
-						commit(next)
+						let marker = isIn ? "In" : "Out"
+						commit(next, action: (value == nil ? "Clear " : "Mark ") + marker)
 					}
 					.accessibilityValue(point.map { time($0.time) } ?? "")
 					.disabled(project.placements.isEmpty)
@@ -333,7 +407,7 @@ struct ProjectEditorView: View {
 			let subject = ids.count == 1 ? ids.first.flatMap(clipName(for:)) ?? "Clip" : "Clips"
 			let destination = clip.flatMap(clipName(for:)).map { (after ? "after " : "before ") + $0 } ?? ("on " + track.title)
 			try next.move(ids, to: track, beside: clip, after: after)
-			try save(next)
+			try save(next, action: ids.count == 1 ? "Move Clip" : "Move Clips")
 			dragging.removeAll()
 			activeTrack = track.id
 			UIAccessibility.post(notification: .announcement, argument: subject + " dropped " + destination)
@@ -387,7 +461,7 @@ struct ProjectEditorView: View {
 		actions.append(EditorMenuAction(linked ? "Remove Linked Clip Pair" : "Remove from Track") {
 			var next = project
 			next.placements.removeAll { $0.id == clip.id }
-			commit(next)
+			commit(next, action: "Remove Clip")
 		})
 		return actions
 	}
@@ -404,7 +478,7 @@ struct ProjectEditorView: View {
 		let name = clipName.trimmingCharacters(in: .whitespacesAndNewlines)
 		next.sources[index].projectName = name == source.name ? nil : name
 		renaming = nil
-		if project != next { commit(next) }
+		if project != next { commit(next, action: "Rename Clip") }
 	}
 
 	private func sourcePicker(_ title: String, source: UUID?) -> some View {
@@ -440,7 +514,7 @@ struct ProjectEditorView: View {
 					source.projectName = original.projectName
 					next.sources[index] = source
 				} else { next.sources.append(source) }
-				commit(next)
+				commit(next, action: replacing == nil ? "Import Clip" : "Reconnect Clip")
 			} catch { self.error = error.localizedDescription }
 		}
 	}
@@ -500,39 +574,49 @@ struct ProjectEditorView: View {
 		}
 		try next.place(editing.source, ranges: ranges, at: start, on: destination, mode: mode,
 			replacing: updating ? editing.placement?.id : nil, omitAudio: updating ? editing.placement?.omitAudio == true : omitAudio)
-		try save(next)
+		let action: String = switch mode {
+		case .append: "Append"
+		case .update: "Save Clip Changes"
+		case .overwrite: "Overwrite"
+		case .split: "Insert Clip"
+		}
+		try save(next, action: action)
 		activeTrack = destination.id
 		if updating { board = nil }
 		else { UIAccessibility.post(notification: .announcement, argument: (mode == .append ? "Appended to " : "Added to ") + destination.title) }
 	}
 
-	private func commit(_ next: EditingProject) {
-		do { try save(next) } catch { self.error = error.localizedDescription }
+	private func commit(_ next: EditingProject, action: String) {
+		do { try save(next, action: action) } catch { self.error = error.localizedDescription }
 	}
 
-	private func save(_ next: EditingProject) throws {
+	private func save(_ next: EditingProject, action: String) throws {
+		guard next != project else { return }
 		var next = next
 		if let point = next.markIn, point.time > next.duration { next.markIn = nil }
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
 		next.version = 2
 		try ProjectLibrary.save(next, replacing: project)
-		undo.append(project)
+		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
 		update(next)
 	}
 
 	private func history(back: Bool) {
-		guard let next = back ? undo.last : redo.last else { return }
+		guard let entry = back ? undo.last : redo.last else { return }
 		do {
-			try ProjectLibrary.save(next, replacing: project)
-			if back { undo.removeLast(); redo.append(project) }
-			else { redo.removeLast(); undo.append(project) }
-			update(next)
+			try ProjectLibrary.save(entry.project, replacing: project)
+			let inverse = HistoryEntry(project: project, action: entry.action)
+			if back { undo.removeLast(); redo.append(inverse) }
+			else { redo.removeLast(); undo.append(inverse) }
+			dragging.removeAll()
+			update(entry.project)
+			UIAccessibility.post(notification: .announcement, argument: (back ? "Undo " : "Redo ") + entry.action)
 		} catch { self.error = error.localizedDescription }
 	}
 
 	private func update(_ next: EditingProject) {
-		let rebuild = project.placements != next.placements || project.sources.map(\.reference) != next.sources.map(\.reference) || project.tracks != next.tracks || project.trackVolumes != next.trackVolumes
+		let rebuild = project.picture != next.picture || project.placements != next.placements || project.sources.map(\.reference) != next.sources.map(\.reference) || project.tracks != next.tracks || project.trackVolumes != next.trackVolumes
 		project = next
 		let valid = Set(next.placements.map(\.id))
 		marked.formIntersection(valid)
@@ -580,7 +664,8 @@ struct ProjectEditorView: View {
 			playback.pause()
 			let point = flags.contains(.alternate) ? nil : ProjectTime(playback.position)
 			if key == "i" { next.markIn = point } else { next.markOut = point }
-			commit(next)
+			let marker = key == "i" ? "In" : "Out"
+			commit(next, action: (point == nil ? "Clear " : "Mark ") + marker)
 		case UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow:
 			if flags.contains(.alternate), let index = project.tracks.firstIndex(of: track) {
 				let target = index + (key == UIKeyCommand.inputUpArrow ? -1 : 1)
@@ -630,12 +715,12 @@ struct ProjectEditorView: View {
 				next.placements.append(right)
 			}
 			next.assignPlacementLabels()
-			commit(next)
+			commit(next, action: key == "b" ? "Split Clip" : "Trim Clip")
 		case "\u{8}", UIKeyCommand.inputDelete:
 			if let clip {
 				let ids: Set<UUID> = marked.contains(clip.id) ? marked : [clip.id]
 				next.placements.removeAll { ids.contains($0.id) }
-				commit(next)
+				commit(next, action: ids.count == 1 ? "Remove Clip" : "Remove Clips")
 			}
 		default: break
 		}
@@ -742,5 +827,74 @@ private struct PlacementSheet: View {
 				}
 			}
 		}.editorAppearance()
+	}
+}
+
+private struct ProjectExportView: View {
+	let timeline: ProjectExport
+	@Environment(\.dismiss) private var dismiss
+	@State private var destination: Destination?
+	@State private var output: ExportFile?
+	@State private var failure: String?
+	@State private var savingToPhotos = false
+	private enum Destination { case files, photos }
+
+	var body: some View {
+		NavigationStack {
+			List {
+				if destination != nil {
+					ProgressView("Exporting")
+				} else {
+					if timeline.hasVideo { Button("Photos") { destination = .photos } }
+					Button("Files") { destination = .files }
+				}
+			}
+			.scrollContentBackground(.hidden)
+			.background(EditorTheme.workspace)
+			.navigationTitle("Export")
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .topBarLeading) {
+					Button("Cancel") { dismiss() }.disabled(savingToPhotos)
+				}
+			}
+		}
+		.editorAppearance()
+		.interactiveDismissDisabled(savingToPhotos)
+		.sheet(item: $output, onDismiss: { dismiss() }) { file in
+			FileSavePicker(file: file.url) { output = nil }
+		}
+		.task(id: destination) {
+			guard let destination else { return }
+			do {
+				if destination == .photos {
+					let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
+					guard status == .authorized || status == .limited else {
+						throw ProjectFailure("Allow Photos access in Settings or choose Files.")
+					}
+				}
+				try Task.checkCancellation()
+				let file = try await timeline.render()
+				if destination == .files {
+					output = file
+				} else {
+					savingToPhotos = true
+					defer { savingToPhotos = false }
+					try await PHPhotoLibrary.shared().performChanges {
+						let options = PHAssetResourceCreationOptions()
+						options.originalFilename = file.url.lastPathComponent
+						PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: file.url, options: options)
+					}
+					dismiss()
+				}
+			} catch {
+				guard !Task.isCancelled else { return }
+				failure = (error as? ProjectFailure)?.message ?? "Could not export the project. Check available storage and access to the source clips, then try again."
+				self.destination = nil
+			}
+		}
+		.alert("Could Not Export Project", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+			Button("OK") { failure = nil }
+		} message: { Text(failure ?? "") }
 	}
 }

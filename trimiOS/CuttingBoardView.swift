@@ -518,13 +518,13 @@ private struct ClipExportView: View {
 	}
 }
 
-private final class ExportFile: Identifiable {
+final class ExportFile: Identifiable {
 	let url: URL
 	init(url: URL) { self.url = url }
 	deinit { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
 }
 
-private struct FileSavePicker: UIViewControllerRepresentable {
+struct FileSavePicker: UIViewControllerRepresentable {
 	let file: URL
 	let finish: () -> Void
 
