@@ -399,8 +399,8 @@ private struct JoinSheet: View {
 		NavigationStack {
 			Form {
 				if let preceding = Binding($precedingEntry), let following = Binding($followingEntry) {
-					boundary("End of preceding section", entry: preceding, preceding: true)
-					boundary("Start of following section", entry: following, preceding: false)
+					boundary("Outgoing Out Point", entry: preceding, other: following.wrappedValue, preceding: true)
+					boundary("Incoming In Point", entry: following, other: preceding.wrappedValue, preceding: false)
 				}
 				if let text = error ?? session.message { Text(text) }
 			}
@@ -419,26 +419,59 @@ private struct JoinSheet: View {
 		.onDisappear { session.stop(); session.message = nil }
 	}
 
-	private func boundary(_ title: String, entry: Binding<TimeEntry>, preceding: Bool) -> some View {
-		Section {
+	private func boundary(_ title: String, entry: Binding<TimeEntry>, other: TimeEntry, preceding: Bool) -> some View {
+		func positionInClip(_ draft: TimeEntry) -> CMTime {
+			let time = draft.value(session: session, format: format, source: true) ?? draft.exact
+			return min(point.followingEnd, max(point.precedingStart, time))
+		}
+		let current = positionInClip(entry.wrappedValue)
+		let opposite = positionInClip(other)
+		let lower = preceding ? point.precedingStart : max(point.precedingStart, opposite)
+		let upper = preceding ? min(point.followingEnd, opposite) : point.followingEnd
+		let first: Int64
+		let last: Int64
+		let position: Int64
+		let origin = preceding ? point.inTime : point.outTime
+		if session.hasVideo {
+			let lowerFrame = session.frameNumber(at: lower, sourceTime: true)
+			let upperFrame = session.frameNumber(at: upper, sourceTime: true)
+			first = lowerFrame + ((session.time(atFrame: lowerFrame, sourceTime: true) ?? lower) <= lower ? 1 : 0)
+			last = upperFrame - ((session.time(atFrame: upperFrame, sourceTime: true) ?? upper) >= upper ? 1 : 0)
+			position = session.frameNumber(at: current, sourceTime: true)
+		} else {
+			first = (lower - origin).convertScale(30, method: .roundTowardNegativeInfinity).value + 1
+			last = (upper - origin).convertScale(30, method: .roundTowardPositiveInfinity).value - 1
+			position = (current - origin).convertScale(30, method: .roundHalfAwayFromZero).value
+		}
+		let value = Binding<Double>(get: { Double(max(first, min(position, last))) }, set: { proposed in
+			let index = Int64(proposed.rounded())
+			guard index >= first, index <= last else { return }
+			let next: CMTime
+			if session.hasVideo {
+				guard let frame = session.time(atFrame: index, sourceTime: true) else { return }
+				next = frame
+			} else {
+				next = origin + CMTime(value: index, timescale: 30)
+			}
+			guard next != current, next > lower, next < upper else { return }
+			entry.wrappedValue = TimeEntry(next, session: session, format: format, source: true)
+			error = nil
+			session.previewBoundary(at: next, preceding: preceding)
+		})
+		let reading = session.timecode(current, format: format, sourceTime: true)
+		return Section {
+			VStack(alignment: .leading) {
+				Text(title + ", " + reading).accessibilityHidden(true)
+				Slider(value: value, in: Double(first)...Double(max(first + 1, last)), step: 1) {
+					Text(point.name + " " + title)
+				}
+				.labelsHidden()
+				.accessibilityValue(Text(reading))
+				.disabled(first >= last)
+			}
 			TextField(title + (format == .frames ? ", source frame" : ", source time"), text: entry.text)
 				.autocorrectionDisabled()
-			Stepper(title + ", " + entry.wrappedValue.text,
-				onIncrement: { step(entry, by: 1, preceding: preceding) },
-				onDecrement: { step(entry, by: -1, preceding: preceding) })
-		} header: { Text(title).accessibilityAddTraits(.isHeader) }
-	}
-
-	private func step(_ entry: Binding<TimeEntry>, by count: Int, preceding: Bool) {
-		guard let value = entry.wrappedValue.value(session: session, format: format, source: true) else {
-			error = "Enter a valid source position."
-			return
 		}
-		let next = session.stepped(from: value, by: count, sourceTime: true)
-		guard next > point.precedingStart, next < point.followingEnd else { return }
-		entry.wrappedValue = TimeEntry(next, session: session, format: format, source: true)
-		error = nil
-		session.previewBoundary(at: next, preceding: preceding)
 	}
 
 	private func save() {
@@ -451,7 +484,7 @@ private struct JoinSheet: View {
 			try session.saveJoin(point, inTime: inTime, outTime: outTime)
 			dismiss()
 		} catch ClipEditError.invalidSelection {
-			error = "Choose positions inside the adjacent sections and place the first boundary before the second."
+			error = "Keep both points inside the adjoining media and place the Outgoing Out Point before the Incoming In Point."
 		} catch { self.error = error.localizedDescription }
 	}
 }

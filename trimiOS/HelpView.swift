@@ -198,8 +198,8 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Trim and review", [
 				"Trim Head to Playhead removes everything before the playhead. Trim Tail to Playhead removes everything after it.",
 				"Previous Edit Point and Next Edit Point move among joins, markers, and the start and end of the clip.",
-				"At a join, choose Adjust Edit Point in Edit Actions. The sheet shows the end of the preceding section and the start of the following section.",
-				"In a video, step either boundary to the previous or next frame of the original clip. You can also enter a source time or frame number. Choose Save to apply both boundaries or Cancel to discard the adjustments.",
+				"At a join, choose Adjust Edit Point in Edit Actions. Outgoing Out Point sets where the outgoing clip ends. Incoming In Point sets where the incoming clip begins.",
+				"Move either slider to adjust its point. Video sliders snap to frames in the original clip. With audio, the Out Point previews sound just before the cut and the In Point previews sound just after it. You can also enter a source time or frame number. Choose Save to apply both boundaries or Cancel to discard the adjustments.",
 				"Choose Undo to reverse a marker change, trim, deletion, or saved join adjustment. Repeat to undo earlier edits. To reapply an edit, choose Redo in Edit Actions.",
 				"To undo by shaking your device, turn on Shake to Undo in Trimatillo Settings and in the device's Accessibility settings under Touch."
 			]), HelpSection("Trim silences", numbered: true, [
