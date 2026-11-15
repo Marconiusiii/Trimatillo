@@ -397,28 +397,38 @@ private struct JoinSheet: View {
 	let point: ClipEditTimeline.EditPoint
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@Environment(\.dismiss) private var dismiss
-	@State private var outgoing: CMTime
-	@State private var incoming: CMTime
+	// The buttons edit this draft in place. Saving is the only operation that applies it to the timeline.
+	private final class Draft {
+		var outgoing: CMTime
+		var incoming: CMTime
+		weak var entryButton: UIButton?
+
+		init(point: ClipEditTimeline.EditPoint) {
+			outgoing = point.inTime
+			incoming = point.outTime
+		}
+	}
+
+	@State private var draft: Draft
 	@State private var editor: Boundary?
-	@State private var trigger: Boundary?
-	@AccessibilityFocusState private var focused: Boundary?
 	@State private var error: String?
 
 	init(session: CuttingBoardSession, point: ClipEditTimeline.EditPoint) {
 		self.session = session
 		self.point = point
-		_outgoing = State(initialValue: point.inTime)
-		_incoming = State(initialValue: point.outTime)
+		_draft = State(initialValue: Draft(point: point))
 	}
 
 	var body: some View {
 		NavigationStack {
-			Form {
-				button(.outgoing)
-				button(.incoming)
-				if let error { Text(error) }
+			ScrollView {
+				VStack(spacing: 0) {
+					button(.outgoing)
+					Divider()
+					button(.incoming)
+					if let error { Text(error) }
+				}
 			}
-			.editorListMargins()
 			.navigationTitle(point.name)
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -426,7 +436,12 @@ private struct JoinSheet: View {
 				ToolbarItem(placement: .confirmationAction) { Button("Save") { save() } }
 			}
 		}
-		.sheet(item: $editor, onDismiss: { focused = trigger }) { boundary in
+		.sheet(item: $editor, onDismiss: {
+			if UIAccessibility.isVoiceOverRunning, let button = draft.entryButton {
+				UIAccessibility.post(notification: .layoutChanged, argument: button)
+			}
+			draft.entryButton = nil
+		}) { boundary in
 			BoundaryTimeEditor(title: boundary.rawValue, session: session, format: format, time: time(for: boundary)) { time in
 				update(time, for: boundary)
 			}
@@ -439,51 +454,88 @@ private struct JoinSheet: View {
 	}
 
 	private func time(for boundary: Boundary) -> CMTime {
-		boundary == .outgoing ? outgoing : incoming
+		boundary == .outgoing ? draft.outgoing : draft.incoming
 	}
 
 	private func button(_ boundary: Boundary) -> some View {
-		let reading = session.timecode(time(for: boundary), format: format, sourceTime: true)
-		return Button {
-			trigger = boundary
-			editor = boundary
-		} label: {
-			HStack {
-				Text(boundary.rawValue)
-				Spacer()
-				Text(reading).accessibilityHidden(true)
-			}
+		func reading() -> String {
+			session.timecode(time(for: boundary), format: format, sourceTime: true)
 		}
-		.accessibilityValue(Text(reading))
-		.accessibilityAdjustableAction { direction in
-			let count: Int
-			switch direction {
-			case .increment: count = 1
-			case .decrement: count = -1
-			@unknown default: return
-			}
+
+		return EditPointButton(name: boundary.rawValue, value: reading()) { count in
 			let next = session.stepped(from: time(for: boundary), by: count, sourceTime: true)
 			_ = update(next, for: boundary)
+			return reading()
+		} activate: { button in
+			draft.entryButton = button
+			editor = boundary
 		}
-		.accessibilityFocused($focused, equals: boundary)
+		.frame(maxWidth: .infinity, minHeight: 48)
 	}
 
 	private func update(_ next: CMTime, for boundary: Boundary) -> Bool {
-		let lower = boundary == .outgoing ? point.precedingStart : outgoing
-		let upper = boundary == .outgoing ? incoming : point.followingEnd
+		let lower = boundary == .outgoing ? point.precedingStart : draft.outgoing
+		let upper = boundary == .outgoing ? draft.incoming : point.followingEnd
 		guard next.isNumeric, next > lower, next < upper else { return false }
 		guard next != time(for: boundary) else { return true }
-		if boundary == .outgoing { outgoing = next } else { incoming = next }
-		error = nil
+		if boundary == .outgoing { draft.outgoing = next } else { draft.incoming = next }
+		if error != nil { error = nil }
 		session.previewBoundary(at: next, preceding: boundary == .outgoing)
 		return true
 	}
 
 	private func save() {
 		do {
-			try session.saveJoin(point, inTime: outgoing, outTime: incoming)
+			try session.saveJoin(point, inTime: draft.outgoing, outTime: draft.incoming)
 			dismiss()
 		} catch { self.error = error.localizedDescription }
+	}
+}
+
+private struct EditPointButton: UIViewRepresentable {
+	let name: String
+	let value: String
+	let adjust: (Int) -> String
+	let activate: (UIButton) -> Void
+
+	func makeUIView(context: Context) -> Control {
+		let button = Control(type: .system)
+		var configuration = UIButton.Configuration.plain()
+		configuration.title = name
+		configuration.titleAlignment = .leading
+		configuration.titleLineBreakMode = .byWordWrapping
+		button.configuration = configuration
+		button.contentHorizontalAlignment = .leading
+		button.accessibilityLabel = name
+		button.accessibilityTraits.insert(.adjustable)
+		button.addTarget(button, action: #selector(Control.openEditor), for: .primaryActionTriggered)
+		return button
+	}
+
+	func updateUIView(_ button: Control, context: Context) {
+		button.adjust = adjust
+		button.activate = activate
+		button.display(value)
+	}
+
+	final class Control: UIButton {
+		var adjust: ((Int) -> String)?
+		var activate: ((UIButton) -> Void)?
+
+		func display(_ value: String) {
+			if configuration?.subtitle != value { configuration?.subtitle = value }
+			accessibilityValue = value
+		}
+
+		override func accessibilityIncrement() {
+			if let value = adjust?(1) { display(value) }
+		}
+
+		override func accessibilityDecrement() {
+			if let value = adjust?(-1) { display(value) }
+		}
+
+		@objc func openEditor() { activate?(self) }
 	}
 }
 
