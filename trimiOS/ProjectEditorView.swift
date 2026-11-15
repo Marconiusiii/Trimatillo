@@ -3,13 +3,6 @@ import AVKit
 import PhotosUI
 import UniformTypeIdentifiers
 
-private struct ProjectBoard: Identifiable {
-	let id = UUID()
-	let source: ProjectMediaSource
-	let placement: ProjectPlacement?
-	let session: CuttingBoardSession
-}
-
 private struct HistoryEntry {
 	let project: EditingProject
 	let action: String
@@ -27,9 +20,12 @@ private enum ProjectSheet: Identifiable {
 }
 
 struct ProjectEditorView: View {
-	@State var project: EditingProject
+	@Binding var project: EditingProject
 	let close: () -> Void
-	@StateObject private var playback = ProjectPlayback()
+	@ObservedObject var playback: ProjectPlayback
+	@Binding var board: ProjectBoard?
+	@Binding var revision: Int
+	let preparedRevision: Int?
 	@State private var activeTrack = TimelineTrack.primaryVideo.id
 	@State private var marked: Set<UUID> = []
 	@State private var dropAnchor: UUID?
@@ -38,7 +34,6 @@ struct ProjectEditorView: View {
 	@State private var effects: TimelineTrack?
 	@FocusState private var keyboardClip: String?
 	@State private var expanded = true
-	@State private var board: ProjectBoard?
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
 	@State private var photo: PhotosPickerItem?
@@ -47,8 +42,6 @@ struct ProjectEditorView: View {
 	@State private var reconnect: UUID?
 	@State private var busy = false
 	@State private var projectSheet: ProjectSheet?
-	@State private var preparedRevision: Int?
-	@State private var revision = 0
 	@State private var undo: [HistoryEntry] = []
 	@State private var redo: [HistoryEntry] = []
 	@State private var error: String?
@@ -60,7 +53,6 @@ struct ProjectEditorView: View {
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@AccessibilityFocusState private var focus: String?
 	@State private var trigger: String?
-	@Environment(\.scenePhase) private var phase
 
 	var body: some View {
 		ProjectEditorKeyboard(enabled: projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !busy && !pickingPhoto && !pickingFile,
@@ -98,7 +90,7 @@ struct ProjectEditorView: View {
 			.navigationTitle(project.name)
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
-				ToolbarItem(placement: .topBarLeading) { Button("Close") { playback.pause(); close() }.disabled(busy) }
+				ToolbarItem(placement: .topBarLeading) { Button("Close", action: close).disabled(busy) }
 				ToolbarItem(placement: .principal) {
 					Text(project.name).font(.headline).accessibilityAddTraits(.isHeader)
 				}
@@ -202,18 +194,10 @@ struct ProjectEditorView: View {
 			} message: { Text(error ?? "") }
 		}
 		.accessibilityAction(.magicTap) { playback.toggle() }
-		.task(id: board == nil ? revision : nil) {
-			guard board == nil else { return }
-			let preparing = revision
-			await playback.prepare(project)
-			if !Task.isCancelled { preparedRevision = preparing }
-		}
 		.onChange(of: dragging) { _, ids in if ids.isEmpty { dropAnchor = nil } }
 		.onChange(of: playback.failure) { _, message in
 			if let message { error = message; playback.failure = nil }
 		}
-		.onChange(of: phase) { _, phase in if phase != .active { playback.pause() } }
-		.onDisappear { playback.pause() }
 	}
 
 	private var projectActions: [EditorMenuAction] {

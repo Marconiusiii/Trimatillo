@@ -29,7 +29,7 @@ struct ContentView: View {
 	var body: some View {
 		Group {
 			if let project {
-				ProjectEditorView(project: project) {
+				ProjectWorkspaceView(project: project) {
 					self.project = nil
 					projectFocus = projectTrigger
 					handleIncomingFile()
