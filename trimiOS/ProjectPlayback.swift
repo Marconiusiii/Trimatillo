@@ -4,7 +4,10 @@ import UIKit
 import Observation
 
 @MainActor final class ProjectPlayhead: ObservableObject {
-	@Published var position: CMTime = .zero
+	@Published var position: CMTime = .zero {
+		didSet { if position != oldValue, navigationLabel != nil { navigationLabel = nil } }
+	}
+	@Published var navigationLabel: String?
 }
 
 @MainActor @Observable final class ProjectTransportState {
@@ -70,6 +73,7 @@ private struct ScrubAudioWindow {
 	private var directionChanges = 0
 	private var pendingScrub: CMTime?
 	private var scrubTask: Task<Void, Never>?
+	private var framePreview: Task<Void, Never>?
 	private var warmup: Task<Void, Never>?
 	private var window: ScrubAudioWindow?
 	private let engine = AVAudioEngine()
@@ -121,7 +125,10 @@ private struct ScrubAudioWindow {
 		pendingScrub = nil
 		reverse?.cancel()
 		reverse = nil
-		if wasRewinding || scrubbing {
+		let wasStepping = framePreview != nil
+		framePreview?.cancel()
+		framePreview = nil
+		if wasRewinding || scrubbing || wasStepping {
 			scrubbing = false
 			node.stop()
 			engine.stop()
@@ -144,6 +151,7 @@ private struct ScrubAudioWindow {
 			stop(keepingAudio: true)
 			seek(position)
 		}
+		if framePreview != nil { stop(keepingAudio: true) }
 		if position >= duration { seek(.zero) }
 		playForward(1)
 	}
@@ -200,6 +208,32 @@ private struct ScrubAudioWindow {
 		if playing {
 			transport.shuttleRate = speed
 			UIAccessibility.post(notification: .announcement, argument: (forward ? "Forward " : "Rewind ") + next.formatted() + "x")
+		}
+	}
+
+	func stepWithAudio(forward: Bool, frame: CMTime) {
+		guard ready, let item = player.currentItem else { return }
+		stop(keepingAudio: true)
+		let target = min(duration, max(.zero, position + (forward ? frame : .zero - frame)))
+		let moved = target != position
+		seek(target)
+		guard moved, item.audioMix != nil else { pause(); return }
+		let start = target == duration ? max(.zero, duration - frame) : target
+		framePreview = Task {
+			do {
+				let samples = try await FrameAudioSamples.read(asset: item.asset, mix: item.audioMix,
+					at: start, length: min(frame, duration - start).seconds)
+				try Task.checkCancellation()
+				if let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: format) {
+					try activateAudio()
+					if !engine.isRunning { try engine.start() }
+					node.play()
+					await node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack)
+				}
+			} catch {
+				if !Task.isCancelled { failure = "Could not preview the frame. Check the audio output and try again." }
+			}
+			if !Task.isCancelled { pause() }
 		}
 	}
 
@@ -297,7 +331,7 @@ private struct ScrubAudioWindow {
 	}
 
 	func seek(_ time: CMTime) {
-		if playing || scrubbing { pause() }
+		if playing || scrubbing || framePreview != nil { pause() }
 		playhead.position = min(duration, max(.zero, time))
 		player.seek(to: position, toleranceBefore: .zero, toleranceAfter: .zero)
 	}

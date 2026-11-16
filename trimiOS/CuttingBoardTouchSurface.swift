@@ -35,7 +35,57 @@ struct CuttingBoardTouchSurface: UIViewRepresentable {
 	}
 }
 
-final class TimelineSurface: UIView {
+@MainActor @objc protocol TimelineGestureHandling {
+	func closeEditor()
+	func toggle()
+	func scrub(_ hold: UILongPressGestureRecognizer)
+	func swipe(_ gesture: UISwipeGestureRecognizer)
+}
+
+extension TimelineGestureHandling where Self: UIView {
+	func installTimelineGestures(projectTimeline: Bool, placement: Bool = false, join: Selector? = nil) {
+		accessibilityDirectTouchOptions = [.silentOnTouch]
+		isMultipleTouchEnabled = true
+
+		let closeTap = UITapGestureRecognizer(target: self, action: #selector(closeEditor))
+		closeTap.numberOfTapsRequired = 3
+		addGestureRecognizer(closeTap)
+
+		let hold = UILongPressGestureRecognizer(target: self, action: #selector(scrub(_:)))
+		hold.numberOfTapsRequired = 1
+		hold.minimumPressDuration = 0.35
+		if let join {
+			let joinTap = UITapGestureRecognizer(target: self, action: join)
+			joinTap.numberOfTapsRequired = 2
+			joinTap.require(toFail: closeTap)
+			joinTap.require(toFail: hold)
+			addGestureRecognizer(joinTap)
+		}
+
+		closeTap.require(toFail: hold)
+		addGestureRecognizer(hold)
+		let horizontal: [UISwipeGestureRecognizer.Direction] = [.left, .right]
+		let all = horizontal + [.up, .down]
+		let groups = [all, projectTimeline ? all : horizontal + [.down], all,
+			projectTimeline ? [] : (placement ? all : horizontal)]
+		for (index, directions) in groups.enumerated() {
+			let count = index + 1
+			for direction in directions {
+				let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swipe(_:)))
+				swipe.numberOfTouchesRequired = count
+				swipe.direction = direction
+				if count == 1 { swipe.require(toFail: hold) }
+				addGestureRecognizer(swipe)
+			}
+		}
+		let tap = UITapGestureRecognizer(target: self, action: #selector(toggle))
+		tap.numberOfTouchesRequired = 2
+		tap.numberOfTapsRequired = 2
+		addGestureRecognizer(tap)
+	}
+}
+
+final class TimelineSurface: UIView, TimelineGestureHandling {
 	let session: CuttingBoardSession
 	private let video = AVPlayerLayer()
 	private let rangeTrack = CALayer()
@@ -76,39 +126,7 @@ final class TimelineSurface: UIView {
 		}
 
 		guard onClose != nil else { return }
-		accessibilityDirectTouchOptions = [.silentOnTouch]
-		isMultipleTouchEnabled = true
-
-		let closeTap = UITapGestureRecognizer(target: self, action: #selector(closeEditor))
-		closeTap.numberOfTapsRequired = 3
-		addGestureRecognizer(closeTap)
-
-		let joinTap = UITapGestureRecognizer(target: self, action: #selector(openJoin))
-		joinTap.numberOfTapsRequired = 2
-		joinTap.require(toFail: closeTap)
-		addGestureRecognizer(joinTap)
-
-		let hold = UILongPressGestureRecognizer(target: self, action: #selector(scrub(_:)))
-		hold.numberOfTapsRequired = 1
-		hold.minimumPressDuration = 0.35
-		joinTap.require(toFail: hold)
-		closeTap.require(toFail: hold)
-		addGestureRecognizer(hold)
-		for (count, directions) in [(1, [UISwipeGestureRecognizer.Direction.left, .right, .up, .down]),
-			(2, [.left, .right, .down]),
-			(3, [.left, .right, .down, .up]), (4, projectActions == nil ? [.left, .right] : [.left, .right, .down, .up])] {
-			for direction in directions {
-				let swipe = UISwipeGestureRecognizer(target: self, action: #selector(swipe(_:)))
-				swipe.numberOfTouchesRequired = count
-				swipe.direction = direction
-				if count == 1 { swipe.require(toFail: hold) }
-				addGestureRecognizer(swipe)
-			}
-		}
-		let tap = UITapGestureRecognizer(target: self, action: #selector(toggle))
-		tap.numberOfTouchesRequired = 2
-		tap.numberOfTapsRequired = 2
-		addGestureRecognizer(tap)
+		installTimelineGestures(projectTimeline: false, placement: projectActions != nil, join: #selector(openJoin))
 	}
 
 	@available(*, unavailable)
@@ -116,7 +134,7 @@ final class TimelineSurface: UIView {
 
 	@objc private func openJoin() { session.showJoin() }
 
-	@objc private func closeEditor() { onClose?() }
+	@objc func closeEditor() { onClose?() }
 
 	var controlColor = ControlColor.teal {
 		didSet { if oldValue != controlColor { applyColors() } }
@@ -162,7 +180,7 @@ final class TimelineSurface: UIView {
 		CATransaction.commit()
 	}
 
-	@objc private func scrub(_ hold: UILongPressGestureRecognizer) {
+	@objc func scrub(_ hold: UILongPressGestureRecognizer) {
 		let x = hold.location(in: self).x
 		func target() -> CMTime {
 			scrubbing.time(at: x, width: bounds.width, startX: scrubStartX, origin: origin, duration: session.duration)
@@ -190,7 +208,7 @@ final class TimelineSurface: UIView {
 		}
 	}
 
-	@objc private func swipe(_ gesture: UISwipeGestureRecognizer) {
+	@objc func swipe(_ gesture: UISwipeGestureRecognizer) {
 		let right = gesture.direction == .right
 		switch gesture.numberOfTouchesRequired {
 		case 1:
@@ -219,6 +237,6 @@ final class TimelineSurface: UIView {
 		}
 	}
 
-	@objc private func toggle() { session.toggle() }
+	@objc func toggle() { session.toggle() }
 	override func accessibilityPerformMagicTap() -> Bool { toggle(); return true }
 }

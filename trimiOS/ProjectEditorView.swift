@@ -46,6 +46,9 @@ struct ProjectEditorView: View {
 	@State private var redo: [HistoryEntry] = []
 	@State private var error: String?
 	@State private var fullScreenPreview: PreviewPlayback?
+	@State private var directTouch = false
+	@AccessibilityFocusState(for: .voiceOver) private var surfaceFocused: Bool
+	@AppStorage("directTouchScrubbing", store: EditorPreferences.shared) private var scrubMode = DirectTouchScrubbing.absolute
 	@State private var jumping = false
 	@State private var jumpText = ""
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
@@ -59,7 +62,7 @@ struct ProjectEditorView: View {
 	private var loading: Bool { clipTask != nil || preparingTimeline }
 
 	var body: some View {
-		ProjectEditorKeyboard(enabled: projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(enabled: !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
 			undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
@@ -166,6 +169,9 @@ struct ProjectEditorView: View {
 				}
 				.editorAppearance()
 			}
+			.fullScreenCover(isPresented: $directTouch, onDismiss: { focus = "projectDirectTouch" }) {
+				directTouchEditor
+			}
 			.fullScreenCover(item: $fullScreenPreview, onDismiss: { focus = "fullScreenPreview" }) { preview in
 				FullScreenPreview(playback: preview)
 			}
@@ -183,7 +189,7 @@ struct ProjectEditorView: View {
 					focus = "jump"
 				}
 			}
-			.alert("Project", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+			.alert("Project", isPresented: Binding(get: { !directTouch && error != nil }, set: { if !$0 { error = nil } })) {
 				Button("OK") { error = nil }
 			} message: { Text(error ?? "") }
 		}
@@ -303,6 +309,12 @@ struct ProjectEditorView: View {
 
 	private var transport: some View {
 		Group {
+			Button("Direct Touch Editor") {
+				directTouch = true
+			}
+			.buttonStyle(EditorButtonStyle())
+			.accessibilityFocused($focus, equals: "projectDirectTouch")
+			.disabled(!playback.ready)
 			ProjectTimelineSlider(playhead: playback.playhead, playback: playback, duration: project.duration,
 				frame: project.frame, format: format, formatTime: time)
 				.disabled(!playback.ready)
@@ -356,6 +368,77 @@ struct ProjectEditorView: View {
 		}
 	}
 
+	private var selectedTrack: TimelineTrack {
+		project.tracks.first { $0.id == activeTrack } ?? .primaryVideo
+	}
+
+	private var directTouchEditor: some View {
+		VStack(spacing: 0) {
+			HStack(spacing: 0) {
+				Button("Close") { directTouch = false }
+					.buttonStyle(EditorButtonStyle())
+					.fixedSize()
+				VStack(alignment: .leading) {
+					Text("Direct Touch Editor").font(.headline).accessibilityAddTraits(.isHeader)
+					Text(selectedTrack.title).accessibilityHidden(true)
+				}
+				.frame(maxWidth: .infinity, alignment: .leading)
+			}
+			if preparingTimeline {
+				LoadingStatusView("Preparing timeline", cancel: { directTouch = false })
+			} else {
+				ProjectTouchSurface(playhead: playback.playhead, playback: playback, duration: project.duration,
+					trackName: selectedTrack.title, mode: scrubMode, close: { directTouch = false }, swipe: projectSwipe)
+					.accessibilityFocused($surfaceFocused)
+					.onAppear {
+						playback.primeScrubAudio()
+						surfaceFocused = true
+					}
+			}
+		}
+		.background(EditorTheme.workspace)
+		.editorAppearance()
+		.accessibilityAction(.magicTap) { playback.toggle() }
+		.alert("Project", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+			Button("OK") { error = nil }
+		} message: { Text(error ?? "") }
+	}
+
+	private func projectSwipe(_ fingers: Int, _ direction: UISwipeGestureRecognizer.Direction) {
+		let forward = direction == .right
+		let down = direction == .down
+		switch (fingers, direction) {
+		case (2, .up), (2, .down):
+			let tracks = project.tracks
+			guard let index = tracks.firstIndex(of: selectedTrack) else { return }
+			let next = index + (down ? 1 : -1)
+			guard tracks.indices.contains(next) else { return }
+			activeTrack = tracks[next].id
+			keyboardClip = nil
+			playback.playhead.navigationLabel = nil
+			UIAccessibility.post(notification: .announcement, argument: tracks[next].title)
+		case (3, .up), (3, .down):
+			history(back: down)
+		case (1, .left), (1, .right):
+			playback.stepWithAudio(forward: forward, frame: project.frame)
+		case (1, .up), (1, .down):
+			guard playback.ready else { return }
+			playback.pause()
+			let point = ProjectTime(playback.position)
+			let remove = (down ? project.markIn : project.markOut)?.time == point.time
+			setMarker(down, to: remove ? nil : point)
+			if error == nil {
+				let name = down ? "In" : "Out"
+				UIAccessibility.post(notification: .announcement, argument: remove ? name + " Removed" : "Marked " + name)
+			}
+		case (2, .left), (2, .right):
+			playback.shuttle(forward: forward)
+		case (3, .left), (3, .right):
+			if playback.ready { navigate(forward: forward, track: selectedTrack) }
+		default: break
+		}
+	}
+
 	private func openJump() {
 		playback.pause()
 		jumpText = ""
@@ -376,20 +459,18 @@ struct ProjectEditorView: View {
 			Button(direction + " 10 Frames") { step(count * 10) }
 			Button(forward ? "Next Edit Point" : "Previous Edit Point") {
 				if let track = project.tracks.first(where: { $0.id == activeTrack }) {
-					navigate(forward: forward, clips: project.displayedClips(on: track))
+					navigate(forward: forward, track: track)
 				}
 			}
 		}
 	}
 
-	private func navigate(forward: Bool, clips: [ProjectPlacement]) {
-		let points = [CMTime.zero, project.duration] + clips.flatMap { [$0.start.time, $0.end] } +
-			[project.markIn?.time, project.markOut?.time].compactMap { $0 }
-		let position = playback.position
-		let destination = forward ? points.filter { $0 > position }.min() ?? project.duration :
-			points.filter { $0 < position }.max() ?? .zero
-		playback.seek(destination)
-		UIAccessibility.post(notification: .announcement, argument: "Edit Point, " + time(destination))
+	private func navigate(forward: Bool, track: TimelineTrack) {
+		let point = project.navigationPoint(from: playback.position, forward: forward, on: track)
+		let label = point.name + ", " + time(point.time)
+		playback.seek(point.time)
+		playback.playhead.navigationLabel = label
+		UIAccessibility.post(notification: .announcement, argument: label)
 	}
 
 	private func setMarker(_ isIn: Bool, to point: ProjectTime?) {
@@ -439,7 +520,7 @@ struct ProjectEditorView: View {
 
 	private func trackActions(_ track: TimelineTrack) -> [EditorMenuAction] {
 		var actions = [
-			EditorMenuAction("Select Track") { keyboardClip = nil; activeTrack = track.id; focus = track.id },
+			EditorMenuAction("Select Track") { keyboardClip = nil; activeTrack = track.id; playback.playhead.navigationLabel = nil; focus = track.id },
 			EditorMenuAction("Track Effects") { trigger = track.id; playback.pause(); effects = track }
 		]
 		if !dragging.isEmpty && project.displayedClips(on: track).isEmpty && project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == track.kind }) {
@@ -694,6 +775,7 @@ struct ProjectEditorView: View {
 			Dictionary(uniqueKeysWithValues: model.sources.filter { usedSources.contains($0.id) }.map { ($0.id, $0.reference) })
 		}
 		let rebuild = project.picture != next.picture || project.placements != next.placements || timelineReferences(project) != timelineReferences(next) || project.tracks != next.tracks || project.trackVolumes != next.trackVolumes
+		if playback.playhead.navigationLabel != nil { playback.playhead.navigationLabel = nil }
 		project = next
 		let valid = Set(next.placements.map(\.id))
 		marked.formIntersection(valid)
@@ -745,6 +827,7 @@ struct ProjectEditorView: View {
 			if flags.contains(.alternate), let index = project.tracks.firstIndex(of: track) {
 				let target = index + (key == UIKeyCommand.inputUpArrow ? -1 : 1)
 				if project.tracks.indices.contains(target) {
+					playback.playhead.navigationLabel = nil
 					activeTrack = project.tracks[target].id
 					keyboardClip = nil
 					focus = activeTrack
@@ -769,7 +852,7 @@ struct ProjectEditorView: View {
 					}
 				}
 			} else if flags.contains(.command) || key == "'" || key == ";" {
-				navigate(forward: forward, clips: clips)
+				navigate(forward: forward, track: track)
 			} else {
 				let count: Int32 = flags.contains(.shift) ? 10 : 1
 				step(forward ? count : -count)
@@ -1092,7 +1175,7 @@ private struct ProjectSliderControl: UIViewRepresentable {
 			guard let control else { return }
 			let seconds = control.duration.seconds
 			value = seconds > 0 ? Float(time.seconds / seconds) : 0
-			accessibilityValue = spokenTime(time, control: control)
+			accessibilityValue = control.playback.playhead.navigationLabel ?? spokenTime(time, control: control)
 		}
 
 		private func spokenTime(_ time: CMTime, control: ProjectSliderControl) -> String {
@@ -1196,6 +1279,90 @@ private struct ProjectSliderControl: UIViewRepresentable {
 			draggingPlayhead = false
 			if announce { speakIfNeeded() }
 			control?.playback.setScrubbing(false)
+		}
+	}
+}
+
+private struct ProjectTouchSurface: UIViewRepresentable {
+	@ObservedObject var playhead: ProjectPlayhead
+	let playback: ProjectPlayback
+	let duration: CMTime
+	let trackName: String
+	let mode: DirectTouchScrubbing
+	let close: () -> Void
+	let swipe: (Int, UISwipeGestureRecognizer.Direction) -> Void
+
+	func makeUIView(context: Context) -> Surface {
+		let view = Surface()
+		view.isAccessibilityElement = true
+		view.accessibilityLabel = "Direct Touch Editor"
+		view.accessibilityTraits = .allowsDirectInteraction
+		view.installTimelineGestures(projectTimeline: true)
+		view.backgroundColor = UIColor(EditorTheme.surface)
+		view.video.videoGravity = .resizeAspect
+		view.layer.addSublayer(view.cursor)
+		return view
+	}
+
+	func updateUIView(_ view: Surface, context: Context) {
+		view.control = self
+		if view.accessibilityValue != trackName { view.accessibilityValue = trackName }
+		if view.video.player !== playback.player { view.video.player = playback.player }
+		view.setNeedsLayout()
+	}
+
+	static func dismantleUIView(_ view: Surface, coordinator: ()) {
+		view.control?.playback.setScrubbing(false)
+		view.video.player = nil
+		view.control = nil
+	}
+
+	final class Surface: UIView, TimelineGestureHandling {
+		override class var layerClass: AnyClass { AVPlayerLayer.self }
+		var video: AVPlayerLayer { layer as! AVPlayerLayer }
+		let cursor = CALayer()
+		var control: ProjectTouchSurface?
+		private var origin: CMTime = .zero
+		private var startX: CGFloat = 0
+		private var dragWidth: CGFloat = 0
+
+		override func layoutSubviews() {
+			super.layoutSubviews()
+			guard let control else { return }
+			let fraction = control.duration > .zero ? control.playhead.position.seconds / control.duration.seconds : 0
+			CATransaction.begin()
+			CATransaction.setDisableActions(true)
+			cursor.backgroundColor = UIColor(EditorTheme.playhead).resolvedColor(with: traitCollection).cgColor
+			cursor.frame = CGRect(x: max(0, bounds.width - 3) * min(1, max(0, fraction)), y: 0, width: 3, height: bounds.height)
+			CATransaction.commit()
+		}
+
+		@objc func closeEditor() { control?.close() }
+		@objc func toggle() { control?.playback.toggle() }
+		override func accessibilityPerformMagicTap() -> Bool { toggle(); return true }
+
+		@objc func swipe(_ gesture: UISwipeGestureRecognizer) {
+			control?.swipe(gesture.numberOfTouchesRequired, gesture.direction)
+		}
+
+		@objc func scrub(_ hold: UILongPressGestureRecognizer) {
+			guard let control else { return }
+			let playback = control.playback
+			let x = hold.location(in: self).x
+			if hold.state == .began {
+				playback.setScrubbing(true)
+				origin = playback.position
+				startX = x
+				dragWidth = bounds.width
+			}
+			guard playback.scrubbing else { return }
+			if hold.state == .cancelled || hold.state == .failed || bounds.width != dragWidth {
+				playback.setScrubbing(false)
+				return
+			}
+			let target = control.mode.time(at: x, width: dragWidth, startX: startX, origin: origin, duration: control.duration)
+			playback.scrub(to: target)
+			if hold.state == .ended { playback.setScrubbing(false) }
 		}
 	}
 }

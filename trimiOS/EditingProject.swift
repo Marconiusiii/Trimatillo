@@ -110,6 +110,24 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 		}.sorted { $0.start.time < $1.start.time }
 	}
 
+	func navigationPoint(from position: CMTime, forward: Bool, on track: TimelineTrack) -> (time: CMTime, name: String) {
+		let clips = displayedClips(on: track)
+		let end = duration
+		let boundaries = [.zero, end] + [markIn?.time, markOut?.time].compactMap { $0 } +
+			clips.flatMap { [$0.start.time, $0.end] }
+		let time = forward ? boundaries.filter { $0 > position }.min() ?? end :
+			boundaries.filter { $0 < position }.max() ?? .zero
+		if time == .zero { return (time, "Start") }
+		if time == end { return (time, "End") }
+		if time == markIn?.time { return (time, "In") }
+		if time == markOut?.time { return (time, "Out") }
+		let kind = track.kind.rawValue + " edit point"
+		// At a shared cut the incoming clip supplies the name in both directions.
+		guard let clip = clips.first(where: { $0.start.time == time }) ?? clips.first(where: { $0.end == time }),
+			let source = sources.first(where: { $0.id == clip.sourceID }) else { return (time, kind) }
+		return (time, kind + ": " + clip.displayName(for: source))
+	}
+
 	mutating func assignPlacementLabels() {
 		let groups = Dictionary(grouping: placements.indices, by: { placements[$0].sourceID })
 		for indices in groups.values where indices.count > 1 {

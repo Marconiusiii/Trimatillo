@@ -64,9 +64,11 @@ private enum HelpTopic: String, CaseIterable {
 	case keys = "Keyboard commands"
 	case save = "Save and export"
 	case projects = "Multitrack projects"
+	case projectTouch = "Project Direct Touch Editor"
 
 	var introduction: String {
 		switch self {
+		case .projectTouch: "Explore the assembled project, choose a track, and find the clips that meet at each cut."
 		case .projects: "Arrange video and audio clips on a shared timeline. Each placement has its own edits."
 		case .first: "Trim the beginning and end of a clip, then cut a passage from the middle and save a copy."
 		case .open: "Open an audio or video file in Trimatillo, or send a video from Photos to the Cutting Board."
@@ -89,6 +91,34 @@ private enum HelpTopic: String, CaseIterable {
 
 	var sections: [HelpSection] {
 		switch self {
+		case .projectTouch:
+			[HelpSection("Open Direct Touch", numbered: true, [
+				"Open a project with clips on its timeline. In the Editor, choose Direct Touch Editor.",
+				"The surface opens at the project playhead on the selected track. Primary Video is the initial track. With VoiceOver, the surface identifies the current track.",
+				"Use Close to return to the Editor with the same playhead and track."
+			]), HelpSection("One finger", [
+				"Swipe right to step forward one project frame.",
+				"Swipe left to step back one project frame.",
+				"Double-tap and hold the second tap, then drag to scrub with project audio. Absolute scrubbing maps the full project across the surface. Relative scrubbing starts at the current playhead and spans up to ten seconds across the surface. Lift to leave the playhead there.",
+				"Swipe down to mark In at the playhead. Repeat there to remove it.",
+				"Swipe up to mark Out at the playhead. Repeat there to remove it.",
+				"Triple-tap to close Direct Touch and return to the Editor."
+			]), HelpSection("Two fingers", [
+				"Double-tap to play or pause. With VoiceOver, use Magic Tap.",
+				"Swipe right to play forward. Repeat to increase speed through 1x, 1.5x, 2x, 4x, and 8x.",
+				"Swipe left to rewind. Repeat to increase rewind speed through the same five speeds.",
+				"Swipe up to select the track above and load its edit points.",
+				"Swipe down to select the track below and load its edit points. From Primary Video, one swipe down selects Primary Audio Track."
+			]), HelpSection("Three fingers", [
+				"Swipe right to snap to the next edit point on the selected track.",
+				"Swipe left to snap to the previous edit point on the selected track.",
+				"Swipe down to undo the last project edit.",
+				"Swipe up to redo the last project edit you undid."
+			]), HelpSection("Track navigation", [
+				"Switching tracks keeps the playhead in place. Playback and scrubbing include the full project mix.",
+				"At a shared cut, the edit point uses the name of the clip beginning there in either direction. Start, End, In, and Out are also stops.",
+				"In the main Editor, choose Select Track from a track heading. Use the Next Edit Point and Previous Edit Point actions on the step buttons to reach the same stops."
+			])]
 		case .projects:
 			[HelpSection("Create a project", numbered: true, [
 				"Choose Create Project and enter a name.",
@@ -107,6 +137,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose a timeline clip to jump to its start or end, remove it, or reopen its Cutting Board. Choose Save Changes to update that placement.",
 				"Use the Undo menu to undo or redo a project change."
 			]), HelpSection("Project playback and navigation", [
+				"Choose Direct Touch Editor to use gestures on the project. The Project Direct Touch Editor Help topic lists each gesture.",
 				"Choose Play to preview the timeline. Choose Pause to stop at the current position.",
 				"Choose Rewind or Fast Forward to play in that direction. Repeat to select 1x, 1.5x, 2x, 4x, or 8x. Changing direction starts at 1x.",
 				"Drag across Playhead to preview the project from start to end. Lift to leave the playhead there.",
