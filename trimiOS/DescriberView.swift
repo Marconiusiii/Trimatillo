@@ -28,9 +28,17 @@ struct DescriberView: View {
 		Picker("Timeline", selection: $timeline) {
 			ForEach(DescriptionTimeline.allCases) { Text($0.rawValue).tag($0) }
 		}
+		.pickerStyle(.wheel)
+		.alert("Describer", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+			Button("OK") {}
+		} message: { Text(error ?? "") }
 		Button("New Description") { open(nil) }
 			.buttonStyle(EditorButtonStyle())
 			.accessibilityFocused(focus, equals: "newDescription")
+		switch timeline {
+		case .transcript: exportTranscriptButton
+		case .audio: duckingButton
+		}
 		Section {
 			ForEach(project.descriptionRows(timeline)) { row in
 				let actions = [
@@ -51,6 +59,9 @@ struct DescriberView: View {
 				.accessibilityFocused(focus, equals: row.id.uuidString)
 			}
 		} header: { Text(timeline.rawValue).accessibilityAddTraits(.isHeader) }
+	}
+
+	private var duckingButton: some View {
 		Button("Audio Ducking") { mix = project.descriptionDucking ?? DescriptionDucking(); ducking = true }
 			.accessibilityFocused(focus, equals: "ducking")
 			.sheet(isPresented: $ducking, onDismiss: { focus.wrappedValue = "ducking" }) {
@@ -78,6 +89,9 @@ struct DescriberView: View {
 					}
 				}.editorAppearance()
 			}
+	}
+
+	private var exportTranscriptButton: some View {
 		Button("Export Description Transcript") {
 			do {
 				let data = try CaptionFileCodec.encode((project.descriptiveTranscript ?? []).map {
@@ -93,9 +107,6 @@ struct DescriberView: View {
 		.sheet(item: $shared, onDismiss: { focus.wrappedValue = "exportDescription" }) { file in
 			ShareDescriptionFile(file: file) { shared = nil }
 		}
-		.alert("Describer", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
-			Button("OK") {}
-		} message: { Text(error ?? "") }
 	}
 
 	private func delete(_ id: UUID) {

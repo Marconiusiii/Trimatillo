@@ -105,11 +105,11 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Play Take to hear the original recording. Speed Up to Fit trims silence from the end of the take. Your voice plays at its recorded speed if it fits before Out. Longer narration speeds up and keeps its pitch. Choose Trim at Out to play the original take up to Out. Play with Primary Audio previews the result against the passage.",
 				"Choose Save to add the recording to Audio Description. To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
 			]), HelpSection("Review and export", numbered: true, [
-				"Choose Descriptive Transcript in Timeline to review the written entries. Choose Audio Description for the recorded clips. Switching keeps the playhead and markers in place.",
+				"Adjust the Timeline wheel to Descriptive Transcript or Audio Description. The entries under the timeline heading change as you turn the wheel. The playhead and markers stay in place.",
 				"Open an entry's menu or accessibility actions to go to its start, edit, or delete it. Return edits a focused entry with a keyboard. Mark a new range and choose Use Marked Range while editing to change its timing. Undo restores a deleted entry.",
 				"A transcript spans the marked range. A shorter recording ends when the take ends. Entries on the two timelines can be changed independently.",
-				"Choose Audio Ducking to lower project audio during descriptions. Set the amount and fade, then choose Save. Project playback and movie export use the same mix.",
-				"Choose Export Description Transcript to share the timed text as a WebVTT file. To export the movie with narration, choose Project Actions, then Export.",
+				"On the Audio Description timeline, choose Audio Ducking to lower project audio during descriptions. Set the amount and fade, then choose Save. Project playback and movie export use the same mix.",
+				"On the Descriptive Transcript timeline, choose Export Description Transcript to share the timed text as a WebVTT file. To export the movie with narration, choose Project Actions, then Export.",
 				"Open Audio in the main Settings sheet to select a microphone or audio output. Same as System follows the current microphone route."
 			]), HelpSection("One finger in Describer Direct Touch", [
 				"Swipe right to advance one frame.",
