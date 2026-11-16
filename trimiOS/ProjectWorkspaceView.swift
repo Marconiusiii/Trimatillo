@@ -41,8 +41,15 @@ struct ProjectWorkspaceView: View {
 enum ProjectTool: String, CaseIterable {
 	case editor = "Editor"
 	case captioner = "Captioner"
+	case describer = "Describer"
 
-	var symbol: String { self == .editor ? "film" : "captions.bubble" }
+	var symbol: String {
+		switch self {
+		case .editor: "film"
+		case .captioner: "captions.bubble"
+		case .describer: "mic"
+		}
+	}
 }
 
 struct ProjectWorkspaceTabs<Content: View>: View {

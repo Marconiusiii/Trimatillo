@@ -3,7 +3,7 @@ import UIKit
 
 struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 	let enabled: Bool
-	var captioning = false
+	var tool = ProjectTool.editor
 	let undoShake: () -> Bool
 	let perform: (String, UIKeyModifierFlags) -> Void
 	@ViewBuilder let content: () -> Content
@@ -14,13 +14,13 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 
 	func updateUIViewController(_ controller: Controller, context: Context) {
 		controller.rootView = content()
-		controller.captioning = captioning
+		controller.tool = tool
 		controller.undoShake = enabled ? undoShake : nil
 		controller.performKey = enabled ? perform : nil
 	}
 
 	final class Controller: UIHostingController<Content> {
-		var captioning = false
+		var tool = ProjectTool.editor
 		var undoShake: (() -> Bool)?
 		var performKey: ((String, UIKeyModifierFlags) -> Void)?
 		override var canBecomeFirstResponder: Bool { true }
@@ -47,11 +47,12 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 				default: return (input, flags, title)
 				}
 			}
-			if captioning {
+			if tool != .editor {
 				bindings.removeAll { ["[", "]", "\u{8}", UIKeyCommand.inputDelete, "\r"].contains($0.0) }
-				bindings += [("c", [.command, .shift], "New Caption"), ("\r", [], "Edit Caption")]
+				bindings += [(tool == .captioner ? "c" : "d", [.command, .shift], tool == .captioner ? "New Caption" : "New Description"),
+				("\r", [], tool == .captioner ? "Edit Caption" : "Edit Description")]
 			} else {
-				bindings += [(UIKeyCommand.inputUpArrow, [.alternate, .command], "Previous Track"),
+				bindings += [("d", [.command, .shift], "New Description"), (UIKeyCommand.inputUpArrow, [.alternate, .command], "Previous Track"),
 				(UIKeyCommand.inputDownArrow, [.alternate, .command], "Next Track"),
 				(UIKeyCommand.inputLeftArrow, [.command, .alternate], "Move Earlier"),
 				(UIKeyCommand.inputRightArrow, [.command, .alternate], "Move Later"),

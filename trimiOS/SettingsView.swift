@@ -43,6 +43,7 @@ struct SettingsView: View {
 					Toggle("Shake to Undo", isOn: $shake)
 				} header: { heading("Editing") }
 				Section {
+					NavigationLink("Audio") { RecordingRouteSettings() }
 					NavigationLink("Storage") { StorageSettingsView() }
 				}
 				supportSection

@@ -65,10 +65,12 @@ private enum HelpTopic: String, CaseIterable {
 	case save = "Save and export"
 	case projects = "Multitrack projects"
 	case captioner = "Captioner"
+	case describer = "Describer"
 	case projectTouch = "Project Direct Touch Editor"
 
 	var introduction: String {
 		switch self {
+		case .describer: "Describe what happens in a passage with a timed transcript, a spoken recording, or both."
 		case .captioner: "Write timed text for dialogue, music, and sounds as you play through your project."
 		case .projectTouch: "Explore the assembled project, choose a track, and find the clips that meet at each cut."
 		case .projects: "Arrange video and audio clips on a shared timeline. Each placement has its own edits."
@@ -94,6 +96,41 @@ private enum HelpTopic: String, CaseIterable {
 
 	var sections: [HelpSection] {
 		switch self {
+		case .describer:
+			[HelpSection("Describe a passage", numbered: true, [
+				"Open Describer in a project. Mark In at the beginning of the passage and Out at its end.",
+				"Choose New Description or press Command-Shift-D. Enter the description text. Choose Dismiss Keyboard to return to the controls.",
+				"Choose Play In to Out to repeat the passage. Choose Stop Preview when you are finished.",
+				"To add narration, enter a recording name and choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
+				"Choose Play Take to hear the original recording. If the take runs past Out, choose Speed Up to Fit to preserve pitch or Trim at Out to use the beginning of the take. Play with Primary Audio previews the result against the passage.",
+				"Choose Save to add your text, recording, or both. Cancel lets you discard edits. To resume a recorded draft, mark the passage, open New Description, and choose Recover Take."
+			]), HelpSection("Review and export", numbered: true, [
+				"Choose Descriptive Transcript in Timeline to review the written entries. Choose Audio Description for the recorded clips. Switching keeps the playhead and markers in place.",
+				"Open an entry's menu or accessibility actions to go to its start, edit, or delete it. Return edits a focused entry with a keyboard. Mark a new range and choose Use Marked Range while editing to change its timing. Undo restores a deleted entry.",
+				"A transcript spans the marked range. A shorter recording ends when the take ends. Entries on the two timelines can be changed independently.",
+				"Choose Audio Ducking to lower project audio during descriptions. Set the amount and fade, then choose Save. Project playback and movie export use the same mix.",
+				"Choose Export Description Transcript to share the timed text as a WebVTT file. To export the movie with narration, choose Project Actions, then Export.",
+				"Open Audio in the main Settings sheet to select a microphone or audio output. Same as System follows the current microphone route."
+			]), HelpSection("One finger in Describer Direct Touch", [
+				"Swipe right to advance one frame.",
+				"Swipe left to go back one frame.",
+				"Double-tap and hold, then drag to scrub.",
+				"Swipe down to mark In. Repeat at the same time to remove In.",
+				"Swipe up to mark Out. Repeat at the same time to remove Out.",
+				"Double-tap on an entry boundary to edit it. Double-tap elsewhere to create a description for the marked passage.",
+				"Triple-tap to return to Describer."
+			]), HelpSection("Two fingers in Describer Direct Touch", [
+				"Double-tap to play or pause.",
+				"Swipe right to play forward. Repeat to increase speed.",
+				"Swipe left to rewind. Repeat to increase speed.",
+				"Swipe up to select Descriptive Transcript.",
+				"Swipe down to select Audio Description."
+			]), HelpSection("Three fingers in Describer Direct Touch", [
+				"Swipe right to reach the next entry boundary or project End.",
+				"Swipe left to reach the previous entry boundary or project Start.",
+				"Swipe down to undo.",
+				"Swipe up to redo."
+			])]
 		case .captioner:
 			[HelpSection("Create a caption", numbered: true, [
 				"Open a project and choose the Captioner tab. The playhead stays at the same position when you switch tabs.",

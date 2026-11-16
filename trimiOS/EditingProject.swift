@@ -93,6 +93,9 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 		let extra = additionalTracks ?? []
 		return extra.filter { $0.kind == .video }.reversed() + [.primaryVideo, .primaryAudio] + extra.filter { $0.kind == .audio }
 	}
+	var descriptiveTranscript: [TranscriptEntry]?
+	var audioDescriptions: [DescriptionTake]?
+	var descriptionDucking: DescriptionDucking?
 	var captions: [CaptionCue]?
 	var markIn: ProjectTime?
 	var markOut: ProjectTime?
@@ -322,7 +325,7 @@ nonisolated enum ProjectLibrary {
 	static func load(_ url: URL) throws -> EditingProject {
 		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: manifest(url)))
 		if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), id != project.id { throw CocoaError(.fileReadCorruptFile) }
-		guard (1...4).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		guard (1...5).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
 		try validate(project)
 		if project.version < 3 { project.restoreAudioPartners() }
 		project.assignPlacementLabels()
@@ -376,6 +379,18 @@ nonisolated enum ProjectLibrary {
 		for cue in project.captions ?? [] {
 			guard cueIDs.insert(cue.id).inserted, validTime(cue.start), validTime(cue.end),
 				cue.end.time > cue.start.time, !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw corrupt }
+		}
+		var descriptionIDs = Set<UUID>()
+		for entry in project.descriptiveTranscript ?? [] {
+			guard descriptionIDs.insert(entry.id).inserted, validTime(entry.start), validTime(entry.end),
+				entry.start.time < entry.end.time, !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw corrupt }
+		}
+		for take in project.audioDescriptions ?? [] {
+			guard descriptionIDs.insert(take.id).inserted, validTime(take.start), validTime(take.limit), validTime(take.length),
+				take.limit.time > take.start.time, take.length.value > 0, !take.name.isEmpty else { throw corrupt }
+		}
+		if let duck = project.descriptionDucking {
+			guard (-30...0).contains(duck.decibels), (0...3).contains(duck.fade) else { throw corrupt }
 		}
 		for marker in [project.markIn, project.markOut].compactMap({ $0 }) {
 			guard validTime(marker), marker.time <= duration else { throw corrupt }

@@ -35,6 +35,37 @@ nonisolated enum ProjectStorage {
 		try await ProjectLibrary.finishDeletions()
 	}
 
+	static func recordings(_ project: UUID, drafts: Bool, create: Bool = false) throws -> URL {
+		let home = ProjectLibrary.directory.appendingPathComponent(project.uuidString, isDirectory: true)
+		guard try directoryExists(ProjectLibrary.directory), try directoryExists(home) else {
+			throw ProjectFailure("Save the project before recording.")
+		}
+		let directory = home.appendingPathComponent(drafts ? "Draft Recordings" : "Recordings", isDirectory: true)
+		if create { try prepareDirectory(directory) }
+		else { _ = try directoryExists(directory) }
+		return directory
+	}
+
+	static func recording(_ id: UUID, project: UUID, draft: Bool = false) throws -> URL {
+		let url = try recordings(project, drafts: draft).appendingPathComponent(id.uuidString + ".caf")
+		let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+		guard values.isRegularFile == true, values.isSymbolicLink != true else { throw CocoaError(.fileReadCorruptFile) }
+		return url
+	}
+
+	static func pruneUnusedRecordings(_ project: EditingProject) {
+		let folder = ProjectLibrary.directory.appendingPathComponent(project.id.uuidString)
+		guard let directory = try? recordings(project.id, drafts: false),
+			let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil),
+			!files.isEmpty, (try? ProjectLibrary.load(folder)) == project else { return }
+		let retained = Set((project.audioDescriptions ?? []).map(\.recording))
+		for file in files where file.pathExtension == "caf" {
+			if let id = UUID(uuidString: file.deletingPathExtension().lastPathComponent), !retained.contains(id) {
+				try? FileManager.default.removeItem(at: file)
+			}
+		}
+	}
+
 	static func formatted(_ bytes: Int64) -> String {
 		ByteCountFormatter.string(fromByteCount: bytes, countStyle: .file)
 	}

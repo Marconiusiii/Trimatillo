@@ -386,12 +386,39 @@ private struct ScrubAudioWindow {
 
 	private static let openPlayers = NSHashTable<ProjectPlayback>.weakObjects()
 	private var projectID: UUID?
+	private var descriptionDucking: DescriptionDucking?
+	private var primaryLevels: [CMPersistentTrackID: Float] = [:]
+
+	func descriptionPreview(range: CMTimeRange, take: DescriptionTake?, url: URL?) async throws -> AVPlayerItem {
+		guard ready, let item = player.currentItem, let composition = item.asset.mutableCopy() as? AVMutableComposition else {
+			throw ProjectFailure("Wait for the project timeline to finish loading.")
+		}
+		var levels: [AVMutableAudioMixInputParameters] = []
+		for track in try await composition.loadTracks(withMediaType: .audio) {
+			if let volume = primaryLevels[track.trackID] {
+				let mix = AVMutableAudioMixInputParameters(track: track)
+				mix.setVolume(volume, at: .zero)
+				if let take { descriptionDucking?.apply(to: mix, volume: volume, takes: [take], duration: range.end) }
+				levels.append(mix)
+			} else { composition.removeTrack(track) }
+		}
+		if let take, let url { levels.append(try await take.insert(in: composition, url: url)) }
+		let preview = AVPlayerItem(asset: composition)
+		let mix = AVMutableAudioMix()
+		mix.inputParameters = levels
+		preview.audioMix = mix
+		preview.videoComposition = item.videoComposition
+		preview.forwardPlaybackEndTime = range.end
+		return preview
+	}
+
 
 	static func isOpen(_ id: UUID) -> Bool {
 		openPlayers.allObjects.contains { $0.projectID == id }
 	}
 
 	func prepare(_ project: EditingProject) async {
+		if !Self.isOpen(project.id) { ProjectStorage.pruneUnusedRecordings(project) }
 		projectID = project.id
 		Self.openPlayers.add(self)
 		cancelPreparation()
@@ -411,6 +438,7 @@ private struct ScrubAudioWindow {
 		var sources: [UUID: ProjectMediaAccess] = [:]
 		var layers: [(CMTimeRange, AVMutableVideoCompositionLayerInstruction)] = []
 		var levels: [AVMutableAudioMixInputParameters] = []
+		var primary: [CMPersistentTrackID: Float] = [:]
 		var currentName = ""
 		do {
 			for track in project.tracks {
@@ -441,6 +469,8 @@ private struct ScrubAudioWindow {
 									volume *= project.trackVolumes?[partner.id] ?? 1
 								}
 								parameters.setVolume(volume, at: .zero)
+								if track.id == TimelineTrack.primaryVideo.id || track.id == TimelineTrack.primaryAudio.id { primary[output.trackID] = volume }
+								project.descriptionDucking?.apply(to: parameters, volume: volume, takes: project.audioDescriptions ?? [], duration: duration)
 								levels.append(parameters)
 							}
 						}
@@ -469,6 +499,13 @@ private struct ScrubAudioWindow {
 					}
 				}
 			}
+			for take in project.audioDescriptions ?? [] where take.start.time < duration {
+				try Task.checkCancellation()
+				currentName = take.name
+				let url = try ProjectStorage.recording(take.recording, project: project.id)
+				levels.append(try await take.insert(in: composition, url: url))
+			}
+			if composition.duration > duration { composition.removeTimeRange(CMTimeRange(start: duration, end: composition.duration)) }
 			try Task.checkCancellation()
 			guard generation == request else { return }
 			if composition.duration < duration { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: duration)) }
@@ -500,6 +537,8 @@ private struct ScrubAudioWindow {
 				item.videoComposition = video
 			}
 			media = sources
+			primaryLevels = primary
+			descriptionDucking = project.descriptionDucking
 			ended = NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification, object: item)
 				.receive(on: DispatchQueue.main)
 				.sink { [weak self, weak item] _ in
