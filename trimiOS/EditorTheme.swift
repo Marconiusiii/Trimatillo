@@ -122,6 +122,81 @@ private struct AppearanceModifier: ViewModifier {
 	}
 }
 
+private struct KeyboardAccessory: UIViewRepresentable {
+	let endEditing: () -> Void
+
+	func makeUIView(context: Context) -> Attachment { Attachment() }
+
+	func updateUIView(_ attachment: Attachment, context: Context) {
+		attachment.endEditing = endEditing
+		attachment.installIfNeeded()
+	}
+
+	final class Attachment: UIView {
+		var endEditing: (() -> Void)?
+		private lazy var toolbar: UIToolbar = {
+			let bar = UIToolbar()
+			let dismiss = UIBarButtonItem(title: "Dismiss Keyboard", primaryAction: UIAction { [weak self] _ in
+				self?.endEditing?()
+			})
+			bar.items = [.flexibleSpace(), dismiss]
+			bar.sizeToFit()
+			return bar
+		}()
+
+		override func didMoveToWindow() {
+			super.didMoveToWindow()
+			let center = NotificationCenter.default
+			center.removeObserver(self)
+			guard window != nil else { return }
+			for event in [UITextField.textDidBeginEditingNotification, UITextView.textDidBeginEditingNotification] {
+				center.addObserver(self, selector: #selector(editingBegan(_:)), name: event, object: nil)
+			}
+			installIfNeeded()
+		}
+
+		func installIfNeeded() {
+			guard let window, let responder = firstResponder(in: window) else { return }
+			install(on: responder)
+		}
+
+		@objc private func editingBegan(_ notification: Notification) {
+			guard let responder = notification.object as? UIView, responder.window === window else { return }
+			install(on: responder)
+		}
+
+		private func install(on responder: UIView) {
+			if let field = responder as? UITextField, field.inputAccessoryView !== toolbar {
+				field.inputAccessoryView = toolbar
+				field.reloadInputViews()
+			} else if let editor = responder as? UITextView, editor.inputAccessoryView !== toolbar {
+				editor.inputAccessoryView = toolbar
+				editor.reloadInputViews()
+			}
+		}
+
+		private func firstResponder(in view: UIView) -> UIView? {
+			if view.isFirstResponder { return view }
+			for child in view.subviews {
+				if let responder = firstResponder(in: child) { return responder }
+			}
+			return nil
+		}
+	}
+}
+
+extension View {
+	func dismissKeyboardToolbar(while editing: Bool, _ endEditing: @escaping () -> Void) -> some View {
+		background {
+			if editing {
+				KeyboardAccessory(endEditing: endEditing)
+					.frame(width: 0, height: 0)
+					.accessibilityHidden(true)
+			}
+		}
+	}
+}
+
 extension View {
 	func editorAppearance() -> some View { modifier(AppearanceModifier()) }
 }

@@ -54,7 +54,7 @@ struct ProjectEditorView: View {
 	@AccessibilityFocusState(for: .voiceOver) private var surfaceFocused: Bool
 	@AppStorage("directTouchScrubbing", store: EditorPreferences.shared) private var scrubMode = DirectTouchScrubbing.absolute
 	@State private var jumping = false
-	@State private var jumpText = ""
+	@FocusState private var renamingClip: Bool
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@AccessibilityFocusState private var focus: String?
 	@State private var trigger: String?
@@ -116,11 +116,9 @@ struct ProjectEditorView: View {
 				switch sheet {
 				case .settings:
 					NavigationStack {
-						Form {
-							ProjectSettingsForm(project: project, saving: true) { updated in
-								if updated != project { try save(updated, action: "Project Settings") }
-								projectSheet = nil
-							}
+						ProjectSettingsForm(project: project, saving: true) { updated in
+							if updated != project { try save(updated, action: "Project Settings") }
+							projectSheet = nil
 						}
 						.editorListMargins()
 						.scrollContentBackground(.hidden)
@@ -165,7 +163,8 @@ struct ProjectEditorView: View {
 			.onChange(of: pickingFile) { _, presented in if !presented { focus = trigger } }
 			.sheet(item: $renaming, onDismiss: { focus = trigger }) { source in
 				NavigationStack {
-					Form { TextField("Clip Name", text: $clipName) }
+					Form { TextField("Clip Name", text: $clipName).focused($renamingClip) }
+						.dismissKeyboardToolbar(while: renamingClip) { renamingClip = false }
 						.editorListMargins()
 						.scrollContentBackground(.hidden)
 						.background(EditorTheme.workspace)
@@ -195,16 +194,8 @@ struct ProjectEditorView: View {
 			.fullScreenCover(item: $board, onDismiss: { focus = trigger }) { editing in
 				CuttingBoardKeyboard(session: editing.session, projectActions: boardActions(editing)) { board = nil }
 			}
-			.alert("Jump to Time", isPresented: $jumping) {
-				TextField(format == .frames ? "Frame" : "Time", text: $jumpText)
-				Button("Cancel", role: .cancel) { focus = "jump" }
-				Button("Jump") {
-					if format == .frames, let index = Int32(jumpText), index >= 0 {
-						playback.seek(CMTimeMultiply(project.frame, multiplier: index))
-					} else if format != .frames, let time = CuttingBoardSession.parse(jumpText) { playback.seek(time) }
-					else { error = "Enter a valid playhead position and choose Jump." }
-					focus = "jump"
-				}
+			.sheet(isPresented: $jumping, onDismiss: { focus = "jump" }) {
+				ProjectJumpSheet(format: format, frame: project.frame) { playback.seek($0) }
 			}
 			.alert("Project", isPresented: Binding(get: { !directTouch && error != nil }, set: { if !$0 { error = nil } })) {
 				Button("OK") { error = nil }
@@ -480,7 +471,6 @@ struct ProjectEditorView: View {
 
 	private func openJump() {
 		playback.pause()
-		jumpText = ""
 		jumping = true
 	}
 
@@ -1098,7 +1088,53 @@ private struct TrackEffectsSheet: View {
 	}
 }
 
+private struct ProjectJumpSheet: View {
+	let format: TimecodeFormat
+	let frame: CMTime
+	let seek: (CMTime) -> Void
+	@Environment(\.dismiss) private var dismiss
+	@FocusState private var typing: Bool
+	@State private var text = ""
+	@State private var error: String?
+
+	var body: some View {
+		NavigationStack {
+			Form {
+				TextField(format == .frames ? "Frame" : "Time", text: $text)
+					.focused($typing)
+					.autocorrectionDisabled()
+					.onSubmit(jump)
+				if let error { Text(error) }
+			}
+			.editorListMargins()
+			.dismissKeyboardToolbar(while: typing) { typing = false }
+			.navigationTitle("Jump to Time")
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+				ToolbarItem(placement: .principal) { Text("Jump to Time").font(.headline).accessibilityAddTraits(.isHeader) }
+				ToolbarItem(placement: .confirmationAction) { Button("Jump", action: jump) }
+			}
+		}
+		.editorAppearance()
+		.task { typing = true }
+	}
+
+	private func jump() {
+		if format == .frames, let index = Int32(text), index >= 0 {
+			seek(CMTimeMultiply(frame, multiplier: index))
+		} else if format != .frames, let time = CuttingBoardSession.parse(text) {
+			seek(time)
+		} else {
+			error = "Enter a valid playhead position and choose Jump."
+			return
+		}
+		dismiss()
+	}
+}
+
 private struct PlacementSheet: View {
+	@FocusState private var namingTrack: Bool
 	let tracks: [TimelineTrack]
 	@State var destination: TimelineTrack
 	let offersAudio: Bool
@@ -1125,7 +1161,7 @@ private struct PlacementSheet: View {
 							ForEach(["New Track", "Overwrite", "Split"], id: \.self) { Text($0) }
 						}
 					}
-					if method == "New Track" { TextField("Track Name", text: $name) }
+					if method == "New Track" { TextField("Track Name", text: $name).focused($namingTrack) }
 					else {
 						Picker("Destination Track", selection: Binding(get: { destination.id }, set: { id in if let track = tracks.first(where: { $0.id == id }) { destination = track } })) {
 							ForEach(tracks) { Text($0.title).tag($0.id) }
@@ -1136,6 +1172,7 @@ private struct PlacementSheet: View {
 				if let error { Text(error) }
 			}
 			.editorListMargins()
+			.dismissKeyboardToolbar(while: namingTrack) { namingTrack = false }
 			.navigationTitle(directTouch && !choseMethod ? "Clip Placement" : "Add at Playhead")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {

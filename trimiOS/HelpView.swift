@@ -97,13 +97,13 @@ private enum HelpTopic: String, CaseIterable {
 			[HelpSection("Create a caption", numbered: true, [
 				"Open a project and choose the Captioner tab. The playhead stays at the same position when you switch tabs.",
 				"Move to the beginning of the passage and choose Mark In. Move to its end and choose Mark Out.",
-				"Choose New Caption. Enter the words in Caption Text. Play Selection repeats the marked passage while you write. Pause Selection stops playback.",
+				"Choose New Caption and start typing. Choose Dismiss Keyboard to finish typing and keep the caption open. Play Selection repeats the marked passage while you write. Pause Selection stops playback.",
 				"Use Insert Caption Description to add a music description, sound description, or lyrics. Replace the sample words with your own.",
 				"Choose Save. The caption appears in the Caption Timeline and over the picture during its marked range. From Direct Touch, Save returns to the active surface and announces Caption Created."
 			]), HelpSection("Review and export", numbered: true, [
 				"Open a caption's menu or accessibility actions to go to its start, edit it, or delete it. To change its timing, mark a new range, edit the caption, and choose Use Marked Range.",
 				"Choose Finalize Captions to divide draft passages into captions of up to two lines. Timing uses a reading speed of 160 words per minute, the project frame rate, and the space before the next caption or project end.",
-				"Review any passages listed after finalizing. Shorten the text or adjust the marked range and finalize again. Undo restores the previous captions.",
+				"If all passages finalize, VoiceOver announces the result. If any need review, the review heading gives the count. Move to each passage to read the reason. Shorten the text or adjust the marked range and finalize again. Undo restores the previous captions.",
 				"Choose Export Captions, then SRT or WebVTT for timed captions, or Plain Text Transcript for the words in timeline order. Enter a filename and choose where to save it."
 			]), HelpSection("One finger in Captioner Direct Touch", [
 				"Swipe right to step forward one project frame.",

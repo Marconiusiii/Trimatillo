@@ -20,6 +20,8 @@ struct CaptionEntryView: View {
 	@State private var cue: CaptionCue
 	@State private var failure: String?
 	@FocusState private var typing: Bool
+	@AccessibilityFocusState(for: .voiceOver) private var captionFocused: Bool
+	@State private var didSetInitialFocus = false
 	@AccessibilityFocusState private var insertFocused: Bool
 
 	init(entry: CaptionEntry, playback: ProjectPlayback, markedRange: CMTimeRange?, time: @escaping (CMTime) -> String,
@@ -38,6 +40,7 @@ struct CaptionEntryView: View {
 				TextEditor(text: $cue.text)
 					.accessibilityLabel("Caption Text")
 					.focused($typing)
+					.accessibilityFocused($captionFocused)
 					.frame(minHeight: 96)
 				LabeledContent("In", value: time(cue.start.time))
 				LabeledContent("Out", value: time(cue.end.time))
@@ -60,6 +63,7 @@ struct CaptionEntryView: View {
 				if let failure { Text(failure) }
 			}
 			.editorListMargins()
+			.dismissKeyboardToolbar(while: typing) { typing = false }
 			.navigationTitle(entry.editing ? "Edit Caption" : "New Caption")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -81,7 +85,12 @@ struct CaptionEntryView: View {
 		}
 		.editorAppearance()
 		.accessibilityAction(.magicTap, playSelection)
-		.task { typing = true }
+		.task {
+			guard !didSetInitialFocus else { return }
+			didSetInitialFocus = true
+			typing = true
+			if !entry.editing { captionFocused = true }
+		}
 		.onDisappear {
 			playback.pause()
 			playback.seek(entry.returnTime)
@@ -245,6 +254,7 @@ struct CaptionerView: View {
 	let edit: (CaptionCue) -> Void
 	let save: (EditingProject, String) throws -> Void
 	@State private var finalizing = false
+	@State private var finalizedMessage: String?
 	@State private var exporting = false
 	@State private var exportFormat = CaptionExportFormat.srt
 	@State private var document: CaptionDocument?
@@ -280,8 +290,15 @@ struct CaptionerView: View {
 			.disabled(project.captions?.contains(where: \.isDraft) != true)
 			.buttonStyle(EditorButtonStyle())
 			.accessibilityFocused(focus, equals: "finalize")
-			.sheet(isPresented: $finalizing, onDismiss: { focus.wrappedValue = "finalize" }) {
-				CaptionFinalizationView(project: $project, save: save)
+			.sheet(isPresented: $finalizing, onDismiss: {
+				focus.wrappedValue = "finalize"
+				if let message = finalizedMessage {
+					finalizedMessage = nil
+					let speech = NSAttributedString(string: message, attributes: [.accessibilitySpeechQueueAnnouncement: true])
+					UIAccessibility.post(notification: .announcement, argument: speech)
+				}
+			}) {
+				CaptionFinalizationView(project: $project, save: save) { finalizedMessage = $0 }
 			}
 		Menu {
 			ForEach(CaptionExportFormat.allCases, id: \.self) { format in
@@ -331,12 +348,17 @@ struct CaptionerView: View {
 }
 
 private struct CaptionFinalizationView: View {
+	var reviewTitle: String {
+		issues.count == 1 ? "Review 1 passage" : "Review " + String(issues.count) + " passages"
+	}
 	@Binding var project: EditingProject
 	let save: (EditingProject, String) throws -> Void
 	@Environment(\.dismiss) private var dismiss
 	@State private var issues: [CaptionFinalizationIssue] = []
 	@State private var failure: String?
 	@State private var running = true
+	let completed: (String) -> Void
+	@AccessibilityFocusState(for: .voiceOver) private var resultFocused: Bool
 
 	var body: some View {
 		NavigationStack {
@@ -344,16 +366,28 @@ private struct CaptionFinalizationView: View {
 				LoadingStatusView("Finalizing captions", cancel: { dismiss() })
 			} else {
 				List {
-					if let failure { Text(failure) }
+					if let failure {
+						Text("Could not finalize captions. " + failure)
+							.accessibilityFocused($resultFocused)
+							.onAppear { resultFocused = true }
+					}
 					ForEach(issues) { issue in
 						Text(issue.displayName + ". " + issue.message)
 					}
 				}
-				.navigationTitle("Finalize Captions")
+				.navigationTitle(failure == nil ? reviewTitle : "Finalize Captions")
 				.navigationBarTitleDisplayMode(.inline)
 				.toolbar {
 					ToolbarItem(placement: .topBarLeading) { Button("Done") { dismiss() } }
-					ToolbarItem(placement: .principal) { Text("Finalize Captions").font(.headline).accessibilityAddTraits(.isHeader) }
+					ToolbarItem(placement: .principal) {
+						if failure == nil {
+							Text(reviewTitle).font(.headline).accessibilityAddTraits(.isHeader)
+								.accessibilityFocused($resultFocused)
+								.onAppear { resultFocused = true }
+						} else {
+							Text("Finalize Captions").font(.headline).accessibilityAddTraits(.isHeader)
+						}
+					}
 				}
 			}
 		}
@@ -376,8 +410,15 @@ private struct CaptionFinalizationView: View {
 				}
 				issues = result.issues
 				if issues.isEmpty {
+					let captions = result.createdCues == 1 ? "1 caption" : String(result.createdCues) + " captions"
+					if result.finalizedPassages == result.createdCues {
+						completed(captions + " finalized.")
+					} else {
+						let passages = result.finalizedPassages == 1 ? "1 passage" : String(result.finalizedPassages) + " passages"
+						completed(captions + " finalized from " + passages + ".")
+					}
 					dismiss()
-					UIAccessibility.post(notification: .announcement, argument: "Captions finalized")
+					return
 				}
 			} catch { failure = error.localizedDescription }
 			running = false

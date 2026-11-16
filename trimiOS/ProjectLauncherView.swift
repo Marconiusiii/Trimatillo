@@ -150,7 +150,7 @@ struct ProjectLauncherView: View {
 
 	private var projectForm: some View {
 		NavigationStack {
-			Form {
+			Group {
 				if mode == .create {
 					ProjectSettingsForm(project: EditingProject(name: ""), saving: false) { project in
 						try ProjectLibrary.save(project)
@@ -158,21 +158,23 @@ struct ProjectLauncherView: View {
 						dismiss()
 					}
 				} else {
-					if saved?.isEmpty == true {
-						Text("No saved projects")
-							.accessibilityFocused($focusedProject, equals: .emptyList)
-							.editorTouchRow()
-							.containerRelativeFrame(.vertical)
-							.contentShape(Rectangle())
-							.listRowInsets(EdgeInsets())
-					}
-					ForEach(saved ?? []) { project in
-						Button { selection = project.id } label: { Text(project.name).editorTouchRow(alignment: .leading) }
-							.accessibilityFocused($focusedProject, equals: .project(project.id))
-							.accessibilityAction(named: "Delete Project") { pendingDeletion = project }
-							.contextMenu {
-								Button("Delete Project", role: .destructive) { pendingDeletion = project }
-							}
+					Form {
+						if saved?.isEmpty == true {
+							Text("No saved projects")
+								.accessibilityFocused($focusedProject, equals: .emptyList)
+								.editorTouchRow()
+								.containerRelativeFrame(.vertical)
+								.contentShape(Rectangle())
+								.listRowInsets(EdgeInsets())
+						}
+						ForEach(saved ?? []) { project in
+							Button { selection = project.id } label: { Text(project.name).editorTouchRow(alignment: .leading) }
+								.accessibilityFocused($focusedProject, equals: .project(project.id))
+								.accessibilityAction(named: "Delete Project") { pendingDeletion = project }
+								.contextMenu {
+									Button("Delete Project", role: .destructive) { pendingDeletion = project }
+								}
+						}
 					}
 				}
 			}
@@ -196,6 +198,8 @@ struct ProjectLauncherView: View {
 }
 
 struct ProjectSettingsForm: View {
+	private enum Field: Hashable { case name, width, height, rate, duration }
+	@FocusState private var field: Field?
 	let project: EditingProject
 	let saving: Bool
 	let submit: (EditingProject) throws -> Void
@@ -230,8 +234,9 @@ struct ProjectSettingsForm: View {
 	}
 
 	var body: some View {
-		Group {
+		Form {
 			TextField("Project Name", text: $name)
+				.focused($field, equals: .name)
 			Picker("Resolution", selection: $resolution) {
 				ForEach(ProjectResolutionChoice.allCases) { Text($0.label).tag($0) }
 			}
@@ -253,15 +258,16 @@ struct ProjectSettingsForm: View {
 					}
 			}
 			if resolution != .sameAsMedia {
-				LabeledContent("Frames per Second") { TextField("Frames per Second", value: $rate, format: .number).keyboardType(.decimalPad) }
+				LabeledContent("Frames per Second") { TextField("Frames per Second", value: $rate, format: .number).keyboardType(.decimalPad).focused($field, equals: .rate) }
 			}
 			Toggle("Use Set Project Duration", isOn: $target)
 			if target {
-				LabeledContent("Duration in Seconds") { TextField("Duration in Seconds", value: $seconds, format: .number).keyboardType(.decimalPad) }
+				LabeledContent("Duration in Seconds") { TextField("Duration in Seconds", value: $seconds, format: .number).keyboardType(.decimalPad).focused($field, equals: .duration) }
 			}
 			Button(saving ? "Save" : "Create") { apply() }
 				.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 		}
+		.dismissKeyboardToolbar(while: field != nil) { field = nil }
 		.alert("Project Settings", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
 			Button("OK") { error = nil }
 		} message: { Text(error ?? "") }
@@ -284,6 +290,7 @@ struct ProjectSettingsForm: View {
 				}
 			}))
 			.keyboardType(.numberPad)
+			.focused($field, equals: horizontal ? .width : .height)
 			.multilineTextAlignment(.trailing)
 		} label: { Text(label) }
 	}

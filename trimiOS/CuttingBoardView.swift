@@ -373,6 +373,7 @@ private struct TimeEntry {
 }
 
 private struct JumpSheet: View {
+	@FocusState private var typing: Bool
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@ObservedObject var session: CuttingBoardSession
 	@Environment(\.dismiss) private var dismiss
@@ -384,6 +385,7 @@ private struct JumpSheet: View {
 			Form {
 				if let binding = Binding($entry) {
 					TextField(format == .frames ? "Playhead frame" : "Playhead time", text: binding.text)
+						.focused($typing)
 						.autocorrectionDisabled()
 						.onSubmit { jump() }
 				}
@@ -391,6 +393,7 @@ private struct JumpSheet: View {
 				if let error { Text(error) }
 			}
 			.editorListMargins()
+			.dismissKeyboardToolbar(while: typing) { typing = false }
 			.navigationTitle("Jump to Time")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
@@ -659,6 +662,7 @@ private struct BoundaryTimeEditor: View {
 					.onSubmit { accept() }
 				if let error { Text(error) }
 			}
+			.dismissKeyboardToolbar(while: typing) { typing = false }
 			.editorListMargins()
 			.navigationTitle(title)
 			.navigationBarTitleDisplayMode(.inline)
