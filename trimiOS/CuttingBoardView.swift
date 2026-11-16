@@ -21,6 +21,13 @@ struct EditorMenuAction: Identifiable {
 }
 
 extension View {
+	func editorFieldLabel(_ label: String) -> some View {
+		VStack(alignment: .leading, spacing: 4) {
+			Text(label).accessibilityHidden(true)
+			self.accessibilityLabel(Text(label))
+		}
+	}
+
 	func editorMenuActions(_ label: String, _ actions: [EditorMenuAction]) -> some View {
 		actions.reduce(accessibilityLabel(Text(label))) { control, action in
 			control.accessibilityAction(named: Text(action.title), action.perform)
@@ -384,10 +391,11 @@ private struct JumpSheet: View {
 		NavigationStack {
 			Form {
 				if let binding = Binding($entry) {
-					TextField(format == .frames ? "Playhead frame" : "Playhead time", text: binding.text)
+					TextField("", text: binding.text)
 						.focused($typing)
 						.autocorrectionDisabled()
 						.onSubmit { jump() }
+						.editorFieldLabel(format == .frames ? "Playhead frame" : "Playhead time")
 				}
 				Button("Jump") { jump() }
 				if let error { Text(error) }
@@ -656,10 +664,11 @@ private struct BoundaryTimeEditor: View {
 	var body: some View {
 		NavigationStack {
 			Form {
-				TextField(format == .frames ? "Source frame" : "Source time", text: $entry.text)
+				TextField("", text: $entry.text)
 					.focused($typing)
 					.autocorrectionDisabled()
 					.onSubmit { accept() }
+					.editorFieldLabel(format == .frames ? "Source frame" : "Source time")
 				if let error { Text(error) }
 			}
 			.dismissKeyboardToolbar(while: typing) { typing = false }

@@ -226,7 +226,7 @@ struct ProjectEditorView: View {
 			.onChange(of: pickingFile) { _, presented in if !presented { focus = trigger } }
 			.sheet(item: $renaming, onDismiss: { focus = trigger }) { source in
 				NavigationStack {
-					Form { TextField("Clip Name", text: $clipName).focused($renamingClip) }
+					Form { TextField("", text: $clipName).focused($renamingClip).editorFieldLabel("Clip Name") }
 						.dismissKeyboardToolbar(while: renamingClip) { renamingClip = false }
 						.editorListMargins()
 						.scrollContentBackground(.hidden)
@@ -525,7 +525,7 @@ struct ProjectEditorView: View {
 			descriptionTimeline = down ? .audio : .transcript
 			playback.playhead.navigationLabel = nil
 			keyboardClip = nil
-			UIAccessibility.post(notification: .announcement, argument: descriptionTimeline.rawValue)
+			openDescription(nil)
 		case (2, .down) where tool == .captioner:
 			openCaption(nil)
 		case (2, .up) where tool == .captioner:
@@ -938,7 +938,7 @@ struct ProjectEditorView: View {
 		playback.pause()
 		descriptionTrigger = id?.uuidString ?? "newDescription"
 		descriptionSaved = false
-		descriptionEntry = DescriptionEntry(transcript: transcript, take: take, range: range)
+		descriptionEntry = DescriptionEntry(timeline: descriptionTimeline, transcript: transcript, take: take, range: range)
 	}
 
 	private func descriptionSheet(_ entry: DescriptionEntry) -> some View {
@@ -1269,10 +1269,11 @@ private struct ProjectJumpSheet: View {
 	var body: some View {
 		NavigationStack {
 			Form {
-				TextField(format == .frames ? "Frame" : "Time", text: $text)
+				TextField("", text: $text)
 					.focused($typing)
 					.autocorrectionDisabled()
 					.onSubmit(jump)
+					.editorFieldLabel(format == .frames ? "Frame" : "Time")
 				if let error { Text(error) }
 			}
 			.editorListMargins()
@@ -1330,7 +1331,7 @@ private struct PlacementSheet: View {
 							ForEach(["New Track", "Overwrite", "Split"], id: \.self) { Text($0) }
 						}
 					}
-					if method == "New Track" { TextField("Track Name", text: $name).focused($namingTrack) }
+					if method == "New Track" { TextField("", text: $name).focused($namingTrack).editorFieldLabel("Track Name") }
 					else {
 						Picker("Destination Track", selection: Binding(get: { destination.id }, set: { id in if let track = tracks.first(where: { $0.id == id }) { destination = track } })) {
 							ForEach(tracks) { Text($0.title).tag($0.id) }

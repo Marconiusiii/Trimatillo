@@ -37,10 +37,10 @@ struct CaptionEntryView: View {
 		NavigationStack {
 			Form {
 				TextEditor(text: $cue.text)
-					.accessibilityLabel("Caption Text")
 					.focused($typing)
 					.accessibilityFocused($captionFocused)
 					.frame(minHeight: 96)
+					.editorFieldLabel("Caption Text")
 				LabeledContent("In", value: time(cue.start.time))
 				LabeledContent("Out", value: time(cue.end.time))
 				if entry.editing, let markedRange {

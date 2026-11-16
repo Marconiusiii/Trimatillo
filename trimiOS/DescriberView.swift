@@ -3,6 +3,7 @@ import SwiftUI
 
 struct DescriptionEntry: Identifiable {
 	let id = UUID()
+	let timeline: DescriptionTimeline
 	let transcript: TranscriptEntry?
 	let take: DescriptionTake?
 	let range: CMTimeRange
@@ -134,6 +135,8 @@ struct DescriptionEntryView: View {
 	@State private var playMode: PlayMode?
 	@State private var confirming = false
 	@FocusState private var field: Field?
+	@AccessibilityFocusState(for: .voiceOver) private var recordFocused: Bool
+	@AccessibilityFocusState(for: .voiceOver) private var textFocused: Bool
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.scenePhase) private var phase
 	private enum Field { case text, name }
@@ -152,7 +155,7 @@ struct DescriptionEntryView: View {
 		_length = State(initialValue: entry.take?.length.time)
 	}
 
-	private var title: String { entry.editing ? "Edit " + (entry.take == nil ? "Descriptive Transcript" : "Audio Description") : "New Description" }
+	private var title: String { entry.timeline == .audio ? "Audio Description" : "Written Description" }
 	private var dirty: Bool {
 		capture.draft != nil || capture.phase != .idle || text != (entry.transcript?.text ?? "") ||
 			range != entry.range || fit != (entry.take?.fit ?? .speed) || (entry.take != nil && name != entry.take?.name)
@@ -170,11 +173,11 @@ struct DescriptionEntryView: View {
 				if entry.editing, let marks = project.captionRange, marks != range {
 					Button("Use Marked Range") { stopPreview(); range = marks }.disabled(capture.phase != .idle)
 				}
-				if entry.take == nil {
-					TextEditor(text: $text).frame(minHeight: 96).focused($field, equals: .text).accessibilityLabel("Description Text")
+				if entry.timeline == .transcript {
+					TextEditor(text: $text).frame(minHeight: 96).focused($field, equals: .text).accessibilityFocused($textFocused).editorFieldLabel("Description Text")
 				}
 				previewButton("Play In to Out", mode: .passage)
-				if entry.transcript == nil { recordingControls }
+				if entry.timeline == .audio { recordingControls }
 			}
 			.editorListMargins()
 			.scrollContentBackground(.hidden)
@@ -202,7 +205,15 @@ struct DescriptionEntryView: View {
 		.alert("Describer", isPresented: Binding(get: { capture.failure != nil }, set: { if !$0 { capture.failure = nil } })) {
 			Button("OK") {}
 		} message: { Text(capture.failure ?? "") }
-		.onAppear { refresh(); if entry.take == nil { field = .text } }
+		.onAppear {
+			if entry.timeline == .audio {
+				refresh()
+				recordFocused = true
+			} else {
+				field = .text
+				textFocused = true
+			}
+		}
 		.onChange(of: capture.phase) { _, phase in if phase == .idle { refresh() } }
 		.onChange(of: phase) { _, phase in if phase == .background { interrupted() } }
 		.onReceive(NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)) { note in
@@ -219,15 +230,15 @@ struct DescriptionEntryView: View {
 	}
 
 	@ViewBuilder private var recordingControls: some View {
-		TextField("Recording Name", text: $name).focused($field, equals: .name)
+		TextField("", text: $name).focused($field, equals: .name).editorFieldLabel("Recording Name")
 		Button(capture.phase == .recording ? "Stop Recording" : "Record") {
 			field = nil
 			playMode = nil
-			Task {
-				if capture.phase == .recording { await capture.stop() }
-				else { await capture.start(project: project, playback: playback, range: range) }
-			}
-		}.disabled(capture.phase == .preparing || capture.phase == .stopping)
+			if capture.phase == .recording { capture.stop() }
+			else { Task { await capture.start(project: project, playback: playback, range: range) } }
+		}
+		.accessibilityFocused($recordFocused)
+		.disabled(capture.phase == .preparing)
 		if !drafts.isEmpty {
 			Menu("Recover Take") {
 				ForEach(drafts, id: \.self) { url in
@@ -297,7 +308,7 @@ struct DescriptionEntryView: View {
 			guard range.start >= .zero, range.end <= project.duration else { throw ProjectFailure("Mark a range within the project and choose Use Marked Range.") }
 			var next = project
 			let trimmed = text.trimmingCharacters(in: .whitespacesAndNewlines)
-			if entry.take == nil, !trimmed.isEmpty {
+			if entry.timeline == .transcript, !trimmed.isEmpty {
 				let row = TranscriptEntry(id: entry.transcript?.id ?? UUID(), start: ProjectTime(range.start), end: ProjectTime(range.end), text: trimmed)
 				var rows = next.descriptiveTranscript ?? []
 				rows.removeAll { $0.id == row.id }

@@ -99,11 +99,11 @@ private enum HelpTopic: String, CaseIterable {
 		case .describer:
 			[HelpSection("Describe a passage", numbered: true, [
 				"Open Describer in a project. Mark In at the beginning of the passage and Out at its end.",
-				"Choose New Description or press Command-Shift-D. Enter the description text. Choose Dismiss Keyboard to return to the controls.",
+				"For a written entry, select Descriptive Transcript in Timeline. Choose New Description or press Command-Shift-D. In Written Description, enter Description Text and choose Save.",
 				"Choose Play In to Out to repeat the passage. Choose Stop Preview when you are finished.",
-				"To add narration, enter a recording name and choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
+				"For narration, select Audio Description in Timeline and choose New Description. In Audio Description, you can change Recording Name. Choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
 				"Choose Play Take to hear the original recording. If the take runs past Out, choose Speed Up to Fit to preserve pitch or Trim at Out to use the beginning of the take. Play with Primary Audio previews the result against the passage.",
-				"Choose Save to add your text, recording, or both. Cancel lets you discard edits. To resume a recorded draft, mark the passage, open New Description, and choose Recover Take."
+				"Choose Save to add the recording to Audio Description. To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
 			]), HelpSection("Review and export", numbered: true, [
 				"Choose Descriptive Transcript in Timeline to review the written entries. Choose Audio Description for the recorded clips. Switching keeps the playhead and markers in place.",
 				"Open an entry's menu or accessibility actions to go to its start, edit, or delete it. Return edits a focused entry with a keyboard. Mark a new range and choose Use Marked Range while editing to change its timing. Undo restores a deleted entry.",
@@ -123,8 +123,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Double-tap to play or pause.",
 				"Swipe right to play forward. Repeat to increase speed.",
 				"Swipe left to rewind. Repeat to increase speed.",
-				"Swipe up to select Descriptive Transcript.",
-				"Swipe down to select Audio Description."
+				"Swipe up to open Written Description for the marked passage. Description Text is ready to type.",
+				"Swipe down to open Audio Description for the marked passage. Choose Record to start a take."
 			]), HelpSection("Three fingers in Describer Direct Touch", [
 				"Swipe right to reach the next entry boundary or project End.",
 				"Swipe left to reach the previous entry boundary or project Start.",

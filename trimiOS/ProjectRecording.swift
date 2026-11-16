@@ -4,13 +4,14 @@ import Combine
 import SwiftUI
 
 @MainActor final class ProjectRecording: NSObject, ObservableObject, AVAudioRecorderDelegate {
-	enum Phase { case idle, preparing, recording, stopping }
+	enum Phase { case idle, preparing, recording }
 	@Published private(set) var phase = Phase.idle
 	@Published private(set) var draft: UUID?
 	@Published var failure: String?
 	let player = AVPlayer()
 	private var recorder: AVAudioRecorder?
 	private var cue: AVAudioPlayer?
+	private var stopCue: AVAudioPlayer?
 	private var generation = 0
 	private var ownsSession = false
 	private static var reserved = Set<UUID>()
@@ -50,6 +51,7 @@ import SwiftUI
 	}
 
 	func stopPreview() {
+		stopCue?.stop()
 		generation += 1
 		player.pause()
 		player.replaceCurrentItem(with: nil)
@@ -57,7 +59,10 @@ import SwiftUI
 
 	func start(project: EditingProject, playback: ProjectPlayback, range: CMTimeRange) async {
 		guard phase == .idle else { return }
-		if let owner = Self.micOwner, owner !== self { failure = "Stop the recording in the other window first."; return }
+		if let owner = Self.micOwner, owner !== self {
+			guard owner.phase == .idle else { failure = "Stop the recording in the other window first."; return }
+			owner.interrupt()
+		}
 		Self.micOwner = self
 		stopPreview()
 		let request = generation
@@ -71,14 +76,18 @@ import SwiftUI
 			let directory = try ProjectStorage.recordings(project.id, drafts: true, create: true)
 			let item = try await playback.descriptionPreview(range: range, take: nil, url: nil)
 			guard request == generation else { return }
-			ownsSession = true
-			try Self.configureInput()
+			if !ownsSession {
+				ownsSession = true
+				try Self.configureInput()
+			}
+			stopCue = try AVAudioPlayer(data: Self.fallingCue)
+			stopCue?.prepareToPlay()
 			player.replaceCurrentItem(with: item)
 			guard await player.seek(to: range.start, toleranceBefore: .zero, toleranceAfter: .zero) else {
 				throw ProjectFailure("Could not position the preview. Choose Record again.")
 			}
 			guard request == generation else { return }
-			try await playCue(start: true, request: request)
+			try await playStartCue(request: request)
 			guard request == generation else { return }
 			let id = UUID()
 			let url = directory.appendingPathComponent(id.uuidString + ".caf")
@@ -100,16 +109,13 @@ import SwiftUI
 		}
 	}
 
-	func stop() async {
+	func stop() {
 		guard phase == .recording else { return }
-		phase = .stopping
-		stopPreview()
-		let request = generation
+		player.pause()
 		recorder?.stop()
 		recorder = nil
-		do { try await playCue(start: false, request: request) }
-		catch { if request == generation { failure = error.localizedDescription } }
-		if request == generation { interrupt() }
+		phase = .idle
+		if stopCue?.play() != true { failure = "Could not play the recording cue. Check the audio output." }
 	}
 
 	func interrupt() {
@@ -118,6 +124,7 @@ import SwiftUI
 		recorder = nil
 		cue?.stop()
 		cue = nil
+		stopCue = nil
 		if ownsSession { Self.restorePlayback(); ownsSession = false }
 		if Self.micOwner === self { Self.micOwner = nil }
 		phase = .idle
@@ -159,7 +166,10 @@ import SwiftUI
 		selectDraft(id)
 	}
 
-	private func playCue(start: Bool, request: Int) async throws {
+	private static let risingCue = cueData(start: true)
+	private static let fallingCue = cueData(start: false)
+
+	private static func cueData(start: Bool) -> Data {
 		// The same 100 ms rising/falling pair as Trimato. The mic opens after playback finishes.
 		var data = Data()
 		func word<T: FixedWidthInteger>(_ n: T) { var n = n.littleEndian; withUnsafeBytes(of: &n) { data.append(contentsOf: $0) } }
@@ -172,7 +182,11 @@ import SwiftUI
 			let frequency = (i < 4800) == start ? 660.0 : 880.0
 			word(Int16(5200 * min(1, local / 0.008, (0.1 - local) / 0.008) * sin(2 * .pi * frequency * t)))
 		}
-		let sound = try AVAudioPlayer(data: data)
+		return data
+	}
+
+	private func playStartCue(request: Int) async throws {
+		let sound = try AVAudioPlayer(data: Self.risingCue)
 		cue = sound
 		guard sound.play() else { throw ProjectFailure("Could not play the recording cue. Check the audio output.") }
 		while sound.isPlaying {

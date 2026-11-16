@@ -245,8 +245,9 @@ struct ProjectSettingsForm: View {
 
 	var body: some View {
 		Form {
-			TextField("Project Name", text: $name)
+			TextField("", text: $name)
 				.focused($field, equals: .name)
+				.editorFieldLabel("Project Name")
 			Picker("Resolution", selection: $resolution) {
 				ForEach(ProjectResolutionChoice.allCases) { Text($0.label).tag($0) }
 			}
@@ -268,11 +269,17 @@ struct ProjectSettingsForm: View {
 					}
 			}
 			if resolution != .sameAsMedia {
-				LabeledContent("Frames per Second") { TextField("Frames per Second", value: $rate, format: .number).keyboardType(.decimalPad).focused($field, equals: .rate) }
+				TextField("", value: $rate, format: .number)
+					.keyboardType(.decimalPad)
+					.focused($field, equals: .rate)
+					.editorFieldLabel("Frames per Second")
 			}
 			Toggle("Use Set Project Duration", isOn: $target)
 			if target {
-				LabeledContent("Duration in Seconds") { TextField("Duration in Seconds", value: $seconds, format: .number).keyboardType(.decimalPad).focused($field, equals: .duration) }
+				TextField("", value: $seconds, format: .number)
+					.keyboardType(.decimalPad)
+					.focused($field, equals: .duration)
+					.editorFieldLabel("Duration in Seconds")
 			}
 			Button(saving ? "Save" : "Create") { apply() }
 				.disabled(name.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
@@ -289,8 +296,7 @@ struct ProjectSettingsForm: View {
 	}
 
 	private func dimensionField(_ label: String, horizontal: Bool) -> some View {
-		LabeledContent {
-			TextField(label, text: Binding(get: { horizontal ? width : height }, set: { text in
+		TextField("", text: Binding(get: { horizontal ? width : height }, set: { text in
 				if horizontal { width = text } else { height = text }
 				guard locked, let value = dimension(text) else { return }
 				if horizontal {
@@ -302,7 +308,7 @@ struct ProjectSettingsForm: View {
 			.keyboardType(.numberPad)
 			.focused($field, equals: horizontal ? .width : .height)
 			.multilineTextAlignment(.trailing)
-		} label: { Text(label) }
+			.editorFieldLabel(label)
 	}
 
 	private func apply() {
