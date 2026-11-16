@@ -733,7 +733,7 @@ private struct ClipExportView: View {
 			}
 		}
 		.sheet(item: $output, onDismiss: { dismiss() }) { rendered in
-			FileSavePicker(file: rendered.url) { output = nil }
+			FileSavePicker(file: rendered.url) { _ in output = nil }
 		}
 		.interactiveDismissDisabled(destination != nil)
 		.task(id: destination) {
@@ -768,7 +768,7 @@ final class ExportFile: Identifiable {
 
 struct FileSavePicker: UIViewControllerRepresentable {
 	let file: URL
-	let finish: () -> Void
+	let finish: (Bool) -> Void
 
 	func makeCoordinator() -> Coordinator { Coordinator(finish) }
 	func makeUIViewController(context: Context) -> UIDocumentPickerViewController {
@@ -779,10 +779,10 @@ struct FileSavePicker: UIViewControllerRepresentable {
 	func updateUIViewController(_ controller: UIDocumentPickerViewController, context: Context) {}
 
 	final class Coordinator: NSObject, UIDocumentPickerDelegate {
-		let finish: () -> Void
-		init(_ finish: @escaping () -> Void) { self.finish = finish }
-		func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish() }
-		func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finish() }
+		let finish: (Bool) -> Void
+		init(_ finish: @escaping (Bool) -> Void) { self.finish = finish }
+		func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) { finish(false) }
+		func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) { finish(!urls.isEmpty) }
 	}
 }
 

@@ -46,6 +46,8 @@ struct ProjectEditorView: View {
 	@State private var reconnect: UUID?
 	@State private var clipTask: Task<Void, Never>?
 	@State private var projectSheet: ProjectSheet?
+	@State private var exportCompleted = false
+	@State private var exportCue: AVAudioPlayer?
 	@State private var undo: [HistoryEntry] = []
 	@State private var redo: [HistoryEntry] = []
 	@State private var error: String?
@@ -112,7 +114,7 @@ struct ProjectEditorView: View {
 						.accessibilityFocused($focus, equals: "projectActions")
 				}
 			}
-			.sheet(item: $projectSheet, onDismiss: { focus = "projectActions" }) { sheet in
+			.sheet(item: $projectSheet, onDismiss: projectSheetDismissed) { sheet in
 				switch sheet {
 				case .settings:
 					NavigationStack {
@@ -131,7 +133,7 @@ struct ProjectEditorView: View {
 					}
 					.editorAppearance()
 				case .export(let timeline):
-					ProjectExportView(timeline: timeline)
+					ProjectExportView(timeline: timeline) { exportCompleted = true }
 				}
 			}
 			.sheet(item: $effects, onDismiss: { focus = trigger }) { track in
@@ -235,6 +237,18 @@ struct ProjectEditorView: View {
 			}
 		}
 		.accessibilityAction(.magicTap) { playback.toggle() }
+	}
+
+	private func projectSheetDismissed() {
+		focus = "projectActions"
+		guard exportCompleted else { return }
+		exportCompleted = false
+		if let url = Bundle.main.url(forResource: "ExportComplete", withExtension: "wav") {
+			exportCue = try? AVAudioPlayer(contentsOf: url)
+			exportCue?.play()
+		}
+		let message = NSAttributedString(string: "Export complete", attributes: [.accessibilitySpeechQueueAnnouncement: true])
+		UIAccessibility.post(notification: .announcement, argument: message)
 	}
 
 	private var projectActions: [EditorMenuAction] {
@@ -1199,6 +1213,7 @@ private struct PlacementSheet: View {
 
 private struct ProjectExportView: View {
 	let timeline: ProjectExport
+	let didSave: () -> Void
 	@Environment(\.dismiss) private var dismiss
 	@State private var destination: Destination?
 	@State private var output: ExportFile?
@@ -1234,7 +1249,10 @@ private struct ProjectExportView: View {
 		.editorAppearance()
 		.interactiveDismissDisabled(savingToPhotos)
 		.sheet(item: $output, onDismiss: { dismiss() }) { file in
-			FileSavePicker(file: file.url) { output = nil }
+			FileSavePicker(file: file.url) { saved in
+				if saved { didSave() }
+				output = nil
+			}
 		}
 		.task(id: destination) {
 			guard let destination else { return }
@@ -1257,6 +1275,7 @@ private struct ProjectExportView: View {
 						options.originalFilename = file.url.lastPathComponent
 						PHAssetCreationRequest.forAsset().addResource(with: .video, fileURL: file.url, options: options)
 					}
+					didSave()
 					dismiss()
 				}
 			} catch {

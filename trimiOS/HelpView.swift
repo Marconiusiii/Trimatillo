@@ -88,7 +88,7 @@ private enum HelpTopic: String, CaseIterable {
 			"Open Project Actions beside the project name and choose Export. Export includes the full timeline and its track volumes.",
 			"To make captions part of the picture, turn on Burn In Open Captions. The movie uses the captions and timing in the Caption Timeline.",
 			"For video, choose Photos to save a new video to the library, or Files to choose a folder. For an audio project, choose Files to save an M4A.",
-			"In Files, keep the project name or enter a filename, then choose Save."
+			"In Files, keep the project name or enter a filename, then choose Save. A chime confirms the project was exported to Photos or Files. VoiceOver announces Export complete."
 		])
 	}
 
