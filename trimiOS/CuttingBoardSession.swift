@@ -5,6 +5,50 @@ import Combine
 import CoreTransferable
 import UniformTypeIdentifiers
 import UIKit
+#if DEBUG
+import OSLog
+
+@MainActor
+final class EditPointFocusTrace: NSObject {
+	private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Trimatillo", category: "EditPointFocus")
+	private var startTime: TimeInterval?
+
+	func begin() {
+		if startTime == nil {
+			NotificationCenter.default.addObserver(self, selector: #selector(focusChanged(_:)),
+				name: UIAccessibility.elementFocusedNotification, object: nil)
+		}
+		startTime = ProcessInfo.processInfo.systemUptime
+		event("Edit Point requested, VoiceOver running = \(UIAccessibility.isVoiceOverRunning)")
+	}
+
+	func end() {
+		NotificationCenter.default.removeObserver(self, name: UIAccessibility.elementFocusedNotification, object: nil)
+		startTime = nil
+	}
+
+	func event(_ description: String) {
+		guard let startTime else { return }
+		let elapsed = Int((ProcessInfo.processInfo.systemUptime - startTime) * 1000)
+		logger.notice("EditPointFocus +\(elapsed)ms \(description, privacy: .public)")
+	}
+
+	@objc private func focusChanged(_ notification: Notification) {
+		let info = notification.userInfo
+		let from = element(info?[UIAccessibility.unfocusedElementUserInfoKey])
+		let to = element(info?[UIAccessibility.focusedElementUserInfoKey])
+		event("Focus moved from \(from) to \(to)")
+	}
+
+	private func element(_ value: Any?) -> String {
+		guard let element = value as? NSObject else { return "unknown" }
+		let knownLabels = ["Outgoing Out Point", "Incoming In Point", "Cancel", "Save", "Done",
+			"Source time", "Source frame", "Edit Actions", "Direct Touch Editor"]
+		let label = element.accessibilityLabel.flatMap { knownLabels.contains($0) ? $0 : nil } ?? "other"
+		return "\(label) (\(type(of: element)), \(ObjectIdentifier(element)))"
+	}
+}
+#endif
 
 // Photos lends the transfer a file URL. Keep a private copy for the lifetime of the edit.
 nonisolated final class ImportedMovie: Transferable, Sendable {
@@ -48,6 +92,10 @@ nonisolated final class ImportedMovie: Transferable, Sendable {
 
 @MainActor
 final class CuttingBoardSession: ObservableObject {
+	#if DEBUG
+	let editPointTrace = EditPointFocusTrace()
+	#endif
+
 	struct Snapshot {
 		var timeline: ClipEditTimeline
 		var position: CMTime = .zero
@@ -88,13 +136,21 @@ final class CuttingBoardSession: ObservableObject {
 	private let node = AVAudioPlayerNode()
 	private let audioFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
 	private var audioActive = false
+	private var holdingBoundaryAudio = false
 	private var seekGeneration = 0
 	@Published private(set) var state: Snapshot
 	@Published private(set) var rate = 0.0
 	var speedLabel: String { abs(rate).formatted() + "x" }
 	var shuttleLabel: String { (rate < 0 ? "Rewind " : "Forward ") + speedLabel }
 	@Published var choosingPlacement = false
-	@Published var sheet: BoardSheet?
+	@Published var sheet: BoardSheet? {
+		didSet {
+			if holdingBoundaryAudio, case .join = oldValue, sheet != oldValue {
+				stopAudioPreview()
+				deactivateAudio()
+			}
+		}
+	}
 	@Published var message: String?
 	var duration: CMTime { state.timeline.duration }
 	var canUndo: Bool { historyIndex > 0 }
@@ -265,21 +321,31 @@ final class CuttingBoardSession: ObservableObject {
 	}
 
 	private func deactivateAudio() {
+		holdingBoundaryAudio = false
 		idleAudioTask?.cancel()
 		idleAudioTask = nil
 		engine.stop()
 		if audioActive {
+			#if DEBUG
+			editPointTrace.event("Audio release requested")
+			do {
+				try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+				editPointTrace.event("Audio released")
+			} catch { editPointTrace.event("Audio release failed") }
+			#else
 			try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
+			#endif
 			audioActive = false
 		}
 	}
 
 	private func scheduleIdleAudioRelease() {
+		guard !holdingBoundaryAudio else { return }
 		guard audioActive || engine.isRunning else { return }
 		idleAudioTask?.cancel()
 		idleAudioTask = Task { [weak self] in
 			do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
-			guard let self, rate == 0 else { return }
+			guard let self, rate == 0, !holdingBoundaryAudio else { return }
 			deactivateAudio()
 		}
 	}
@@ -289,9 +355,15 @@ final class CuttingBoardSession: ObservableObject {
 		idleAudioTask = nil
 		if !audioActive {
 			let session = AVAudioSession.sharedInstance()
+			#if DEBUG
+			editPointTrace.event("Audio activation requested")
+			#endif
 			try session.setCategory(.playback, mode: .default)
 			try session.setActive(true)
 			audioActive = true
+			#if DEBUG
+			editPointTrace.event("Audio activated")
+			#endif
 		}
 	}
 
@@ -445,8 +517,30 @@ final class CuttingBoardSession: ObservableObject {
 		try apply(Snapshot(timeline: timeline, position: position), action: "Adjust " + point.name)
 	}
 
-	func previewBoundary(at time: CMTime, preceding: Bool) {
+	func prepareBoundaryAudio() {
 		guard hasAudio else { return }
+		do {
+			try activateAudio()
+			if !engine.isRunning { try engine.start() }
+			holdingBoundaryAudio = true
+			#if DEBUG
+			editPointTrace.event("Preview engine ready before Edit Point presentation")
+			#endif
+		} catch {
+			deactivateAudio()
+			#if DEBUG
+			editPointTrace.event("Preview engine preparation failed; next preview will retry")
+			#endif
+		}
+	}
+
+	func previewBoundary(at time: CMTime, preceding: Bool) {
+		guard hasAudio, case .join = sheet else { return }
+		#if DEBUG
+		editPointTrace.event("Boundary preview requested, audio active = \(audioActive), engine running = \(engine.isRunning)")
+		#endif
+		holdingBoundaryAudio = true
+		idleAudioTask?.cancel()
 		stopAudioPreview()
 		let length = CMTime(seconds: 0.15, preferredTimescale: 48000)
 		let start = preceding ? max(.zero, time - length) : time

@@ -45,7 +45,13 @@ extension CuttingBoardSession {
 	}
 
 	func showJoin() {
-		if let point = currentJoin { stop(); sheet = .join(point.index) }
+		guard let point = currentJoin else { return }
+		#if DEBUG
+		editPointTrace.begin()
+		#endif
+		stop()
+		prepareBoundaryAudio()
+		sheet = .join(point.index)
 	}
 }
 
@@ -92,7 +98,13 @@ struct CuttingBoardView: View {
 						.accessibilityFocused($surfaceFocused)
 				}
 				.accessibilityAction(.magicTap) { session.toggle() }
-				.sheet(item: $session.sheet, onDismiss: { surfaceFocused = true }) { editorSheet($0) }
+				.sheet(item: $session.sheet, onDismiss: {
+					#if DEBUG
+					session.editPointTrace.event("Board sheet dismissed, requesting Direct Touch Editor focus")
+					if session.sheet == nil { session.editPointTrace.end() }
+					#endif
+					surfaceFocused = true
+				}) { editorSheet($0) }
 			} else {
 				board
 					.fullScreenCover(item: $preview, onDismiss: { previewFocused = true }) { playback in
@@ -199,7 +211,13 @@ struct CuttingBoardView: View {
 			}
 			.accessibilityActions { EditorMenuAction.buttons(editCommands(fromMenu: false)) }
 			.accessibilityFocused($playheadFocused)
-			.sheet(item: sheetBinding(forMenu: false), onDismiss: { playheadFocused = true }) { editorSheet($0) }
+			.sheet(item: sheetBinding(forMenu: false), onDismiss: {
+				#if DEBUG
+				session.editPointTrace.event("Board sheet dismissed, requesting Playhead focus")
+				if session.sheet == nil { session.editPointTrace.end() }
+				#endif
+				playheadFocused = true
+			}) { editorSheet($0) }
 			EditorCommandRow {
 				stepButton(forward: false)
 				stepButton(forward: true)
@@ -213,7 +231,13 @@ struct CuttingBoardView: View {
 				Menu { EditorMenuAction.buttons(actions) } label: { Text("Edit Actions") }
 					.editorMenuActions("Edit Actions", actions)
 					.accessibilityFocused($editActionsFocused)
-					.sheet(item: sheetBinding(forMenu: true), onDismiss: { editActionsFocused = true }) { editorSheet($0) }
+					.sheet(item: sheetBinding(forMenu: true), onDismiss: {
+						#if DEBUG
+						session.editPointTrace.event("Board sheet dismissed, requesting Edit Actions focus")
+						if session.sheet == nil { session.editPointTrace.end() }
+						#endif
+						editActionsFocused = true
+					}) { editorSheet($0) }
 				if !session.canUndo && session.canRedo {
 					Menu { Button("Redo") { session.redo() } } label: { Text("Undo") }
 						.accessibilityAction(named: "Redo") { session.redo() }
@@ -436,8 +460,17 @@ private struct JoinSheet: View {
 				ToolbarItem(placement: .confirmationAction) { Button("Save") { save() } }
 			}
 		}
+		#if DEBUG
+		.onAppear { session.editPointTrace.event("Edit Point appeared") }
+		#endif
 		.sheet(item: $editor, onDismiss: {
+			#if DEBUG
+			session.editPointTrace.event("Time entry dismissal callback")
+			#endif
 			if UIAccessibility.isVoiceOverRunning, let button = draft.entryButton {
+				#if DEBUG
+				session.editPointTrace.event("Posting layoutChanged to \(button.accessibilityLabel ?? "boundary")")
+				#endif
 				UIAccessibility.post(notification: .layoutChanged, argument: button)
 			}
 			draft.entryButton = nil
@@ -448,6 +481,9 @@ private struct JoinSheet: View {
 		}
 		.onReceive(session.$message) { if let message = $0 { error = message } }
 		.onDisappear {
+			#if DEBUG
+			session.editPointTrace.event("Edit Point disappeared")
+			#endif
 			session.stopAudioPreview()
 			if session.message != nil { session.message = nil }
 		}
@@ -462,11 +498,23 @@ private struct JoinSheet: View {
 			session.timecode(time(for: boundary), format: format, sourceTime: true)
 		}
 
-		return EditPointButton(name: boundary.rawValue, value: reading()) { count in
+		let longestValue = session.timecode(point.followingEnd, format: format, sourceTime: true)
+		return EditPointButton(name: boundary.rawValue, value: reading(), longestValue: longestValue) { count in
+			#if DEBUG
+			let previous = reading()
+			session.editPointTrace.event("\(boundary.rawValue) adjustment began, step \(count), value \(previous)")
+			#endif
 			let next = session.stepped(from: time(for: boundary), by: count, sourceTime: true)
 			_ = update(next, for: boundary)
-			return reading()
+			let value = reading()
+			#if DEBUG
+			session.editPointTrace.event("Adjustment returning value \(value), visible value changed = \(previous != value)")
+			#endif
+			return value
 		} activate: { button in
+			#if DEBUG
+			session.editPointTrace.event("Opening time entry for \(boundary.rawValue)")
+			#endif
 			draft.entryButton = button
 			editor = boundary
 		}
@@ -495,17 +543,13 @@ private struct JoinSheet: View {
 private struct EditPointButton: UIViewRepresentable {
 	let name: String
 	let value: String
+	let longestValue: String
 	let adjust: (Int) -> String
 	let activate: (UIButton) -> Void
 
 	func makeUIView(context: Context) -> Control {
 		let button = Control(type: .system)
-		var configuration = UIButton.Configuration.plain()
-		configuration.title = name
-		configuration.titleAlignment = .leading
-		configuration.titleLineBreakMode = .byWordWrapping
-		button.configuration = configuration
-		button.contentHorizontalAlignment = .leading
+		button.configureLabels(name: name)
 		button.accessibilityLabel = name
 		button.accessibilityTraits.insert(.adjustable)
 		button.addTarget(button, action: #selector(Control.openEditor), for: .primaryActionTriggered)
@@ -518,12 +562,61 @@ private struct EditPointButton: UIViewRepresentable {
 		button.display(value)
 	}
 
+	func sizeThatFits(_ proposal: ProposedViewSize, uiView: Control, context: Context) -> CGSize? {
+		guard let width = proposal.width, width > 0 else { return nil }
+		return uiView.rowSize(width: width, longestValue: longestValue)
+	}
+
 	final class Control: UIButton {
 		var adjust: ((Int) -> String)?
 		var activate: ((UIButton) -> Void)?
 
+		private let nameLabel = UILabel()
+		private let valueLabel = UILabel()
+
+		func configureLabels(name: String) {
+			directionalLayoutMargins = NSDirectionalEdgeInsets(top: 6, leading: 16, bottom: 6, trailing: 16)
+			nameLabel.text = name
+			nameLabel.font = .preferredFont(forTextStyle: .body)
+			let base = UIFont.monospacedDigitSystemFont(ofSize: 15, weight: .regular)
+			valueLabel.font = UIFontMetrics(forTextStyle: .subheadline).scaledFont(for: base)
+			valueLabel.lineBreakMode = .byCharWrapping
+			for label in [nameLabel, valueLabel] {
+				label.adjustsFontForContentSizeCategory = true
+				label.numberOfLines = 0
+				label.isAccessibilityElement = false
+				label.textColor = .tintColor
+				label.translatesAutoresizingMaskIntoConstraints = false
+				addSubview(label)
+			}
+			let margins = layoutMarginsGuide
+			NSLayoutConstraint.activate([
+				nameLabel.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+				nameLabel.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+				nameLabel.topAnchor.constraint(equalTo: margins.topAnchor),
+				valueLabel.leadingAnchor.constraint(equalTo: margins.leadingAnchor),
+				valueLabel.trailingAnchor.constraint(equalTo: margins.trailingAnchor),
+				valueLabel.topAnchor.constraint(equalTo: nameLabel.bottomAnchor, constant: 2),
+				valueLabel.bottomAnchor.constraint(equalTo: margins.bottomAnchor)
+			])
+			nameLabel.setContentHuggingPriority(.required, for: .vertical)
+		}
+
+		func rowSize(width: CGFloat, longestValue: String) -> CGSize {
+			let margins = directionalLayoutMargins
+			let available = CGSize(width: max(1, width - margins.leading - margins.trailing), height: .greatestFiniteMagnitude)
+			let titleHeight = nameLabel.sizeThatFits(available).height
+			let paragraph = NSMutableParagraphStyle()
+			paragraph.lineBreakMode = valueLabel.lineBreakMode
+			let valueHeight = (longestValue as NSString).boundingRect(with: available,
+				options: [.usesLineFragmentOrigin, .usesFontLeading],
+				attributes: [.font: valueLabel.font as Any, .paragraphStyle: paragraph], context: nil).height
+			return CGSize(width: width, height: max(48, margins.top + ceil(titleHeight) + 2 + ceil(valueHeight) + margins.bottom))
+		}
+
 		func display(_ value: String) {
-			if configuration?.subtitle != value { configuration?.subtitle = value }
+			guard valueLabel.text != value else { return }
+			valueLabel.text = value
 			accessibilityValue = value
 		}
 
