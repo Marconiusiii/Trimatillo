@@ -131,6 +131,8 @@ struct DescriptionEntryView: View {
 	@State private var name: String
 	@State private var fit: DescriptionFit
 	@State private var length: CMTime?
+	@State private var measuredRecording: UUID?
+	@State private var measuredLength: ProjectTime?
 	@State private var drafts: [URL] = []
 	@State private var playMode: PlayMode?
 	@State private var confirming = false
@@ -153,6 +155,18 @@ struct DescriptionEntryView: View {
 		_name = State(initialValue: entry.take?.name ?? "Description " + String((project.audioDescriptions?.count ?? 0) + 1))
 		_fit = State(initialValue: entry.take?.fit ?? .speed)
 		_length = State(initialValue: entry.take?.length.time)
+	}
+
+	private var recordingID: UUID? { capture.draft ?? entry.take?.recording }
+	private var narrationLength: ProjectTime? {
+		if capture.draft == nil, let saved = entry.take?.narrationLength { return saved }
+		return measuredRecording == recordingID ? measuredLength : nil
+	}
+	private var needsMeasurement: Bool {
+		fit == .speed && recordingID != nil && narrationLength == nil
+	}
+	private var recordingToMeasure: UUID? {
+		capture.phase == .idle && length != nil && needsMeasurement ? recordingID : nil
 	}
 
 	private var title: String { entry.timeline == .audio ? "Audio Description" : "Written Description" }
@@ -189,7 +203,7 @@ struct DescriptionEntryView: View {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { if dirty { confirming = true } else { dismiss() } } }
 				ToolbarItem(placement: .principal) { Text(title).font(.headline).accessibilityAddTraits(.isHeader) }
 				ToolbarItem(placement: .confirmationAction) { Button("Save", action: accept)
-					.disabled(capture.phase != .idle || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && length == nil)) }
+					.disabled(capture.phase != .idle || needsMeasurement || (text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && length == nil)) }
 			}
 		}
 		.editorAppearance()
@@ -212,6 +226,19 @@ struct DescriptionEntryView: View {
 			} else {
 				field = .text
 				textFocused = true
+			}
+		}
+		.task(id: recordingToMeasure) {
+			guard let id = recordingToMeasure, let length else { return }
+			do {
+				let url = try ProjectStorage.recording(id, project: project.id, draft: capture.draft != nil)
+				let measured = try await ClipSilenceTrimming.narrationLength(url: url, length: length)
+				try Task.checkCancellation()
+				guard recordingID == id else { return }
+				measuredLength = ProjectTime(measured)
+				measuredRecording = id
+			} catch {
+				if !Task.isCancelled { capture.failure = "Could not read the recording. Recover the take or record another." }
 			}
 		}
 		.onChange(of: capture.phase) { _, phase in if phase == .idle { refresh() } }
@@ -281,13 +308,13 @@ struct DescriptionEntryView: View {
 		let label = name.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !label.isEmpty else { throw ProjectFailure("Enter a recording name.") }
 		return try (DescriptionTake(id: entry.take?.id ?? UUID(), recording: id, name: label, start: ProjectTime(range.start),
-			limit: ProjectTime(range.end), length: ProjectTime(length), fit: fit), ProjectStorage.recording(id, project: project.id, draft: capture.draft != nil))
+			limit: ProjectTime(range.end), length: ProjectTime(length), fit: fit, narrationLength: narrationLength), ProjectStorage.recording(id, project: project.id, draft: capture.draft != nil))
 	}
 
 	private func previewButton(_ label: String, mode: PlayMode) -> some View {
 		Button(playMode == mode ? "Stop Preview" : label) {
 			if playMode == mode { stopPreview() } else { audition(mode) }
-		}.disabled(capture.phase != .idle)
+		}.disabled(capture.phase != .idle || (mode == .mixed && needsMeasurement))
 	}
 
 	private func audition(_ mode: PlayMode) {

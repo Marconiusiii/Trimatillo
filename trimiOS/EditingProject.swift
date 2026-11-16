@@ -386,6 +386,9 @@ nonisolated enum ProjectLibrary {
 				entry.start.time < entry.end.time, !entry.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw corrupt }
 		}
 		for take in project.audioDescriptions ?? [] {
+			if let end = take.narrationLength {
+				guard validTime(end), end.value > 0, end.time <= take.length.time else { throw corrupt }
+			}
 			guard descriptionIDs.insert(take.id).inserted, validTime(take.start), validTime(take.limit), validTime(take.length),
 				take.limit.time > take.start.time, take.length.value > 0, !take.name.isEmpty else { throw corrupt }
 		}

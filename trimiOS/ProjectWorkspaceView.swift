@@ -22,13 +22,38 @@ struct ProjectWorkspaceView: View {
 			.task(id: board == nil ? revision : nil) {
 				guard board == nil else { return }
 				let preparing = revision
-				await playback.prepare(project)
+				do {
+					try await prepareNarration()
+					try Task.checkCancellation()
+					await playback.prepare(project)
+				} catch {
+					guard !Task.isCancelled else { return }
+					playback.failPreparation(error)
+				}
 				if !Task.isCancelled { preparedRevision = preparing }
 			}
 			.onChange(of: phase) { _, phase in
 				if phase != .active { playback.pause() }
 			}
 			.onDisappear { playback.pause() }
+	}
+
+	private func prepareNarration() async throws {
+		let original = project
+		guard var takes = original.audioDescriptions else { return }
+		for index in takes.indices where takes[index].fit == .speed && takes[index].narrationLength == nil {
+			let take = takes[index]
+			let url = try ProjectStorage.recording(take.recording, project: original.id)
+			let length = try await ClipSilenceTrimming.narrationLength(url: url, length: take.length.time)
+			takes[index].narrationLength = ProjectTime(length)
+		}
+		try Task.checkCancellation()
+		guard takes != original.audioDescriptions else { return }
+		guard project == original else { throw ProjectFailure("The project changed while preparing narration. Reopen the project.") }
+		var updated = original
+		updated.audioDescriptions = takes
+		try ProjectLibrary.save(updated, replacing: original)
+		project = updated
 	}
 
 	private func closeProject() {

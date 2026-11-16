@@ -11,6 +11,7 @@ nonisolated struct SilenceDetector {
 	let threshold: Float
 	let minimumFrames: Int64
 	let retainedFrames: Int64
+	var collectsPauses = true
 	private(set) var quietStart: Int64
 	private(set) var cuts: [CMTimeRange] = []
 
@@ -26,7 +27,7 @@ nonisolated struct SilenceDetector {
 			let time = first + Int64(frame)
 			guard bounds.contains(time) else { continue }
 			if abs(samples[frame * 2]) > threshold || abs(samples[frame * 2 + 1]) > threshold {
-				if time > quietStart { finish(at: time) }
+				if collectsPauses && time > quietStart { finish(at: time) }
 				quietStart = time + 1
 			}
 		}
@@ -55,6 +56,30 @@ nonisolated enum ClipSilenceTrimming {
 	@concurrent static func analyze(asset: AVAsset, range: CMTimeRange, decibels: Int,
 		minimum: Double, retained: Double) async throws -> [CMTimeRange] {
 		guard retained < minimum else { throw SilenceReviewError.retainedTooLong }
+		let start = range.start.convertScale(48_000, method: .roundTowardPositiveInfinity).value
+		let end = range.end.convertScale(48_000, method: .roundTowardNegativeInfinity).value
+		guard end > start else { return [] }
+		var detector = SilenceDetector(decibels: decibels, minimum: minimum, retained: retained, start: start)
+		detector = try await scan(asset: asset, range: range, bounds: start..<end, detector: detector)
+		guard detector.quietStart != start else { throw SilenceReviewError.entirelyQuiet }
+		detector.finish(at: end)
+		return detector.cuts
+	}
+
+	@concurrent static func narrationLength(url: URL, length: CMTime) async throws -> CMTime {
+		let asset = AVURLAsset(url: url)
+		let end = length.convertScale(48_000, method: .roundTowardPositiveInfinity).value
+		guard end > 0 else { throw CocoaError(.fileReadCorruptFile) }
+		var detector = SilenceDetector(decibels: -40, minimum: 0, retained: 0, start: 0)
+		detector.collectsPauses = false
+		detector = try await scan(asset: asset, range: CMTimeRange(start: .zero, duration: length), bounds: 0..<end, detector: detector)
+		// Keep very quiet recordings intact if no sample crossed the threshold.
+		guard detector.quietStart > 0 else { return length }
+		return min(length, CMTime(value: detector.quietStart, timescale: 48_000))
+	}
+
+	private static func scan(asset: AVAsset, range: CMTimeRange, bounds: Range<Int64>, detector initial: SilenceDetector) async throws -> SilenceDetector {
+		var detector = initial
 		guard let track = try await asset.loadTracks(withMediaType: .audio).first else { throw CocoaError(.fileReadUnsupportedScheme) }
 		let reader = try AVAssetReader(asset: asset)
 		reader.timeRange = range
@@ -68,10 +93,6 @@ nonisolated enum ClipSilenceTrimming {
 		reader.add(output)
 		guard reader.startReading() else { throw reader.error ?? CocoaError(.fileReadUnknown) }
 		defer { reader.cancelReading() }
-		let start = range.start.convertScale(48_000, method: .roundTowardPositiveInfinity).value
-		let end = range.end.convertScale(48_000, method: .roundTowardNegativeInfinity).value
-		guard end > start else { return [] }
-		var detector = SilenceDetector(decibels: decibels, minimum: minimum, retained: retained, start: start)
 		while let buffer = output.copyNextSampleBuffer() {
 			try Task.checkCancellation()
 			let count = CMSampleBufferGetNumSamples(buffer)
@@ -83,12 +104,10 @@ nonisolated enum ClipSilenceTrimming {
 			}
 			guard status == noErr else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
 			let first = CMSampleBufferGetPresentationTimeStamp(buffer).convertScale(48_000, method: .roundHalfAwayFromZero).value
-			detector.consume(samples, first: first, bounds: start..<end)
+			detector.consume(samples, first: first, bounds: bounds)
 		}
 		try Task.checkCancellation()
 		guard reader.status == .completed else { throw reader.error ?? CocoaError(.fileReadUnknown) }
-		guard detector.quietStart != start else { throw SilenceReviewError.entirelyQuiet }
-		detector.finish(at: end)
-		return detector.cuts
+		return detector
 	}
 }

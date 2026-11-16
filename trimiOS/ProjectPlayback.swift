@@ -384,6 +384,15 @@ private struct ScrubAudioWindow {
 		player.currentItem?.cancelPendingSeeks()
 	}
 
+	func failPreparation(_ error: Error) {
+		cancelPreparation()
+		pause()
+		ready = false
+		preparing = false
+		player.replaceCurrentItem(with: nil)
+		failure = error.localizedDescription
+	}
+
 	private static let openPlayers = NSHashTable<ProjectPlayback>.weakObjects()
 	private var projectID: UUID?
 	private var descriptionDucking: DescriptionDucking?

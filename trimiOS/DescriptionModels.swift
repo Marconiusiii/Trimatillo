@@ -26,8 +26,10 @@ nonisolated struct DescriptionTake: Codable, Equatable, Identifiable {
 	var limit: ProjectTime
 	var length: ProjectTime
 	var fit: DescriptionFit
+	var narrationLength: ProjectTime?
 
-	var duration: CMTime { min(limit.time - start.time, length.time) }
+	var sourceDuration: CMTime { fit == .speed ? narrationLength?.time ?? length.time : length.time }
+	var duration: CMTime { min(limit.time - start.time, sourceDuration) }
 	var end: CMTime { start.time + duration }
 
 	func insert(in composition: AVMutableComposition, url: URL) async throws -> AVMutableAudioMixInputParameters {
@@ -37,7 +39,7 @@ nonisolated struct DescriptionTake: Codable, Equatable, Identifiable {
 			throw ProjectFailure("Could not read the recording for " + name + ".")
 		}
 		let available = try await source.load(.timeRange)
-		let full = min(available.duration, length.time)
+		let full = min(available.duration, sourceDuration)
 		let used = fit == .speed ? full : min(duration, full)
 		guard used > .zero, duration > .zero else { throw ProjectFailure("Record a take before saving.") }
 		try track.insertTimeRange(CMTimeRange(start: available.start, duration: used), of: source, at: start.time)

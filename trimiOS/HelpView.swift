@@ -102,7 +102,7 @@ private enum HelpTopic: String, CaseIterable {
 				"For a written entry, select Descriptive Transcript in Timeline. Choose New Description or press Command-Shift-D. In Written Description, enter Description Text and choose Save.",
 				"Choose Play In to Out to repeat the passage. Choose Stop Preview when you are finished.",
 				"For narration, select Audio Description in Timeline and choose New Description. In Audio Description, you can change Recording Name. Choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
-				"Choose Play Take to hear the original recording. If the take runs past Out, choose Speed Up to Fit to preserve pitch or Trim at Out to use the beginning of the take. Play with Primary Audio previews the result against the passage.",
+				"Choose Play Take to hear the original recording. Speed Up to Fit trims silence from the end of the take. Your voice plays at its recorded speed if it fits before Out. Longer narration speeds up and keeps its pitch. Choose Trim at Out to play the original take up to Out. Play with Primary Audio previews the result against the passage.",
 				"Choose Save to add the recording to Audio Description. To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
 			]), HelpSection("Review and export", numbered: true, [
 				"Choose Descriptive Transcript in Timeline to review the written entries. Choose Audio Description for the recorded clips. Switching keeps the playhead and markers in place.",
