@@ -220,9 +220,14 @@ private enum HelpTopic: String, CaseIterable {
 				"If a saved project cannot be read, restore its project file from backup. Choose another project in My Projects to keep editing.",
 				"If a source is unavailable, open Project Media, choose the source, and reconnect it from Files or Photos. Choose the original to restore access for every placement.",
 				"When moving to a new device, restore Trimatillo's project data from your device backup and make the original media available through Files or Photos."
+			]), HelpSection("Manage storage", numbered: true, [
+				"From the main screen, open Settings, then Storage to check the space used by projects and temporary files.",
+				"Choose Clear Temporary Files to remove unused working copies. Files in use are released when their import, edit, share, or export finishes.",
+				"Choose Manage Projects to review each project's name and size, open it, or delete it.",
+				"In the system Settings app, open Apps, then Trimatillo. Turn on Clear Temporary Files on Next Launch to request cleanup the next time Trimatillo is active."
 			]), HelpSection("Delete a project", numbered: true, [
 				"Open My Projects. On the project you want to remove, choose Delete Project from its context menu or accessibility actions.",
-				"Check the project name in the alert, then choose Delete Project. Choose Cancel to keep the project."
+				"Check the project name and size in the alert, then choose Delete Project. This removes the edits and files saved inside that project. Original clips referenced from Photos or Files and exports saved elsewhere stay in their chosen locations."
 			])]
 		case .first:
 			[HelpSection("Open a clip and trim its ends", numbered: true, [

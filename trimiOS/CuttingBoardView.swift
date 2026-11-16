@@ -743,7 +743,7 @@ private struct ClipExportView: View {
 				case .original: try await session.saveOriginal()
 				case .photos: try await session.saveNewVideo()
 				case .files:
-					output = ExportFile(url: try await session.exportClip())
+					output = try await session.exportClip()
 					return
 				}
 				dismiss()
@@ -760,10 +760,20 @@ private struct ClipExportView: View {
 	}
 }
 
-final class ExportFile: Identifiable {
+nonisolated final class ExportFile: Identifiable, Sendable {
 	let url: URL
-	init(url: URL) { self.url = url }
-	deinit { try? FileManager.default.removeItem(at: url.deletingLastPathComponent()) }
+	private let work: MediaWorkDirectory
+
+	init(name: String, suffix: String) throws {
+		guard !suffix.isEmpty, suffix.utf8.count <= 10, suffix.allSatisfy({ $0.isASCII && ($0.isLetter || $0.isNumber) }) else {
+			throw CocoaError(.fileWriteInvalidFileName)
+		}
+		work = try MediaWorkDirectory()
+		let forbidden = CharacterSet(charactersIn: "/:").union(.controlCharacters)
+		let cleaned = name.components(separatedBy: forbidden).joined(separator: "-").trimmingCharacters(in: CharacterSet(charactersIn: ". "))
+		let stem = String(decoding: cleaned.utf8.prefix(238), as: UTF8.self)
+		url = work.url.appendingPathComponent(stem.isEmpty ? "Project" : stem).appendingPathExtension(suffix)
+	}
 }
 
 struct FileSavePicker: UIViewControllerRepresentable {

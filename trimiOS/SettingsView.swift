@@ -42,6 +42,9 @@ struct SettingsView: View {
 					}
 					Toggle("Shake to Undo", isOn: $shake)
 				} header: { heading("Editing") }
+				Section {
+					NavigationLink("Storage") { StorageSettingsView() }
+				}
 				supportSection
 				Section {
 					Button("Send App Feedback") {
@@ -143,5 +146,76 @@ struct SettingsView: View {
 		case .unverified: notice = "The App Store could not verify this purchase. Check your purchase history."
 		case .failed: notice = "Could not complete the purchase. Check your App Store account and try again."
 		}
+	}
+}
+
+private struct StorageSettingsView: View {
+	@Environment(\.scenePhase) private var phase
+	@State private var sizes: (projects: Int64, temporary: Int64, available: Int64)?
+	@State private var managing = false
+	@State private var pending: EditingProject?
+	@State private var opened: EditingProject?
+	@State private var refreshing = 0
+	@State private var clearing = false
+	@State private var scanFailed = false
+	@State private var failure: String?
+	@AccessibilityFocusState private var manageFocused: Bool
+
+	var body: some View {
+		Form {
+			if let sizes {
+				LabeledContent("Projects", value: ProjectStorage.formatted(sizes.projects))
+					.accessibilityElement(children: .combine)
+				Button("Manage Projects") { managing = true }
+					.accessibilityFocused($manageFocused)
+				LabeledContent("Temporary Files", value: ProjectStorage.formatted(sizes.temporary))
+					.accessibilityElement(children: .combine)
+				if sizes.temporary > sizes.available {
+					LabeledContent("In Use", value: ProjectStorage.formatted(sizes.temporary - sizes.available))
+						.accessibilityElement(children: .combine)
+				}
+				Button("Clear Temporary Files") { clearing = true }
+					.disabled(clearing || sizes.available == 0)
+			} else if !scanFailed {
+				ProgressView("Checking storage")
+			} else {
+				Button("Check Storage") { refreshing += 1 }
+			}
+		}
+		.editorListMargins()
+		.scrollContentBackground(.hidden)
+		.background(EditorTheme.workspace)
+		.navigationTitle("Storage")
+		.task(id: refreshing) {
+			do {
+				let value = try await ProjectStorage.sizes()
+				try Task.checkCancellation()
+				sizes = value
+				scanFailed = false
+			} catch {
+				if !Task.isCancelled { scanFailed = true; failure = "Could not read storage. Reopen Storage to check again." }
+			}
+		}
+		.task(id: clearing) {
+			guard clearing else { return }
+			do { try await ProjectStorage.clearTemporaryFiles() }
+			catch { failure = "Could not clear temporary files. Open Storage and try again." }
+			clearing = false
+			refreshing += 1
+		}
+		.onReceive(NotificationCenter.default.publisher(for: ProjectStorage.didClean)) { _ in refreshing += 1 }
+		.onChange(of: phase) { _, phase in if phase == .active { refreshing += 1 } }
+		.sheet(isPresented: $managing, onDismiss: {
+			if let pending { opened = pending; self.pending = nil }
+			else { manageFocused = true; refreshing += 1 }
+		}) {
+			ProjectLauncherView(mode: .open) { pending = $0 }
+		}
+		.fullScreenCover(item: $opened, onDismiss: { manageFocused = true; refreshing += 1 }) { project in
+			ProjectWorkspaceView(project: project) { opened = nil }
+		}
+		.alert("Storage", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
+			Button("OK") {}
+		} message: { Text(failure ?? "") }
 	}
 }

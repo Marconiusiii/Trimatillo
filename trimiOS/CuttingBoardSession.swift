@@ -50,22 +50,101 @@ final class EditPointFocusTrace: NSObject {
 }
 #endif
 
+// Shared by the app and Photos extension. A directory lock lasts as long as the
+// import, export, or share owns its files. The kernel releases it on process exit.
+nonisolated final class MediaWorkDirectory: Sendable {
+	let url: URL
+	private let descriptor: Int32
+
+	private static func withRoot<T>(_ body: (URL) throws -> T) throws -> T {
+		let manager = FileManager.default
+		guard let container = manager.containerURL(forSecurityApplicationGroupIdentifier: "group.com.marconius.trimato-ios") else {
+			throw CocoaError(.fileNoSuchFile)
+		}
+		let root = container.appendingPathComponent("Library/Caches/TrimatilloWork", isDirectory: true)
+		try manager.createDirectory(at: root, withIntermediateDirectories: true, attributes: [.protectionKey: FileProtectionType.completeUnlessOpen])
+		let fd = open(root.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+		guard fd >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+		defer { close(fd) }
+		guard flock(fd, LOCK_EX) == 0 else { throw POSIXError(.EIO) }
+		if try root.resourceValues(forKeys: [.isExcludedFromBackupKey]).isExcludedFromBackup != true {
+			var marked = root
+			var values = URLResourceValues()
+			values.isExcludedFromBackup = true
+			try marked.setResourceValues(values)
+		}
+		return try body(root)
+	}
+
+	init() throws {
+		(url, descriptor) = try Self.withRoot { root in
+			let job = root.appendingPathComponent(UUID().uuidString, isDirectory: true)
+			try FileManager.default.createDirectory(at: job, withIntermediateDirectories: false, attributes: [.protectionKey: FileProtectionType.completeUnlessOpen])
+			let fd = open(job.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+			guard fd >= 0 else { throw POSIXError(.EIO) }
+			guard flock(fd, LOCK_EX | LOCK_NB) == 0 else { close(fd); throw POSIXError(.EIO) }
+			return (job, fd)
+		}
+	}
+
+	deinit {
+		try? FileManager.default.removeItem(at: url)
+		close(descriptor)
+	}
+
+	static func inspect(clear: Bool) throws -> (total: Int64, available: Int64) {
+		try withRoot { root in
+			let manager = FileManager.default
+			var total: Int64 = 0
+			var available: Int64 = 0
+			for job in try manager.contentsOfDirectory(at: root, includingPropertiesForKeys: nil) where UUID(uuidString: job.lastPathComponent) != nil {
+				let fd = open(job.path, O_RDONLY | O_DIRECTORY | O_NOFOLLOW | O_CLOEXEC)
+				guard fd >= 0 else {
+					if errno == ENOENT || errno == ELOOP || errno == ENOTDIR { continue }
+					throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+				}
+				defer { close(fd) }
+				let unused = flock(fd, LOCK_EX | LOCK_NB) == 0
+				if clear && unused {
+					try manager.removeItem(at: job)
+				} else {
+					do {
+						let size = try storedBytes(at: job)
+						total += size
+						if unused { available += size }
+					} catch let error as CocoaError where error.code == .fileReadNoSuchFile || error.code == .fileNoSuchFile {
+						continue
+					}
+				}
+			}
+			return (total, available)
+		}
+	}
+
+	static func storedBytes(at url: URL) throws -> Int64 {
+		let info = try url.resourceValues(forKeys: [.isDirectoryKey, .isRegularFileKey, .isSymbolicLinkKey, .totalFileAllocatedSizeKey, .fileAllocatedSizeKey, .fileSizeKey])
+		if info.isSymbolicLink == true { return 0 }
+		if info.isDirectory == true {
+			return try FileManager.default.contentsOfDirectory(at: url, includingPropertiesForKeys: nil).reduce(0) {
+				try $0 + storedBytes(at: $1)
+			}
+		}
+		return info.isRegularFile == true ? Int64(info.totalFileAllocatedSize ?? info.fileAllocatedSize ?? info.fileSize ?? 0) : 0
+	}
+}
+
 // Photos lends the transfer a file URL. Keep a private copy for the lifetime of the edit.
 nonisolated final class ImportedMovie: Transferable, Sendable {
 	let url: URL
-	private let directory: URL
+	private let work: MediaWorkDirectory
 
 	init(copying source: URL) throws {
-		let manager = FileManager.default
-		directory = manager.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-		url = directory.appendingPathComponent(source.lastPathComponent)
-		try manager.createDirectory(at: directory, withIntermediateDirectories: false)
-		do {
-			try manager.copyItem(at: source, to: url)
-		} catch {
-			try? manager.removeItem(at: directory)
-			throw error
-		}
+		let info = try source.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
+		guard info.isRegularFile == true, info.isSymbolicLink != true else { throw CocoaError(.fileReadUnsupportedScheme) }
+		work = try MediaWorkDirectory()
+		url = work.url.appendingPathComponent(source.lastPathComponent)
+		try FileManager.default.copyItem(at: source, to: url)
+		try FileManager.default.setAttributes([.protectionKey: FileProtectionType.completeUnlessOpen], ofItemAtPath: url.path)
 	}
 
 	static func snapshot(of url: URL) async throws -> ImportedMovie {
@@ -87,7 +166,6 @@ nonisolated final class ImportedMovie: Transferable, Sendable {
 		}
 	}
 
-	deinit { try? FileManager.default.removeItem(at: directory) }
 }
 
 @MainActor
@@ -1046,8 +1124,9 @@ extension CuttingBoardSession {
 
 	func saveOriginal() async throws {
 		if let originalFile, let originalType {
-			let file = try await exportClip(type: originalType)
-			defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+			let output = try await exportClip(type: originalType)
+			defer { withExtendedLifetime(output) {} }
+			let file = output.url
 			let expected = originalModification
 			originalModification = try await Task.detached {
 				let manager = FileManager.default
@@ -1091,8 +1170,9 @@ extension CuttingBoardSession {
 		case "mp4": type = .mp4
 		default: throw SaveFailure.unavailable
 		}
-		let file = try await exportClip(type: type)
-		defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+		let rendered = try await exportClip(type: type)
+		defer { withExtendedLifetime(rendered) {} }
+		let file = rendered.url
 		try await Task.detached { try FileManager.default.copyItem(at: file, to: renderedURL) }.value
 		output.adjustmentData = PHAdjustmentData(formatIdentifier: "com.marconius.trimato-ios.cut", formatVersion: "1", data: Data("Trimato cut".utf8))
 		try Task.checkCancellation()
@@ -1104,8 +1184,9 @@ extension CuttingBoardSession {
 
 	func saveNewVideo() async throws {
 		try await authorizePhotos(.addOnly)
-		let file = try await exportClip()
-		defer { try? FileManager.default.removeItem(at: file.deletingLastPathComponent()) }
+		let output = try await exportClip()
+		defer { withExtendedLifetime(output) {} }
+		let file = output.url
 		try await PHPhotoLibrary.shared().performChanges {
 			let options = PHAssetResourceCreationOptions()
 			options.originalFilename = file.lastPathComponent
@@ -1130,7 +1211,7 @@ extension CuttingBoardSession {
 		}
 	}
 
-	func exportClip(type requested: AVFileType? = nil) async throws -> URL {
+	func exportClip(type requested: AVFileType? = nil) async throws -> ExportFile {
 		let preset = hasVideo ? AVAssetExportPresetHighestQuality : AVAssetExportPresetAppleM4A
 		guard let exporter = AVAssetExportSession(asset: editAsset, presetName: preset) else {
 			throw CocoaError(.featureUnsupported)
@@ -1147,18 +1228,11 @@ extension CuttingBoardSession {
 		}
 		let type: AVFileType = requested ?? (hasVideo ? (exporter.supportedFileTypes.contains(.mp4) ? .mp4 : .mov) : .m4a)
 		guard exporter.supportedFileTypes.contains(type) else { throw CocoaError(.featureUnsupported) }
-		let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString, isDirectory: true)
-		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
 		let name = (title as NSString).deletingPathExtension + " Edited"
-		let file = directory.appendingPathComponent(name).appendingPathExtension(type == .mp4 ? "mp4" : type == .mov ? "mov" : "m4a")
-		do {
-			try await exporter.export(to: file, as: type)
-			try Task.checkCancellation()
-			return file
-		} catch {
-			try? FileManager.default.removeItem(at: directory)
-			throw error
-		}
+		let output = try ExportFile(name: name, suffix: type == .mp4 ? "mp4" : type == .mov ? "mov" : "m4a")
+		try await exporter.export(to: output.url, as: type)
+		try Task.checkCancellation()
+		return output
 	}
 }
 

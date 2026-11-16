@@ -384,7 +384,16 @@ private struct ScrubAudioWindow {
 		player.currentItem?.cancelPendingSeeks()
 	}
 
+	private static let openPlayers = NSHashTable<ProjectPlayback>.weakObjects()
+	private var projectID: UUID?
+
+	static func isOpen(_ id: UUID) -> Bool {
+		openPlayers.allObjects.contains { $0.projectID == id }
+	}
+
 	func prepare(_ project: EditingProject) async {
+		projectID = project.id
+		Self.openPlayers.add(self)
 		cancelPreparation()
 		let request = generation
 		pause()
@@ -588,14 +597,7 @@ private struct ScrubAudioWindow {
 	}
 
 	static func temporaryFile(named name: String, suffix: String) throws -> ExportFile {
-		let directory = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString, directoryHint: .isDirectory)
-		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
-		let forbidden = CharacterSet(charactersIn: "/:").union(.controlCharacters)
-		let cleaned = name.components(separatedBy: forbidden).joined(separator: "-").trimmingCharacters(in: CharacterSet(charactersIn: ". "))
-		let stem = String(decoding: cleaned.utf8.prefix(240), as: UTF8.self)
-		let file = directory.appending(component: stem.isEmpty ? "Project" : stem)
-			.appendingPathExtension(suffix)
-		return ExportFile(url: file)
+		try ExportFile(name: name, suffix: suffix)
 	}
 
 	private func captionedComposition(_ original: AVVideoComposition) async throws -> AVVideoComposition {

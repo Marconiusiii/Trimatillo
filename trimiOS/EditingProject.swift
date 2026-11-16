@@ -286,14 +286,16 @@ nonisolated struct ProjectFailure: LocalizedError {
 nonisolated enum ProjectLibrary {
 	static let directory = URL.documentsDirectory.appendingPathComponent("Projects", isDirectory: true)
 
-	// Projects store edit decisions and references, never the media payload.
+	// Only the manifest is decoded into memory. Project-owned media lives alongside it.
 	private static let maximumBytes = 32 * 1024 * 1024
 
 	private static func data(at url: URL) throws -> Data {
-		let values = try url.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey])
-		guard values.isRegularFile == true, values.isSymbolicLink != true else { throw CocoaError(.fileReadCorruptFile) }
-		let handle = try FileHandle(forReadingFrom: url)
+		let descriptor = open(url.path, O_RDONLY | O_NOFOLLOW | O_NONBLOCK | O_CLOEXEC)
+		guard descriptor >= 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
+		let handle = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
 		defer { try? handle.close() }
+		var info = stat()
+		guard fstat(descriptor, &info) == 0, (info.st_mode & S_IFMT) == S_IFREG else { throw CocoaError(.fileReadCorruptFile) }
 		let size = try handle.seekToEnd()
 		guard size <= maximumBytes else { throw CocoaError(.fileReadTooLarge) }
 		try handle.seek(toOffset: 0)
@@ -302,13 +304,24 @@ nonisolated enum ProjectLibrary {
 		return data
 	}
 
+	private static func manifest(_ entry: URL) throws -> URL {
+		guard entry.isFileURL, entry.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path,
+			try ProjectStorage.directoryExists(directory) else { throw CocoaError(.fileReadNoPermission) }
+		if entry.pathExtension == "json" { return entry }
+		guard UUID(uuidString: entry.lastPathComponent) != nil, try ProjectStorage.directoryExists(entry) else {
+			throw CocoaError(.fileReadCorruptFile)
+		}
+		return entry.appendingPathComponent("Project.json")
+	}
+
 	static func name(at url: URL) throws -> String {
 		struct Header: Decodable { let name: String }
-		return try JSONDecoder().decode(Header.self, from: data(at: url)).name
+		return try JSONDecoder().decode(Header.self, from: data(at: manifest(url))).name
 	}
 
 	static func load(_ url: URL) throws -> EditingProject {
-		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: url))
+		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: manifest(url)))
+		if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), id != project.id { throw CocoaError(.fileReadCorruptFile) }
 		guard (1...4).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
 		try validate(project)
 		if project.version < 3 { project.restoreAudioPartners() }
@@ -370,31 +383,84 @@ nonisolated enum ProjectLibrary {
 	}
 
 	static func savedFiles() throws -> [URL] {
-		guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
-		return try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
-			.filter { $0.pathExtension == "json" }
+		guard try ProjectStorage.directoryExists(directory) else { return [] }
+		let entries = try FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: nil)
+		let legacyNames = Set(entries.filter { $0.pathExtension == "json" }.map { $0.deletingPathExtension().lastPathComponent })
+		return try entries.filter { entry in
+			if entry.pathExtension == "json" { return true }
+			guard UUID(uuidString: entry.lastPathComponent) != nil else { return false }
+			// A crash between mkdir and moving a legacy manifest can leave an empty sibling.
+			if legacyNames.contains(entry.lastPathComponent), (try? ProjectStorage.directoryExists(entry)) == true {
+				return try !FileManager.default.contentsOfDirectory(atPath: entry.path).isEmpty
+			}
+			return true
+		}
 	}
 
-	@MainActor static func delete(_ url: URL) throws {
-		guard url.isFileURL, url.pathExtension == "json",
-			url.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path else {
+	private static let discardedProjects = URL.cachesDirectory.appendingPathComponent("DiscardedProjects", isDirectory: true)
+
+	static func pendingDeletions() throws -> [URL] {
+		guard try ProjectStorage.directoryExists(discardedProjects) else { return [] }
+		return try FileManager.default.contentsOfDirectory(at: discardedProjects, includingPropertiesForKeys: nil)
+			.filter { UUID(uuidString: $0.lastPathComponent) != nil }
+	}
+
+	@concurrent static func finishDeletions() async throws {
+		for entry in try pendingDeletions() {
+			do { try FileManager.default.removeItem(at: entry) }
+			catch let error as CocoaError where error.code == .fileNoSuchFile || error.code == .fileReadNoSuchFile { continue }
+		}
+	}
+
+	@MainActor static func delete(_ entry: URL) throws {
+		guard entry.isFileURL, entry.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path,
+			try ProjectStorage.directoryExists(directory), entry.pathExtension == "json" || UUID(uuidString: entry.lastPathComponent) != nil else {
 			throw CocoaError(.fileWriteNoPermission)
 		}
-		// Unlink only this directory entry, even if it was replaced since the list loaded.
-		try url.withUnsafeFileSystemRepresentation { path in
-			guard let path else { throw CocoaError(.fileWriteInvalidFileName) }
-			guard unlink(path) == 0 else { throw NSError(domain: NSPOSIXErrorDomain, code: Int(errno)) }
+		if let id = UUID(uuidString: entry.deletingPathExtension().lastPathComponent), ProjectPlayback.isOpen(id) {
+			throw ProjectFailure("Close the project in its other window before deleting it.")
 		}
+		// Move the entire project out of the library in one rename. A later cleanup
+		// can finish reclaiming its bytes if the process exits during removal.
+		try ProjectStorage.prepareDirectory(discardedProjects)
+		let discarded = discardedProjects.appendingPathComponent(UUID().uuidString)
+		guard rename(entry.path, discarded.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
 	}
 
 	@MainActor static func save(_ project: EditingProject, replacing previous: EditingProject? = nil) throws {
-		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
-		let url = directory.appending(component: project.id.uuidString + ".json")
-		if let previous, try load(url) != previous {
+		try ProjectStorage.prepareDirectory(directory)
+		let folder = directory.appendingPathComponent(project.id.uuidString, isDirectory: true)
+		let legacy = directory.appendingPathComponent(project.id.uuidString + ".json")
+		let manager = FileManager.default
+		let hasLegacy = manager.fileExists(atPath: legacy.path)
+		if let previous, try load(hasLegacy ? legacy : folder) != previous {
 			throw ProjectFailure("This project changed in another window. Close and reopen it before editing.")
 		}
 		let data = try JSONEncoder().encode(project)
 		guard data.count <= maximumBytes else { throw ProjectFailure("This project is too large to save. Continue in a new project.") }
-		try data.write(to: url, options: .atomic)
+		let existed = try ProjectStorage.directoryExists(folder)
+		if !existed && !hasLegacy {
+			// Publish a new folder only after its complete manifest is on the same volume.
+			let staging = try manager.url(for: .itemReplacementDirectory, in: .userDomainMask, appropriateFor: directory, create: true)
+			defer { try? manager.removeItem(at: staging) }
+			let package = staging.appendingPathComponent(project.id.uuidString, isDirectory: true)
+			try ProjectStorage.prepareDirectory(package)
+			try data.write(to: package.appendingPathComponent("Project.json"), options: [.atomic, .completeFileProtectionUnlessOpen])
+			try manager.moveItem(at: package, to: folder)
+			return
+		}
+		try ProjectStorage.prepareDirectory(folder)
+		let url = folder.appendingPathComponent("Project.json")
+		do {
+			if hasLegacy {
+				// An interrupted migration has either the original manifest or the moved one.
+				_ = try self.data(at: legacy)
+				try manager.moveItem(at: legacy, to: url)
+			}
+			try data.write(to: url, options: [.atomic, .completeFileProtectionUnlessOpen])
+		} catch {
+			if !existed { _ = rmdir(folder.path) }
+			throw error
+		}
 	}
 }

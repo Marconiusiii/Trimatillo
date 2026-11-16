@@ -61,6 +61,7 @@ struct ProjectLauncherView: View {
 	private nonisolated struct SavedProject: Identifiable, Sendable {
 		let id: URL
 		let name: String
+		let bytes: Int64
 	}
 	@State private var saved: [SavedProject]?
 	@State private var selection: URL?
@@ -126,7 +127,10 @@ struct ProjectLauncherView: View {
 		var unreadable = false
 		let projects = try ProjectLibrary.savedFiles().compactMap { url -> SavedProject? in
 			try Task.checkCancellation()
-			do { return try SavedProject(id: url, name: ProjectLibrary.name(at: url)) }
+			let name: String
+			do { name = try ProjectLibrary.name(at: url) }
+			catch { unreadable = true; name = url.deletingPathExtension().lastPathComponent }
+			do { return try SavedProject(id: url, name: name, bytes: MediaWorkDirectory.storedBytes(at: url)) }
 			catch { unreadable = true; return nil }
 		}.sorted { $0.name.localizedStandardCompare($1.name) == .orderedAscending }
 		return (projects, unreadable)
@@ -136,6 +140,10 @@ struct ProjectLauncherView: View {
 		guard var projects = saved, let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
 		do {
 			try ProjectLibrary.delete(project.id)
+			Task {
+				do { try await ProjectLibrary.finishDeletions() }
+				catch { self.error = "Could not finish removing project files. Open Storage and choose Clear Temporary Files." }
+			}
 			projects.remove(at: index)
 			saved = projects
 			if projects.isEmpty {
@@ -144,7 +152,7 @@ struct ProjectLauncherView: View {
 				focusedProject = .project(projects[min(index, projects.count - 1)].id)
 			}
 		} catch {
-			self.error = "Could not delete " + project.name + ". Reopen My Projects and try again."
+			self.error = (error as? ProjectFailure)?.localizedDescription ?? "Could not delete " + project.name + ". Reopen My Projects and try again."
 		}
 	}
 
@@ -168,7 +176,9 @@ struct ProjectLauncherView: View {
 								.listRowInsets(EdgeInsets())
 						}
 						ForEach(saved ?? []) { project in
-							Button { selection = project.id } label: { Text(project.name).editorTouchRow(alignment: .leading) }
+							Button { selection = project.id } label: {
+								LabeledContent(project.name, value: ProjectStorage.formatted(project.bytes)).editorTouchRow(alignment: .leading)
+							}
 								.accessibilityFocused($focusedProject, equals: .project(project.id))
 								.accessibilityAction(named: "Delete Project") { pendingDeletion = project }
 								.contextMenu {
@@ -184,8 +194,8 @@ struct ProjectLauncherView: View {
 			), presenting: pendingDeletion) { project in
 				Button("Cancel", role: .cancel) { focusedProject = .project(project.id) }
 				Button("Delete Project", role: .destructive) { delete(project) }
-			} message: { _ in
-				Text("This permanently deletes the saved project and its edits.")
+			} message: { project in
+				Text("This permanently deletes the project, its edits, and its project files (\(ProjectStorage.formatted(project.bytes))).")
 			}
 			.editorListMargins()
 			.scrollContentBackground(.hidden)
