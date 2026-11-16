@@ -58,6 +58,7 @@ private struct ScrubAudioWindow {
 	private var captionLoop: CMTimeRange?
 	private var loopGeneration = 0
 	private var ended: AnyCancellable?
+	private var playbackFailed: AnyCancellable?
 	let transport = ProjectTransportState()
 	private var playing: Bool { transport.playing }
 	@Published private(set) var ready = false
@@ -65,7 +66,8 @@ private struct ScrubAudioWindow {
 	@Published var failure: String?
 	private var media: [UUID: ProjectMediaAccess] = [:]
 	private var observer: Any?
-	private var status: NSKeyValueObservation?
+	private var status: AnyCancellable?
+	private var startup: Task<Void, Never>?
 	private var audioActive = false
 	private var generation = 0
 	private var reverse: Task<Void, Never>?
@@ -184,17 +186,26 @@ private struct ScrubAudioWindow {
 		playForward(1)
 	}
 
+	private func configureAudioSession() throws {
+		let session = AVAudioSession.sharedInstance()
+		if session.category != .playback || session.mode != .moviePlayback || !session.categoryOptions.contains(.mixWithOthers) {
+			try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
+		}
+	}
+
 	private func activateAudio() throws {
 		guard !audioActive else { return }
-		let session = AVAudioSession.sharedInstance()
-		try session.setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
-		try session.setActive(true)
+		try configureAudioSession()
+		try AVAudioSession.sharedInstance().setActive(true)
 		audioActive = true
 	}
 
 	private func playForward(_ rate: Double) {
+		warmup?.cancel()
+		warmup = nil
 		do {
-			try activateAudio()
+			// AVPlayer activates the configured session when forward playback starts.
+			try configureAudioSession()
 			speed = rate
 			if rate == 1 { player.play() }
 			else { player.playImmediately(atRate: Float(rate)) }
@@ -364,14 +375,23 @@ private struct ScrubAudioWindow {
 		player.seek(to: position, toleranceBefore: .zero, toleranceAfter: .zero)
 	}
 
-	func prepare(_ project: EditingProject) async {
+	func cancelPreparation() {
 		generation += 1
+		status = nil
+		startup?.cancel()
+		startup = nil
+		player.cancelPendingPrerolls()
+		player.currentItem?.cancelPendingSeeks()
+	}
+
+	func prepare(_ project: EditingProject) async {
+		cancelPreparation()
 		let request = generation
 		pause()
 		window = nil
 		ready = false
-		status = nil
 		ended = nil
+		playbackFailed = nil
 		player.replaceCurrentItem(with: nil)
 		media = [:]
 		duration = project.duration
@@ -445,6 +465,11 @@ private struct ScrubAudioWindow {
 			if composition.duration < duration { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: duration)) }
 			let item = AVPlayerItem(asset: composition)
 			if !levels.isEmpty {
+				do { try configureAudioSession() } catch {
+					preparing = false
+					failure = "Could not prepare project audio. Check the audio output and reopen the project."
+					return
+				}
 				let mix = AVMutableAudioMix()
 				mix.inputParameters = levels
 				item.audioMix = mix
@@ -475,26 +500,52 @@ private struct ScrubAudioWindow {
 						self.restartCaptionLoop(range)
 					} else if self.player.currentTime() >= self.duration { self.pause() }
 				}
+			playbackFailed = NotificationCenter.default.publisher(for: AVPlayerItem.failedToPlayToEndTimeNotification, object: item)
+				.receive(on: DispatchQueue.main)
+				.sink { [weak self, weak item] _ in
+					guard let self, let item, self.player.currentItem === item else { return }
+					self.startup?.cancel()
+					self.preparing = false
+					self.pause()
+					self.failure = "Could not play the project preview. Reopen the project to reload its media."
+				}
 			player.replaceCurrentItem(with: item)
-			seek(position)
-			status = item.observe(\.status, options: [.initial, .new]) { [weak self] item, _ in
-				Task { @MainActor [weak self] in
-					guard let self, self.player.currentItem === item else { return }
-					self.preparing = item.status == .unknown
-					self.ready = item.status == .readyToPlay
-					if self.ready { self.primeScrubAudio() }
-					if item.status == .failed {
+			status = player.publisher(for: \.status).combineLatest(item.publisher(for: \.status))
+				.receive(on: DispatchQueue.main)
+				.sink { [weak self, weak item] _ in
+					guard let self, let item, self.player.currentItem === item else { return }
+					if item.status == .failed || self.player.status == .failed {
+						self.startup?.cancel()
+						self.ready = false
+						self.preparing = false
 						self.pause()
 						self.failure = "Could not play the timeline. Reconnect the affected clip in Project Media."
+					} else if self.preparing, self.startup == nil,
+						self.player.status == .readyToPlay, item.status == .readyToPlay {
+						self.startup = Task { await self.preparePlayback(item) }
 					}
 				}
-			}
 		} catch {
 			if generation == request {
 				preparing = false
 				if !Task.isCancelled { failure = "Could not play " + currentName + ". Reconnect the clip in Project Media." }
 			}
 		}
+	}
+
+	private func preparePlayback(_ item: AVPlayerItem) async {
+		let start = playhead.position
+		let positioned = await player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero)
+		guard !Task.isCancelled, player.currentItem === item else { return }
+		var primed = positioned && player.status == .readyToPlay
+		if primed, start < duration {
+			primed = await player.preroll(atRate: 1)
+		}
+		guard !Task.isCancelled, player.currentItem === item else { return }
+		ready = primed
+		preparing = false
+		startup = nil
+		if !primed { failure = "Could not prepare playback. Close and reopen the project." }
 	}
 
 	private static func background(from start: CMTime, to end: CMTime) -> AVMutableVideoCompositionInstruction {

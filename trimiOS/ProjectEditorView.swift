@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import PhotosUI
+import Combine
 import OSLog
 import UniformTypeIdentifiers
 
@@ -17,6 +18,51 @@ private enum ProjectSheet: Identifiable {
 		case .settings: "settings"
 		case .export: "export"
 		}
+	}
+}
+
+@MainActor private final class ProjectExportCue: NSObject, ObservableObject, AVAudioPlayerDelegate {
+	private var player: AVAudioPlayer?
+	private var preparation: Task<Void, Never>?
+	private var interruption: AnyCancellable?
+
+	func prepare() {
+		preparation = Task { player = await Self.preparePlayer() }
+	}
+
+	@concurrent private static func preparePlayer() async -> sending AVAudioPlayer? {
+		guard let url = Bundle.main.url(forResource: "ExportComplete", withExtension: "wav"),
+			let cue = try? AVAudioPlayer(contentsOf: url), cue.prepareToPlay() else { return nil }
+		return cue
+	}
+
+	func play() async {
+		await preparation?.value
+		preparation = nil
+		player?.delegate = self
+		guard let player, player.play() else { finish(); return }
+		interruption = NotificationCenter.default.publisher(for: AVAudioSession.interruptionNotification)
+			.receive(on: DispatchQueue.main)
+			.sink { [weak self] note in
+				if note.userInfo?[AVAudioSessionInterruptionTypeKey] as? UInt == AVAudioSession.InterruptionType.began.rawValue {
+					self?.finish()
+				}
+			}
+	}
+
+	func audioPlayerDidFinishPlaying(_ player: AVAudioPlayer, successfully flag: Bool) {
+		if self.player === player { finish() }
+	}
+
+	func audioPlayerDecodeErrorDidOccur(_ player: AVAudioPlayer, error: Error?) {
+		if self.player === player { finish() }
+	}
+
+	private func finish() {
+		interruption = nil
+		player = nil
+		let message = NSAttributedString(string: "Export complete", attributes: [.accessibilitySpeechQueueAnnouncement: true])
+		UIAccessibility.post(notification: .announcement, argument: message)
 	}
 }
 
@@ -48,7 +94,7 @@ struct ProjectEditorView: View {
 	@State private var clipTask: Task<Void, Never>?
 	@State private var projectSheet: ProjectSheet?
 	@State private var exportCompleted = false
-	@State private var exportCue: AVAudioPlayer?
+	@StateObject private var exportCue = ProjectExportCue()
 	@State private var undo: [HistoryEntry] = []
 	@State private var redo: [HistoryEntry] = []
 	@State private var error: String?
@@ -69,8 +115,15 @@ struct ProjectEditorView: View {
 	private var loading: Bool { clipTask != nil || preparingTimeline }
 
 	var body: some View {
-		ProjectWorkspaceTabs(selection: $tool) {
-			workspacePage
+		Group {
+			if preparingTimeline {
+				LoadingStatusView("Preparing timeline", cancel: close)
+			} else {
+				ProjectWorkspaceTabs(selection: $tool) { workspacePage }
+			}
+		}
+		.onChange(of: playback.failure) { _, message in
+			if let message { error = message; playback.failure = nil }
 		}
 		.onChange(of: tool) {
 			playback.playhead.navigationLabel = nil
@@ -92,8 +145,6 @@ struct ProjectEditorView: View {
 			Group {
 				if clipTask != nil {
 					LoadingStatusView("Opening clip", cancel: cancelClipLoad)
-				} else if preparingTimeline {
-					LoadingStatusView("Preparing timeline", cancel: close)
 				} else {
 					editorLayout
 				}
@@ -205,9 +256,6 @@ struct ProjectEditorView: View {
 			} message: { Text(error ?? "") }
 		}
 		.onChange(of: dragging) { _, ids in if ids.isEmpty { dropAnchor = nil } }
-		.onChange(of: playback.failure) { _, message in
-			if let message { error = message; playback.failure = nil }
-		}
 	}
 
 	private var editorLayout: some View {
@@ -242,22 +290,14 @@ struct ProjectEditorView: View {
 
 	private func prepareExportConfirmation() {
 		exportCompleted = true
-		if exportCue == nil, let url = Bundle.main.url(forResource: "ExportComplete", withExtension: "wav") {
-			exportCue = try? AVAudioPlayer(contentsOf: url)
-		}
-		exportCue?.currentTime = 0
-		exportCue?.prepareToPlay()
+		exportCue.prepare()
 	}
 
 	private func projectSheetDismissed() {
 		focus = "projectActions"
 		guard exportCompleted else { return }
 		exportCompleted = false
-		if let exportCue {
-			exportCue.play(atTime: exportCue.deviceCurrentTime + 0.05)
-		}
-		let message = NSAttributedString(string: "Export complete", attributes: [.accessibilitySpeechQueueAnnouncement: true])
-		UIAccessibility.post(notification: .announcement, argument: message)
+		Task { await exportCue.play() }
 	}
 
 	private var projectActions: [EditorMenuAction] {
@@ -1048,6 +1088,14 @@ private struct ProjectPlayButton: View {
 	}
 }
 
+private func configureProjectPreview(_ layer: AVPlayerLayer) {
+	#if targetEnvironment(simulator)
+	// The simulator's display queue can reject the composited YUV frames during preroll.
+	layer.pixelBufferAttributes = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
+	#endif
+	layer.videoGravity = .resizeAspect
+}
+
 private struct ProjectPreview: UIViewRepresentable {
 	let player: AVPlayer
 
@@ -1057,6 +1105,7 @@ private struct ProjectPreview: UIViewRepresentable {
 
 	func makeUIView(context: Context) -> FrameView {
 		let view = FrameView()
+		configureProjectPreview(view.layer as! AVPlayerLayer)
 		view.backgroundColor = .black
 		view.isAccessibilityElement = true
 		view.accessibilityLabel = "Video frame"
@@ -1506,7 +1555,7 @@ private struct ProjectTouchSurface: UIViewRepresentable {
 		view.accessibilityTraits = .allowsDirectInteraction
 		view.installTimelineGestures(projectTimeline: true, captioning: captioning)
 		view.backgroundColor = UIColor(EditorTheme.surface)
-		view.video.videoGravity = .resizeAspect
+		configureProjectPreview(view.video)
 		view.layer.addSublayer(view.cursor)
 		return view
 	}

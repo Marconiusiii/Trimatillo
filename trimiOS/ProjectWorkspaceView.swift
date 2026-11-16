@@ -32,6 +32,7 @@ struct ProjectWorkspaceView: View {
 	}
 
 	private func closeProject() {
+		playback.cancelPreparation()
 		playback.pause()
 		close()
 	}
