@@ -561,38 +561,56 @@ private struct ScrubAudioWindow {
 			starts[start, default: []].append(index)
 			ends[end, default: []].append(index)
 		}
-		let base = original.instructions
-		let times = Set(starts.keys).union(ends.keys).union(base.map { $0.timeRange.start }).union([.zero, duration]).sorted()
+		let times = Set(starts.keys).union(ends.keys).sorted()
 		var active = IndexSet()
-		var panelData: Data?
-		var instructions = [CaptionCompositionInstruction]()
-		var segment = 0
-		for (start, end) in zip(times, times.dropFirst()) {
+		var changes = [CaptionPanelChange]()
+		for time in times {
 			await Task.yield()
 			try Task.checkCancellation()
-			if ends[start] != nil || starts[start] != nil {
-				for index in ends[start] ?? [] { active.remove(index) }
-				for index in starts[start] ?? [] { active.insert(index) }
-				panelData = nil
-				if !active.isEmpty {
-					let text = active.map { captions[$0].text }.joined(separator: "\n")
-					let panel = CaptionPanel(text: text, height: size.height)
-						.frame(width: size.width * CaptionPanel.widthFraction)
-					guard let png = ImageRenderer(content: panel).uiImage?.pngData() else {
-						throw ProjectFailure("Could not render the caption text.")
-					}
-					panelData = png
+			for index in ends[time] ?? [] { active.remove(index) }
+			for index in starts[time] ?? [] { active.insert(index) }
+			var image: Data?
+			if !active.isEmpty {
+				let text = active.map { captions[$0].text }.joined(separator: "\n")
+				let panel = CaptionPanel(text: text, height: size.height)
+					.frame(width: size.width * CaptionPanel.widthFraction)
+				guard let png = ImageRenderer(content: panel).uiImage?.pngData() else {
+					throw ProjectFailure("Could not render the caption text.")
 				}
+				image = png
 			}
-			while segment + 1 < base.count, base[segment].timeRange.end <= start { segment += 1 }
-			guard base.indices.contains(segment), let original = base[segment] as? AVVideoCompositionInstruction else {
+			changes.append(CaptionPanelChange(time: time, image: image))
+		}
+		let panels = CaptionPanelTimeline(changes: changes)
+		let instructions = try original.instructions.map { instruction in
+			guard let video = instruction as? AVVideoCompositionInstruction else {
 				throw ProjectFailure("Could not read the project video layout.")
 			}
-			instructions.append(CaptionCompositionInstruction(original, start: start, end: end, panel: panelData))
+			return CaptionCompositionInstruction(video, panels: panels)
 		}
 		composition.customVideoCompositorClass = CaptionCompositor.self
 		composition.instructions = instructions
 		return composition
+	}
+}
+
+nonisolated private struct CaptionPanelChange {
+	let time: CMTime
+	let image: Data?
+}
+
+nonisolated private struct CaptionPanelTimeline {
+	let changes: [CaptionPanelChange]
+
+	func image(at time: CMTime) -> Data? {
+		var lower = 0
+		var upper = changes.count
+		while lower < upper {
+			let middle = lower + (upper - lower) / 2
+			if changes[middle].time <= time { lower = middle + 1 }
+			else { upper = middle }
+		}
+		return lower > 0 ? changes[lower - 1].image : nil
 	}
 }
 
@@ -604,15 +622,15 @@ nonisolated private final class CaptionCompositionInstruction: NSObject, AVVideo
 	var requiredSourceTrackIDs: [NSValue]? { pictureTrack.map { [NSNumber(value: $0)] } ?? [] }
 	let pictureTrack: CMPersistentTrackID?
 	let transform: CGAffineTransform
-	let panel: Data?
+	let panels: CaptionPanelTimeline
 
-	init(_ original: AVVideoCompositionInstruction, start: CMTime, end: CMTime, panel: Data?) {
-		timeRange = CMTimeRange(start: start, end: end)
-		self.panel = panel
+	init(_ original: AVVideoCompositionInstruction, panels: CaptionPanelTimeline) {
+		timeRange = original.timeRange
+		self.panels = panels
 		let layer = original.layerInstructions.first
 		pictureTrack = layer?.trackID
 		var matrix = CGAffineTransform.identity
-		layer?.getTransformRamp(for: start, start: &matrix, end: nil, timeRange: nil)
+		layer?.getTransformRamp(for: original.timeRange.start, start: &matrix, end: nil, timeRange: nil)
 		transform = matrix
 	}
 }
@@ -654,7 +672,7 @@ nonisolated private final class CaptionCompositor: NSObject, AVVideoCompositing 
 			image = source.transformed(by: flipSource.concatenating(instruction.transform).concatenating(flipOutput))
 				.composited(over: image)
 		}
-		if let data = instruction.panel {
+		if let data = instruction.panels.image(at: request.compositionTime) {
 			let key = data as NSData
 			guard let panel = panels.object(forKey: key) ?? CIImage(data: data) else {
 				request.finish(with: ProjectFailure("Could not read the caption image."))

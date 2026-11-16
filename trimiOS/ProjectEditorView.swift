@@ -1,6 +1,7 @@
 import SwiftUI
 import AVKit
 import PhotosUI
+import OSLog
 import UniformTypeIdentifiers
 
 private struct HistoryEntry {
@@ -133,7 +134,7 @@ struct ProjectEditorView: View {
 					}
 					.editorAppearance()
 				case .export(let timeline):
-					ProjectExportView(timeline: timeline) { exportCompleted = true }
+					ProjectExportView(timeline: timeline, didSave: prepareExportConfirmation)
 				}
 			}
 			.sheet(item: $effects, onDismiss: { focus = trigger }) { track in
@@ -239,13 +240,21 @@ struct ProjectEditorView: View {
 		.accessibilityAction(.magicTap) { playback.toggle() }
 	}
 
+	private func prepareExportConfirmation() {
+		exportCompleted = true
+		if exportCue == nil, let url = Bundle.main.url(forResource: "ExportComplete", withExtension: "wav") {
+			exportCue = try? AVAudioPlayer(contentsOf: url)
+		}
+		exportCue?.currentTime = 0
+		exportCue?.prepareToPlay()
+	}
+
 	private func projectSheetDismissed() {
 		focus = "projectActions"
 		guard exportCompleted else { return }
 		exportCompleted = false
-		if let url = Bundle.main.url(forResource: "ExportComplete", withExtension: "wav") {
-			exportCue = try? AVAudioPlayer(contentsOf: url)
-			exportCue?.play()
+		if let exportCue {
+			exportCue.play(atTime: exportCue.deviceCurrentTime + 0.05)
 		}
 		let message = NSAttributedString(string: "Export complete", attributes: [.accessibilitySpeechQueueAnnouncement: true])
 		UIAccessibility.post(notification: .announcement, argument: message)
@@ -1256,6 +1265,7 @@ private struct ProjectExportView: View {
 		}
 		.task(id: destination) {
 			guard let destination else { return }
+			var stage = "access Photos"
 			do {
 				if destination == .photos {
 					let status = await PHPhotoLibrary.requestAuthorization(for: .addOnly)
@@ -1264,10 +1274,12 @@ private struct ProjectExportView: View {
 					}
 				}
 				try Task.checkCancellation()
+				stage = burnInCaptions ? "render the video with open captions" : "render the project"
 				let file = try await timeline.render(burnInCaptions: burnInCaptions)
 				if destination == .files {
 					output = file
 				} else {
+					stage = "save the export to Photos"
 					savingToPhotos = true
 					defer { savingToPhotos = false }
 					try await PHPhotoLibrary.shared().performChanges {
@@ -1280,13 +1292,37 @@ private struct ProjectExportView: View {
 				}
 			} catch {
 				guard !Task.isCancelled else { return }
-				failure = (error as? ProjectFailure)?.message ?? "Could not export the project. Check available storage and access to the source clips, then try again."
+				failure = Self.failureMessage(error, stage: stage)
 				self.destination = nil
 			}
 		}
 		.alert("Could Not Export Project", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
 			Button("OK") { failure = nil }
 		} message: { Text(failure ?? "") }
+	}
+
+	private static func failureMessage(_ error: Error, stage: String) -> String {
+		var chain = [NSError]()
+		var next: NSError? = error as NSError
+		while let current = next, !chain.contains(where: { $0 === current }) {
+			chain.append(current)
+			next = current.userInfo[NSUnderlyingErrorKey] as? NSError
+		}
+		let codes = chain.map { "\($0.domain) \($0.code)" }.joined(separator: ", ")
+		Logger(subsystem: "com.marconius.trimato-ios", category: "Export").error("Could not \(stage, privacy: .public): \(codes, privacy: .public)")
+		if let failure = error as? ProjectFailure { return failure.message }
+		if chain.contains(where: {
+			switch ($0.domain, $0.code) {
+			case (NSCocoaErrorDomain, NSFileWriteOutOfSpaceError), (NSPOSIXErrorDomain, Int(ENOSPC)),
+				(AVFoundationErrorDomain, AVError.Code.diskFull.rawValue), (PHPhotosErrorDomain, PHPhotosError.Code.notEnoughSpace.rawValue):
+				return true
+			default: return false
+			}
+		}) {
+			return "Could not " + stage + ". Free up storage and try again."
+		}
+		let reason = chain.compactMap(\.localizedFailureReason).first ?? error.localizedDescription
+		return "Could not " + stage + ". " + reason + " (" + codes + ")"
 	}
 }
 
