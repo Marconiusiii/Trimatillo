@@ -241,7 +241,7 @@ struct ProjectEditorView: View {
 		var actions = [EditorMenuAction("Project Settings") { playback.pause(); projectSheet = .settings }]
 		if !project.placements.isEmpty {
 			actions.append(EditorMenuAction("Export") {
-				guard preparedRevision == revision, let timeline = playback.exportTimeline(named: project.name) else {
+				guard preparedRevision == revision, let timeline = playback.exportTimeline(named: project.name, captions: project.captions ?? []) else {
 					error = playback.player.currentItem?.status == .failed || playback.player.currentItem == nil && preparedRevision == revision
 						? "Could not open the timeline. Reconnect its clips in Project Media and choose Export again."
 						: "The timeline is loading. Choose Export again when Play is available."
@@ -1204,6 +1204,7 @@ private struct ProjectExportView: View {
 	@State private var output: ExportFile?
 	@State private var failure: String?
 	@State private var savingToPhotos = false
+	@State private var burnInCaptions = false
 	private enum Destination { case files, photos }
 
 	var body: some View {
@@ -1212,6 +1213,9 @@ private struct ProjectExportView: View {
 				if destination != nil {
 					ProgressView("Exporting")
 				} else {
+					if timeline.hasVideo && !timeline.captions.isEmpty {
+						Toggle("Burn In Open Captions", isOn: $burnInCaptions)
+					}
 					if timeline.hasVideo { Button("Photos") { destination = .photos } }
 					Button("Files") { destination = .files }
 				}
@@ -1242,7 +1246,7 @@ private struct ProjectExportView: View {
 					}
 				}
 				try Task.checkCancellation()
-				let file = try await timeline.render()
+				let file = try await timeline.render(burnInCaptions: burnInCaptions)
 				if destination == .files {
 					output = file
 				} else {

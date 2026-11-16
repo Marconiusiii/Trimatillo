@@ -2,6 +2,8 @@ import AVFoundation
 import Combine
 import UIKit
 import Observation
+import SwiftUI
+import CoreImage
 
 @MainActor final class ProjectPlayhead: ObservableObject {
 	@Published var position: CMTime = .zero {
@@ -99,10 +101,10 @@ private struct ScrubAudioWindow {
 
 	deinit { if let observer { player.removeTimeObserver(observer) } }
 
-	func exportTimeline(named name: String) -> ProjectExport? {
+	func exportTimeline(named name: String, captions: [CaptionCue]) -> ProjectExport? {
 		guard ready, let item = player.currentItem else { return nil }
 		pause()
-		return ProjectExport(name: name, item: item, duration: duration, sources: Array(media.values))
+		return ProjectExport(name: name, captions: captions, item: item, duration: duration, sources: Array(media.values))
 	}
 
 	func makePreview() -> PreviewPlayback? {
@@ -505,34 +507,165 @@ private struct ScrubAudioWindow {
 
 @MainActor struct ProjectExport {
 	let name: String
+	let captions: [CaptionCue]
 	let item: AVPlayerItem
 	let duration: CMTime
 	// Keep security-scoped files open through rendering.
 	let sources: [ProjectMediaAccess]
 	var hasVideo: Bool { item.videoComposition != nil }
 
-	func render() async throws -> ExportFile {
+	func render(burnInCaptions: Bool = false) async throws -> ExportFile {
 		let preset = hasVideo ? AVAssetExportPresetHighestQuality : AVAssetExportPresetAppleM4A
 		guard let exporter = AVAssetExportSession(asset: item.asset, presetName: preset) else {
 			throw ProjectFailure("Could not prepare the export. Reopen the project and try again.")
 		}
-		exporter.videoComposition = item.videoComposition
+		if burnInCaptions, let composition = item.videoComposition, !captions.isEmpty {
+			exporter.videoComposition = try await captionedComposition(composition)
+		} else {
+			exporter.videoComposition = item.videoComposition
+		}
 		exporter.audioMix = item.audioMix
 		exporter.timeRange = CMTimeRange(start: .zero, duration: duration)
 		let type: AVFileType = hasVideo ? (exporter.supportedFileTypes.contains(.mp4) ? .mp4 : .mov) : .m4a
 		guard exporter.supportedFileTypes.contains(type) else {
 			throw ProjectFailure("Could not export this media format. Check the project settings and try again.")
 		}
+		let output = try Self.temporaryFile(named: name, suffix: type == .mp4 ? "mp4" : type == .mov ? "mov" : "m4a")
+		try await exporter.export(to: output.url, as: type)
+		try Task.checkCancellation()
+		return output
+	}
+
+	static func temporaryFile(named name: String, suffix: String) throws -> ExportFile {
 		let directory = FileManager.default.temporaryDirectory.appending(component: UUID().uuidString, directoryHint: .isDirectory)
 		try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: false)
 		let forbidden = CharacterSet(charactersIn: "/:").union(.controlCharacters)
 		let cleaned = name.components(separatedBy: forbidden).joined(separator: "-").trimmingCharacters(in: CharacterSet(charactersIn: ". "))
 		let stem = String(decoding: cleaned.utf8.prefix(240), as: UTF8.self)
 		let file = directory.appending(component: stem.isEmpty ? "Project" : stem)
-			.appendingPathExtension(type == .mp4 ? "mp4" : type == .mov ? "mov" : "m4a")
-		let output = ExportFile(url: file)
-		try await exporter.export(to: file, as: type)
-		try Task.checkCancellation()
-		return output
+			.appendingPathExtension(suffix)
+		return ExportFile(url: file)
+	}
+
+	private func captionedComposition(_ original: AVVideoComposition) async throws -> AVVideoComposition {
+		guard let composition = original.mutableCopy() as? AVMutableVideoComposition else {
+			throw ProjectFailure("Could not prepare the video for open captions.")
+		}
+		let size = composition.renderSize
+		var starts = [CMTime: [Int]]()
+		var ends = [CMTime: [Int]]()
+		for (index, cue) in captions.enumerated() {
+			let start = max(.zero, cue.start.time)
+			let end = min(duration, cue.end.time)
+			guard start < end else { continue }
+			starts[start, default: []].append(index)
+			ends[end, default: []].append(index)
+		}
+		let base = original.instructions
+		let times = Set(starts.keys).union(ends.keys).union(base.map { $0.timeRange.start }).union([.zero, duration]).sorted()
+		var active = IndexSet()
+		var panelData: Data?
+		var instructions = [CaptionCompositionInstruction]()
+		var segment = 0
+		for (start, end) in zip(times, times.dropFirst()) {
+			await Task.yield()
+			try Task.checkCancellation()
+			if ends[start] != nil || starts[start] != nil {
+				for index in ends[start] ?? [] { active.remove(index) }
+				for index in starts[start] ?? [] { active.insert(index) }
+				panelData = nil
+				if !active.isEmpty {
+					let text = active.map { captions[$0].text }.joined(separator: "\n")
+					let panel = CaptionPanel(text: text, height: size.height)
+						.frame(width: size.width * CaptionPanel.widthFraction)
+					guard let png = ImageRenderer(content: panel).uiImage?.pngData() else {
+						throw ProjectFailure("Could not render the caption text.")
+					}
+					panelData = png
+				}
+			}
+			while segment + 1 < base.count, base[segment].timeRange.end <= start { segment += 1 }
+			guard base.indices.contains(segment), let original = base[segment] as? AVVideoCompositionInstruction else {
+				throw ProjectFailure("Could not read the project video layout.")
+			}
+			instructions.append(CaptionCompositionInstruction(original, start: start, end: end, panel: panelData))
+		}
+		composition.customVideoCompositorClass = CaptionCompositor.self
+		composition.instructions = instructions
+		return composition
+	}
+}
+
+nonisolated private final class CaptionCompositionInstruction: NSObject, AVVideoCompositionInstructionProtocol {
+	let timeRange: CMTimeRange
+	let enablePostProcessing = false
+	let containsTweening = false
+	let passthroughTrackID = kCMPersistentTrackID_Invalid
+	var requiredSourceTrackIDs: [NSValue]? { pictureTrack.map { [NSNumber(value: $0)] } ?? [] }
+	let pictureTrack: CMPersistentTrackID?
+	let transform: CGAffineTransform
+	let panel: Data?
+
+	init(_ original: AVVideoCompositionInstruction, start: CMTime, end: CMTime, panel: Data?) {
+		timeRange = CMTimeRange(start: start, end: end)
+		self.panel = panel
+		let layer = original.layerInstructions.first
+		pictureTrack = layer?.trackID
+		var matrix = CGAffineTransform.identity
+		layer?.getTransformRamp(for: start, start: &matrix, end: nil, timeRange: nil)
+		transform = matrix
+	}
+}
+
+nonisolated private final class CaptionCompositor: NSObject, AVVideoCompositing {
+	let sourcePixelBufferAttributes: [String: any Sendable]? = [
+		kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+	]
+	let requiredPixelBufferAttributesForRenderContext: [String: any Sendable] = [
+		kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
+	]
+	private let context = CIContext(options: [.cacheIntermediates: false])
+	// NSCache supports concurrent requests from AVFoundation.
+	nonisolated(unsafe) private let panels = NSCache<NSData, CIImage>()
+
+	override init() {
+		super.init()
+		panels.countLimit = 3
+	}
+
+	func renderContextChanged(_ newRenderContext: AVVideoCompositionRenderContext) {}
+
+	func startRequest(_ request: AVAsynchronousVideoCompositionRequest) {
+		guard let instruction = request.videoCompositionInstruction as? CaptionCompositionInstruction,
+			let buffer = request.renderContext.newPixelBuffer() else {
+			request.finish(with: ProjectFailure("Could not prepare an output video frame."))
+			return
+		}
+		let size = request.renderContext.size
+		let bounds = CGRect(origin: .zero, size: size)
+		var image = CIImage(color: .black).cropped(to: bounds)
+		var colorSpace = CGColorSpace(name: CGColorSpace.itur_709)
+		if let track = instruction.pictureTrack, let frame = request.sourceFrame(byTrackID: track) {
+			let source = CIImage(cvPixelBuffer: frame)
+			colorSpace = source.colorSpace ?? colorSpace
+			// The timeline uses top-left coordinates. Core Image uses bottom-left coordinates.
+			let flipSource = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: source.extent.height)
+			let flipOutput = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: size.height)
+			image = source.transformed(by: flipSource.concatenating(instruction.transform).concatenating(flipOutput))
+				.composited(over: image)
+		}
+		if let data = instruction.panel {
+			let key = data as NSData
+			guard let panel = panels.object(forKey: key) ?? CIImage(data: data) else {
+				request.finish(with: ProjectFailure("Could not read the caption image."))
+				return
+			}
+			panels.setObject(panel, forKey: key)
+			let point = CGAffineTransform(translationX: (size.width - panel.extent.width) / 2,
+				y: size.height * CaptionPanel.bottomFraction)
+			image = panel.transformed(by: point).composited(over: image)
+		}
+		context.render(image, to: buffer, bounds: bounds, colorSpace: colorSpace)
+		request.finish(withComposedVideoFrame: buffer)
 	}
 }

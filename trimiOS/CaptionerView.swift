@@ -1,7 +1,6 @@
 import AVFoundation
 import AVKit
 import SwiftUI
-import UniformTypeIdentifiers
 
 struct CaptionEntry: Identifiable {
 	let cue: CaptionCue
@@ -109,6 +108,22 @@ struct CaptionEntryView: View {
 	}
 }
 
+struct CaptionPanel: View {
+	static let widthFraction = 0.765
+	nonisolated static let bottomFraction = 0.05
+	let text: String
+	let height: CGFloat
+
+	var body: some View {
+		Text(text)
+			.font(.system(size: height * 45 / 1080, weight: .medium))
+			.foregroundStyle(.white)
+			.multilineTextAlignment(.center)
+			.padding(height * 0.0125)
+			.background(.black.opacity(0.8))
+	}
+}
+
 struct CaptionOverlay: View {
 	let cues: [CaptionCue]
 	let playhead: ProjectPlayhead
@@ -122,14 +137,9 @@ struct CaptionOverlay: View {
 			let height = min(geometry.size.height, geometry.size.width / max(0.01, aspect))
 			let width = height * aspect
 			if !activeText.isEmpty {
-				Text(activeText)
-					.font(.system(size: height * 45 / 1080, weight: .medium))
-					.foregroundStyle(.white)
-					.multilineTextAlignment(.center)
-					.padding(height * 0.0125)
-					.background(.black.opacity(0.8))
-					.frame(maxWidth: width * 0.765)
-					.padding(.bottom, height * 0.05)
+				CaptionPanel(text: activeText, height: height)
+					.frame(maxWidth: width * CaptionPanel.widthFraction)
+					.padding(.bottom, height * CaptionPanel.bottomFraction)
 					.frame(width: width, height: height, alignment: .bottom)
 					.position(x: geometry.size.width / 2, y: geometry.size.height / 2)
 			}
@@ -230,19 +240,21 @@ private enum CaptionExportFormat: String, CaseIterable {
 	var suffix: String {
 		switch self { case .srt: "srt"; case .vtt: "vtt"; case .txt: "txt" }
 	}
-	var type: UTType { UTType(filenameExtension: suffix, conformingTo: .plainText) ?? .plainText }
 }
 
-private struct CaptionDocument: FileDocument {
-	static var readableContentTypes: [UTType] { CaptionExportFormat.allCases.map(\.type) }
-	var data: Data
-	init(data: Data) { self.data = data }
-	init(configuration: ReadConfiguration) throws {
-		guard let bytes = configuration.file.regularFileContents else { throw CocoaError(.fileReadCorruptFile) }
-		data = bytes
+private struct CaptionShareSheet: UIViewControllerRepresentable {
+	let file: ExportFile
+	let finish: (Error?) -> Void
+
+	func makeUIViewController(context: Context) -> UIActivityViewController {
+		let controller = UIActivityViewController(activityItems: [file.url], applicationActivities: nil)
+		controller.completionWithItemsHandler = { _, _, _, error in finish(error) }
+		return controller
 	}
-	func fileWrapper(configuration: WriteConfiguration) throws -> FileWrapper { FileWrapper(regularFileWithContents: data) }
+
+	func updateUIViewController(_ controller: UIActivityViewController, context: Context) {}
 }
+
 
 struct CaptionerView: View {
 	@Binding var project: EditingProject
@@ -255,9 +267,7 @@ struct CaptionerView: View {
 	let save: (EditingProject, String) throws -> Void
 	@State private var finalizing = false
 	@State private var finalizedMessage: String?
-	@State private var exporting = false
-	@State private var exportFormat = CaptionExportFormat.srt
-	@State private var document: CaptionDocument?
+	@State private var sharedFile: ExportFile?
 	@State private var failure: String?
 
 	var body: some View {
@@ -311,11 +321,12 @@ struct CaptionerView: View {
 		.editorMenuActions("Export Captions", CaptionExportFormat.allCases.map { format in EditorMenuAction(format.rawValue) { export(format) } })
 		.disabled(project.captions?.isEmpty != false)
 		.accessibilityFocused(focus, equals: "exportCaptions")
-		.fileExporter(isPresented: $exporting, document: document, contentTypes: [exportFormat.type],
-			defaultFilename: project.name + "." + exportFormat.suffix) { result in
-			focus.wrappedValue = "exportCaptions"
-			if case .failure(let error) = result { failure = error.localizedDescription }
-		} onCancellation: { focus.wrappedValue = "exportCaptions" }
+		.sheet(item: $sharedFile, onDismiss: { focus.wrappedValue = "exportCaptions" }) { file in
+			CaptionShareSheet(file: file) { error in
+				sharedFile = nil
+				if let error { failure = error.localizedDescription }
+			}
+		}
 		.alert("Captioner", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
 			Button("OK") { failure = nil }
 		} message: { Text(failure ?? "") }
@@ -340,9 +351,9 @@ struct CaptionerView: View {
 			case .txt: data = try CaptionFileCodec.encodePlainText(cues, projectTitle: project.name)
 			}
 			playback.pause()
-			document = CaptionDocument(data: data)
-			exportFormat = format
-			exporting = true
+			let file = try ProjectExport.temporaryFile(named: project.name, suffix: format.suffix)
+			try data.write(to: file.url, options: .atomic)
+			sharedFile = file
 		} catch { failure = error.localizedDescription }
 	}
 }

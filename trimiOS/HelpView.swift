@@ -86,6 +86,7 @@ private enum HelpTopic: String, CaseIterable {
 	private static var projectExport: HelpSection {
 		HelpSection("Export a project", numbered: true, [
 			"Open Project Actions beside the project name and choose Export. Export includes the full timeline and its track volumes.",
+			"To make captions part of the picture, turn on Burn In Open Captions. The movie uses the captions and timing in the Caption Timeline.",
 			"For video, choose Photos to save a new video to the library, or Files to choose a folder. For an audio project, choose Files to save an M4A.",
 			"In Files, keep the project name or enter a filename, then choose Save."
 		])
@@ -104,7 +105,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Open a caption's menu or accessibility actions to go to its start, edit it, or delete it. To change its timing, mark a new range, edit the caption, and choose Use Marked Range.",
 				"Choose Finalize Captions to divide draft passages into captions of up to two lines. Timing uses a reading speed of 160 words per minute, the project frame rate, and the space before the next caption or project end.",
 				"If all passages finalize, VoiceOver announces the result. If any need review, the review heading gives the count. Move to each passage to read the reason. Shorten the text or adjust the marked range and finalize again. Undo restores the previous captions.",
-				"Choose Export Captions, then SRT or WebVTT for timed captions, or Plain Text Transcript for the words in timeline order. Enter a filename and choose where to save it."
+				"Choose Export Captions, then SRT or WebVTT for timed captions, or Plain Text Transcript for the words in timeline order. Choose an app in the share sheet or choose Save to Files."
 			]), HelpSection("One finger in Captioner Direct Touch", [
 				"Swipe right to step forward one project frame.",
 				"Swipe left to step back one project frame.",
