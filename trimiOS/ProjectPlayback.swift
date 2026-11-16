@@ -53,6 +53,8 @@ private struct ScrubAudioWindow {
 		}
 		return playhead.position
 	}
+	private var captionLoop: CMTimeRange?
+	private var loopGeneration = 0
 	private var ended: AnyCancellable?
 	let transport = ProjectTransportState()
 	private var playing: Bool { transport.playing }
@@ -112,9 +114,33 @@ private struct ScrubAudioWindow {
 		}
 	}
 
+	func playCaptionSelection(_ range: CMTimeRange) {
+		guard ready, range.isValid, range.duration > .zero, range.start >= .zero, range.end <= duration else { return }
+		stop(keepingAudio: true)
+		captionLoop = range
+		player.currentItem?.forwardPlaybackEndTime = range.end
+		restartCaptionLoop(range)
+	}
+
+	private func restartCaptionLoop(_ range: CMTimeRange) {
+		let request = loopGeneration
+		playhead.position = range.start
+		player.seek(to: range.start, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
+			Task { @MainActor [weak self] in
+				guard let self, finished, request == loopGeneration, captionLoop != nil else { return }
+				playForward(1)
+			}
+		}
+	}
+
 	func pause() { stop(keepingAudio: false) }
 
 	private func stop(keepingAudio: Bool) {
+		if captionLoop != nil {
+			loopGeneration += 1
+			captionLoop = nil
+			player.currentItem?.forwardPlaybackEndTime = .invalid
+		}
 		warmup?.cancel()
 		warmup = nil
 		let wasRewinding = reverse != nil
@@ -442,8 +468,10 @@ private struct ScrubAudioWindow {
 				.receive(on: DispatchQueue.main)
 				.sink { [weak self, weak item] _ in
 					guard let self, let item, self.player.currentItem === item,
-						self.playing, self.speed > 0, self.player.currentTime() >= self.duration else { return }
-					self.pause()
+						self.playing, self.speed > 0 else { return }
+					if let range = self.captionLoop, self.player.currentTime() >= range.end {
+						self.restartCaptionLoop(range)
+					} else if self.player.currentTime() >= self.duration { self.pause() }
 				}
 			player.replaceCurrentItem(with: item)
 			seek(position)

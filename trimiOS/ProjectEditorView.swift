@@ -26,6 +26,10 @@ struct ProjectEditorView: View {
 	@Binding var board: ProjectBoard?
 	@Binding var revision: Int
 	let preparedRevision: Int?
+	@State private var tool = ProjectTool.editor
+	@State private var captionEntry: CaptionEntry?
+	@State private var captionTrigger = "newCaption"
+	@State private var captionCreated = false
 	@State private var activeTrack = TimelineTrack.primaryVideo.id
 	@State private var marked: Set<UUID> = []
 	@State private var dropAnchor: UUID?
@@ -62,8 +66,18 @@ struct ProjectEditorView: View {
 	private var loading: Bool { clipTask != nil || preparingTimeline }
 
 	var body: some View {
-		ProjectEditorKeyboard(enabled: !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
-			undoShake: {
+		ProjectWorkspaceTabs(selection: $tool) {
+			workspacePage
+		}
+		.onChange(of: tool) {
+			playback.playhead.navigationLabel = nil
+			keyboardClip = nil
+		}
+	}
+
+	private var workspacePage: some View {
+		ProjectEditorKeyboard(enabled: captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
+			captioning: tool == .captioner, undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
 				return true
@@ -83,13 +97,13 @@ struct ProjectEditorView: View {
 			}
 			.scrollContentBackground(.hidden)
 			.background(EditorTheme.workspace)
-			.navigationTitle(project.name)
+			.navigationTitle(tool == .captioner ? "Captioner" : project.name)
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar(loading ? .hidden : .visible, for: .navigationBar)
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) { Button("Close", action: close) }
 				ToolbarItem(placement: .principal) {
-					Text(project.name).font(.headline).accessibilityAddTraits(.isHeader)
+					Text(tool == .captioner ? "Captioner" : project.name).font(.headline).accessibilityAddTraits(.isHeader)
 				}
 				ToolbarItem(placement: .topBarTrailing) {
 					let actions = projectActions
@@ -169,11 +183,14 @@ struct ProjectEditorView: View {
 				}
 				.editorAppearance()
 			}
+			.sheet(item: captionBinding(direct: false), onDismiss: { finishCaption(direct: false) }, content: captionSheet)
 			.fullScreenCover(isPresented: $directTouch, onDismiss: { focus = "projectDirectTouch" }) {
 				directTouchEditor
 			}
 			.fullScreenCover(item: $fullScreenPreview, onDismiss: { focus = "fullScreenPreview" }) { preview in
-				FullScreenPreview(playback: preview)
+				if let cues = project.captions, !cues.isEmpty {
+					CaptionedProjectPreview(playback: preview, cues: cues, aspect: pictureAspect)
+				} else { FullScreenPreview(playback: preview) }
 			}
 			.fullScreenCover(item: $board, onDismiss: { focus = trigger }) { editing in
 				CuttingBoardKeyboard(session: editing.session, projectActions: boardActions(editing)) { board = nil }
@@ -213,8 +230,15 @@ struct ProjectEditorView: View {
 							.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect))
 							.listRowInsets(EdgeInsets())
 					}
-					projectRows
-						.listRowInsets(EdgeInsets())
+					Group {
+						if tool == .editor { projectRows }
+						else {
+							transport
+							CaptionerView(project: $project, playback: playback, focus: $focus, keyboardFocus: $keyboardClip, time: time,
+								newCaption: { openCaption(nil) }, edit: { openCaption($0) }, save: save)
+						}
+					}
+					.listRowInsets(EdgeInsets())
 				}
 				.editorListMargins()
 			}
@@ -244,6 +268,11 @@ struct ProjectEditorView: View {
 
 	private var preview: some View {
 		ProjectPreview(player: playback.player)
+			.overlay {
+				if let cues = project.captions, !cues.isEmpty {
+					CaptionOverlay(cues: cues, playhead: playback.playhead, aspect: pictureAspect)
+				}
+			}
 			.frame(maxWidth: .infinity, maxHeight: .infinity)
 	}
 
@@ -380,7 +409,7 @@ struct ProjectEditorView: View {
 					.fixedSize()
 				VStack(alignment: .leading) {
 					Text("Direct Touch Editor").font(.headline).accessibilityAddTraits(.isHeader)
-					Text(selectedTrack.title).accessibilityHidden(true)
+					Text(tool == .captioner ? "Captioner" : selectedTrack.title).accessibilityHidden(true)
 				}
 				.frame(maxWidth: .infinity, alignment: .leading)
 			}
@@ -388,7 +417,12 @@ struct ProjectEditorView: View {
 				LoadingStatusView("Preparing timeline", cancel: { directTouch = false })
 			} else {
 				ProjectTouchSurface(playhead: playback.playhead, playback: playback, duration: project.duration,
-					trackName: selectedTrack.title, mode: scrubMode, close: { directTouch = false }, swipe: projectSwipe)
+					captioning: tool == .captioner, trackName: tool == .captioner ? "Captioner" : selectedTrack.title, mode: scrubMode, close: { directTouch = false }, swipe: projectSwipe)
+					.overlay {
+						if let cues = project.captions, !cues.isEmpty {
+							CaptionOverlay(cues: cues, playhead: playback.playhead, aspect: pictureAspect)
+						}
+					}
 					.accessibilityFocused($surfaceFocused)
 					.onAppear {
 						playback.primeScrubAudio()
@@ -399,6 +433,7 @@ struct ProjectEditorView: View {
 		.background(EditorTheme.workspace)
 		.editorAppearance()
 		.accessibilityAction(.magicTap) { playback.toggle() }
+		.sheet(item: captionBinding(direct: true), onDismiss: { finishCaption(direct: true) }, content: captionSheet)
 		.alert("Project", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
 			Button("OK") { error = nil }
 		} message: { Text(error ?? "") }
@@ -408,6 +443,10 @@ struct ProjectEditorView: View {
 		let forward = direction == .right
 		let down = direction == .down
 		switch (fingers, direction) {
+		case (2, .down) where tool == .captioner:
+			openCaption(nil)
+		case (2, .up) where tool == .captioner:
+			break
 		case (2, .up), (2, .down):
 			let tracks = project.tracks
 			guard let index = tracks.firstIndex(of: selectedTrack) else { return }
@@ -457,7 +496,7 @@ struct ProjectEditorView: View {
 		}
 		.accessibilityActions {
 			Button(direction + " 10 Frames") { step(count * 10) }
-			Button(forward ? "Next Edit Point" : "Previous Edit Point") {
+			Button(tool == .captioner ? (forward ? "Next Caption Point" : "Previous Caption Point") : (forward ? "Next Edit Point" : "Previous Edit Point")) {
 				if let track = project.tracks.first(where: { $0.id == activeTrack }) {
 					navigate(forward: forward, track: track)
 				}
@@ -466,7 +505,8 @@ struct ProjectEditorView: View {
 	}
 
 	private func navigate(forward: Bool, track: TimelineTrack) {
-		let point = project.navigationPoint(from: playback.position, forward: forward, on: track)
+		let point = tool == .captioner ? project.captionPoint(from: playback.position, forward: forward) :
+			project.navigationPoint(from: playback.position, forward: forward, on: track)
 		let label = point.name + ", " + time(point.time)
 		playback.seek(point.time)
 		playback.playhead.navigationLabel = label
@@ -749,7 +789,7 @@ struct ProjectEditorView: View {
 		var next = next
 		if let point = next.markIn, point.time > next.duration { next.markIn = nil }
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
-		next.version = next.additionalTracks?.contains(where: { $0.linkedVideoID != nil }) == true ? 3 : max(2, next.version)
+		next.version = max(next.version, next.captions != nil ? 4 : (next.additionalTracks?.contains(where: { $0.linkedVideoID != nil }) == true ? 3 : 2))
 		try ProjectLibrary.save(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
@@ -784,7 +824,77 @@ struct ProjectEditorView: View {
 		if rebuild { revision += 1 }
 	}
 
+	private func captionBinding(direct: Bool) -> Binding<CaptionEntry?> {
+		Binding(get: { directTouch == direct ? captionEntry : nil }, set: {
+			if directTouch == direct { captionEntry = $0 }
+		})
+	}
+
+	private func openCaption(_ existing: CaptionCue?) {
+		guard playback.ready, captionEntry == nil else { return }
+		let cue: CaptionCue
+		if let existing { cue = existing }
+		else if let range = project.captionRange {
+			cue = CaptionCue(start: ProjectTime(range.start), end: ProjectTime(range.end), text: "")
+		} else {
+			error = "Mark In and Out around the passage, then choose New Caption."
+			return
+		}
+		playback.pause()
+		captionTrigger = existing?.id.uuidString ?? "newCaption"
+		captionCreated = false
+		captionEntry = CaptionEntry(cue: cue, editing: existing != nil, returnTime: playback.position)
+	}
+
+	private func captionSheet(_ entry: CaptionEntry) -> some View {
+		CaptionEntryView(entry: entry, playback: playback, markedRange: project.captionRange, time: time) { cue in
+			guard cue.end.time <= project.duration else { throw ProjectFailure("Mark a range within the project and choose Use Marked Range.") }
+			var next = project
+			var cues = next.captions ?? []
+			if entry.editing {
+				guard let index = cues.firstIndex(where: { $0.id == cue.id }) else { throw ProjectFailure("Reopen the caption from the timeline.") }
+				cues[index] = cue
+			} else { cues.append(cue) }
+			next.captions = cues.sorted { $0.start.time < $1.start.time }
+			try save(next, action: entry.editing ? "Update Caption" : "Create Caption")
+			captionCreated = !entry.editing
+		}
+	}
+
+	private func finishCaption(direct: Bool) {
+		if direct { surfaceFocused = true } else { focus = captionTrigger }
+		if captionCreated {
+			captionCreated = false
+			let message = NSAttributedString(string: "Caption Created", attributes: [.accessibilitySpeechQueueAnnouncement: true])
+			UIAccessibility.post(notification: .announcement, argument: message)
+		}
+	}
+
 	private func projectKey(_ key: String, flags: UIKeyModifierFlags) {
+		if tool == .captioner {
+			switch key {
+			case "c": openCaption(nil)
+			case "\r":
+				if let cue = project.captions?.first(where: { ($0.id.uuidString == (keyboardClip ?? focus)) }) ??
+					project.captions?.first(where: { $0.start.time <= playback.position && playback.position < $0.end.time }) { openCaption(cue) }
+			case " ", "k": playback.toggle()
+			case "j", "l": playback.shuttle(forward: key == "l")
+			case ";", "'": navigate(forward: key == "'", track: selectedTrack)
+			case UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow:
+				let forward = key == UIKeyCommand.inputRightArrow
+				if flags.contains(.command) { navigate(forward: forward, track: selectedTrack) }
+				else { step((forward ? 1 : -1) * (flags.contains(.shift) ? 10 : 1)) }
+			case UIKeyCommand.inputHome, UIKeyCommand.inputUpArrow: playback.seek(.zero)
+			case UIKeyCommand.inputEnd, UIKeyCommand.inputDownArrow: playback.seek(project.duration)
+			case "i", "o":
+				playback.pause()
+				setMarker(key == "i", to: flags.contains(.alternate) ? nil : ProjectTime(playback.position))
+			case "z": history(back: !flags.contains(.shift))
+			case "t": UIAccessibility.post(notification: .announcement, argument: time(playback.position))
+			default: break
+			}
+			return
+		}
 		let focusedRow = keyboardClip ?? focus
 		let focusedID = focusedRow?.split(separator: "/").last.flatMap { UUID(uuidString: String($0)) }
 		let focusedClip = project.placements.first { $0.id == focusedID }
@@ -1287,6 +1397,7 @@ private struct ProjectTouchSurface: UIViewRepresentable {
 	@ObservedObject var playhead: ProjectPlayhead
 	let playback: ProjectPlayback
 	let duration: CMTime
+	let captioning: Bool
 	let trackName: String
 	let mode: DirectTouchScrubbing
 	let close: () -> Void
@@ -1297,7 +1408,7 @@ private struct ProjectTouchSurface: UIViewRepresentable {
 		view.isAccessibilityElement = true
 		view.accessibilityLabel = "Direct Touch Editor"
 		view.accessibilityTraits = .allowsDirectInteraction
-		view.installTimelineGestures(projectTimeline: true)
+		view.installTimelineGestures(projectTimeline: true, captioning: captioning)
 		view.backgroundColor = UIColor(EditorTheme.surface)
 		view.video.videoGravity = .resizeAspect
 		view.layer.addSublayer(view.cursor)

@@ -11,6 +11,8 @@ nonisolated struct ProjectTime: Codable, Equatable {
 		scale = time.timescale
 	}
 
+	init(seconds: Double) { self.init(CMTime(seconds: seconds, preferredTimescale: 600000)) }
+	var seconds: Double { time.seconds }
 	var time: CMTime { CMTime(value: value, timescale: scale) }
 }
 
@@ -91,6 +93,7 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 		let extra = additionalTracks ?? []
 		return extra.filter { $0.kind == .video }.reversed() + [.primaryVideo, .primaryAudio] + extra.filter { $0.kind == .audio }
 	}
+	var captions: [CaptionCue]?
 	var markIn: ProjectTime?
 	var markOut: ProjectTime?
 
@@ -306,7 +309,7 @@ nonisolated enum ProjectLibrary {
 
 	static func load(_ url: URL) throws -> EditingProject {
 		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: url))
-		guard (1...3).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		guard (1...4).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
 		try validate(project)
 		if project.version < 3 { project.restoreAudioPartners() }
 		project.assignPlacementLabels()
@@ -356,6 +359,11 @@ nonisolated enum ProjectLibrary {
 				end.seconds / project.frame.seconds < Double(Int64.max) else { throw corrupt }
 		}
 		let duration = project.duration
+		var cueIDs = Set<UUID>()
+		for cue in project.captions ?? [] {
+			guard cueIDs.insert(cue.id).inserted, validTime(cue.start), validTime(cue.end),
+				cue.end.time > cue.start.time, !cue.text.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else { throw corrupt }
+		}
 		for marker in [project.markIn, project.markOut].compactMap({ $0 }) {
 			guard validTime(marker), marker.time <= duration else { throw corrupt }
 		}

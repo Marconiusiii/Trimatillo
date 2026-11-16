@@ -64,10 +64,12 @@ private enum HelpTopic: String, CaseIterable {
 	case keys = "Keyboard commands"
 	case save = "Save and export"
 	case projects = "Multitrack projects"
+	case captioner = "Captioner"
 	case projectTouch = "Project Direct Touch Editor"
 
 	var introduction: String {
 		switch self {
+		case .captioner: "Write timed text for dialogue, music, and sounds as you play through your project."
 		case .projectTouch: "Explore the assembled project, choose a track, and find the clips that meet at each cut."
 		case .projects: "Arrange video and audio clips on a shared timeline. Each placement has its own edits."
 		case .first: "Trim the beginning and end of a clip, then cut a passage from the middle and save a copy."
@@ -91,6 +93,44 @@ private enum HelpTopic: String, CaseIterable {
 
 	var sections: [HelpSection] {
 		switch self {
+		case .captioner:
+			[HelpSection("Create a caption", numbered: true, [
+				"Open a project and choose the Captioner tab. The playhead stays at the same position when you switch tabs.",
+				"Move to the beginning of the passage and choose Mark In. Move to its end and choose Mark Out.",
+				"Choose New Caption. Enter the words in Caption Text. Play Selection repeats the marked passage while you write. Pause Selection stops playback.",
+				"Use Insert Caption Description to add a music description, sound description, or lyrics. Replace the sample words with your own.",
+				"Choose Save. The caption appears in the Caption Timeline and over the picture during its marked range. From Direct Touch, Save returns to the active surface and announces Caption Created."
+			]), HelpSection("Review and export", numbered: true, [
+				"Open a caption's menu or accessibility actions to go to its start, edit it, or delete it. To change its timing, mark a new range, edit the caption, and choose Use Marked Range.",
+				"Choose Finalize Captions to divide draft passages into captions of up to two lines. Timing uses a reading speed of 160 words per minute, the project frame rate, and the space before the next caption or project end.",
+				"Review any passages listed after finalizing. Shorten the text or adjust the marked range and finalize again. Undo restores the previous captions.",
+				"Choose Export Captions, then SRT or WebVTT for timed captions, or Plain Text Transcript for the words in timeline order. Enter a filename and choose where to save it."
+			]), HelpSection("One finger in Captioner Direct Touch", [
+				"Swipe right to step forward one project frame.",
+				"Swipe left to step back one project frame.",
+				"Double-tap and hold the second tap, then drag to scrub using your Absolute or Relative setting.",
+				"Swipe down to mark In. Repeat at the marker to remove it.",
+				"Swipe up to mark Out. Repeat at the marker to remove it.",
+				"Triple-tap to close Direct Touch."
+			]), HelpSection("Two fingers in Captioner Direct Touch", [
+				"Double-tap to play or pause.",
+				"Swipe right to play forward. Repeat to increase speed.",
+				"Swipe left to rewind. Repeat to increase rewind speed.",
+				"Swipe down to open New Caption for the marked passage. Cancel returns to the surface without saving."
+			]), HelpSection("Three fingers in Captioner Direct Touch", [
+				"Swipe right to move to the next caption start, marker, or project boundary.",
+				"Swipe left to move to the previous caption start, marker, or project boundary.",
+				"Swipe down to undo the last project change.",
+				"Swipe up to redo it."
+			]), HelpSection("Captioner keyboard commands", [
+				"Press I and O to mark In and Out. Option-I and Option-O clear the markers.",
+				"Press Command-Shift-C to open New Caption. Return edits the focused caption or the caption at the playhead.",
+				"Press Space or K to play or pause. J rewinds and L plays forward.",
+				"Press Left or Right Arrow to step one frame. Hold Shift to step ten frames.",
+				"Press semicolon or apostrophe for the previous or next caption point. Command-Left Arrow and Command-Right Arrow also navigate points.",
+				"Home or Command-Up Arrow goes to Start. End or Command-Down Arrow goes to End. T reads the playhead.",
+				"Command-Z undoes a project change. Command-Shift-Z redoes it."
+			])]
 		case .projectTouch:
 			[HelpSection("Open Direct Touch", numbered: true, [
 				"Open a project with clips on its timeline. In the Editor, choose Direct Touch Editor.",

@@ -43,7 +43,7 @@ struct CuttingBoardTouchSurface: UIViewRepresentable {
 }
 
 extension TimelineGestureHandling where Self: UIView {
-	func installTimelineGestures(projectTimeline: Bool, placement: Bool = false, join: Selector? = nil) {
+	func installTimelineGestures(projectTimeline: Bool, captioning: Bool = false, placement: Bool = false, join: Selector? = nil) {
 		accessibilityDirectTouchOptions = [.silentOnTouch]
 		isMultipleTouchEnabled = true
 
@@ -66,7 +66,7 @@ extension TimelineGestureHandling where Self: UIView {
 		addGestureRecognizer(hold)
 		let horizontal: [UISwipeGestureRecognizer.Direction] = [.left, .right]
 		let all = horizontal + [.up, .down]
-		let groups = [all, projectTimeline ? all : horizontal + [.down], all,
+		let groups = [all, projectTimeline && !captioning ? all : horizontal + [.down], all,
 			projectTimeline ? [] : (placement ? all : horizontal)]
 		for (index, directions) in groups.enumerated() {
 			let count = index + 1

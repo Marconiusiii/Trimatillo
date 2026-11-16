@@ -36,3 +36,28 @@ struct ProjectWorkspaceView: View {
 		close()
 	}
 }
+
+enum ProjectTool: String, CaseIterable {
+	case editor = "Editor"
+	case captioner = "Captioner"
+
+	var symbol: String { self == .editor ? "film" : "captions.bubble" }
+}
+
+struct ProjectWorkspaceTabs<Content: View>: View {
+	@Binding var selection: ProjectTool
+	@Environment(\.horizontalSizeClass) private var sizeClass
+	@ViewBuilder let content: () -> Content
+
+	var body: some View {
+		TabView(selection: $selection) {
+			ForEach(ProjectTool.allCases, id: \.self) { tool in
+				Tab(tool.rawValue, systemImage: tool.symbol, value: tool) {
+					if selection == tool { content().environment(\.horizontalSizeClass, sizeClass) }
+				}
+			}
+		}
+		.tabViewStyle(.tabBarOnly)
+		.environment(\.horizontalSizeClass, .compact)
+	}
+}
