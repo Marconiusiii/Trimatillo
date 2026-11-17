@@ -214,6 +214,11 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 		}
 	}
 
+	mutating func deleteSource(_ id: UUID) {
+		removeClips(Set(placements.filter { $0.sourceID == id }.map(\.id)))
+		sources.removeAll { $0.id == id }
+	}
+
 	mutating func removeClips(_ ids: Set<UUID>) {
 		let removed = placements.filter { ids.contains($0.id) }.sorted { $0.start.time > $1.start.time }
 		placements.removeAll { ids.contains($0.id) }

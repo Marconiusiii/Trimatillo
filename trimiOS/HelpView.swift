@@ -104,7 +104,9 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Record Voice Over, or press Command-Shift-V from the project. To use a different insertion time, change Insert at Time or Insert at Frame.",
 				"Enter a Clip Name. Choose Record and speak after the rising cue. The project plays while you record. Choose Stop Recording when you finish.",
 				"Choose Play Take to hear your recording alone, or Play with Primary Audio to hear it at the insertion time. Choose Record again to make another take. Recover Take opens a saved draft.",
-				"Choose Add to Project. The take appears on a Voice Over audio track. Takes that overlap use separate tracks. Open the clip in the Editor to trim it or change its placement. Project export includes the recording."
+				"Choose Add to Project. The take appears on a Voice Over audio track. Takes that overlap use separate tracks. Project export includes the recording.",
+				"Open the take in the Voice Over timeline. Choose Open Cutting Board, trim the take, then choose Save Changes. Choose Move to Time to change its start.",
+				"Remove from Track removes this placement. Delete from Project removes the recording from Project Media and all its timeline placements. Choose Undo to restore the edit."
 			]), HelpSection("One finger in Voicer Direct Touch", [
 				"Swipe right to step forward one project frame.",
 				"Swipe left to step back one project frame.",
@@ -271,6 +273,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose a track with Timeline Chooser. Open its heading for Track Actions, including Track Effects and the Magnetic setting.",
 				"The primary tracks start with Magnetic on. Removing or trimming a clip shifts later clips on its track. New tracks use absolute placement. Turn Magnetic off to keep neighboring clips at their project times. Turning it on asks for confirmation when clips need to move together.",
 				"Choose Move to Playhead on a clip to place its start at the playhead. On a magnetic track, a move into another clip splits it and preserves the rest. A move beyond the last clip appends it.",
+				"Choose Remove from Track to remove one placement and keep its source in Project Media. To remove the source and every placement made from it, choose Delete from Project in the clip menu or accessibility actions, then confirm. Undo restores the source and its placements together.",
 				"Choose Move to Time, enter Start Time or Start Frame, then choose Move. Absolute placement needs open time for the clip. To leave a gap on a populated magnetic track, turn Magnetic off first.",
 				"Choose Move to New Track, enter Track Name, and choose Move to keep the clip at its current time on a new track. Moving linked audio moves its video with it.",
 				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it. The drag announcement gives the clip name for one clip and the count for a group.",

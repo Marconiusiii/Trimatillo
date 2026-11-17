@@ -95,6 +95,7 @@ struct ProjectEditorView: View {
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
 	@State private var confirmedPhoto: SelectedPhotoClip?
+	@State private var deletingSource: ProjectMediaSource?
 	@State private var renaming: ProjectMediaSource?
 	@State private var clipName = ""
 	@State private var reconnect: UUID?
@@ -152,7 +153,7 @@ struct ProjectEditorView: View {
 	}
 
 	private var workspacePage: some View {
-		ProjectEditorKeyboard(enabled: voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(enabled: deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
 			tool: tool, undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
@@ -302,6 +303,18 @@ struct ProjectEditorView: View {
 						} message: { Text(error ?? "") }
 				}.editorAppearance()
 			}
+			.alert("Delete from Project?", isPresented: Binding(get: { deletingSource != nil }, set: { if !$0 { deletingSource = nil } }), presenting: deletingSource) { source in
+				Button("Cancel", role: .cancel) { focus = trigger }
+				Button("Delete from Project", role: .destructive) {
+					var next = project
+					next.deleteSource(source.id)
+					commit(next, action: "Delete from Project")
+				}
+			} message: { source in
+				let count = project.placements.filter { $0.sourceID == source.id }.count
+				if count == 0 { Text("Delete \(source.displayName) from Project Media?") }
+				else { Text("Delete \(source.displayName) from Project Media and remove \(count) timeline \(count == 1 ? "placement" : "placements")?") }
+			}
 			.alert("Enable Magnetic and reposition clips?", isPresented: Binding(get: { confirmPacking != nil }, set: { if !$0 { confirmPacking = nil } }), presenting: confirmPacking) { track in
 				Button("Cancel", role: .cancel) { focus = track.id }
 				Button("Enable Magnetic") { changeMagnetic(true, on: track) }
@@ -340,8 +353,7 @@ struct ProjectEditorView: View {
 								Text(track.title).font(.headline).accessibilityAddTraits(.isHeader)
 								ForEach(project.clips(on: track)) { clip in
 									if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
-										Button(clip.displayName(for: source)) { playback.seek(clip.start.time) }
-											.accessibilityValue(time(clip.start.time))
+										clipButton(clip, source: source, track: track, count: 1)
 									}
 								}
 							}
@@ -415,13 +427,15 @@ struct ProjectEditorView: View {
 					EditorMenuAction("Open Cutting Board") { openBoard(source, placement: nil) },
 					EditorMenuAction("Rename Clip") { beginRename(source) },
 					EditorMenuAction("Reconnect from Files") { pick(source.id, files: true) },
-					EditorMenuAction("Reconnect from Photos") { pick(source.id, files: false) }
+					EditorMenuAction("Reconnect from Photos") { pick(source.id, files: false) },
+					deleteAction(source, rowID: source.id.uuidString)
 				]
 				Menu { EditorMenuAction.buttons(actions) } label: {
 					Text(source.displayName)
 						.frame(maxWidth: .infinity, alignment: .leading)
 						.contentShape(Rectangle())
 				}
+				.contextMenu { EditorMenuAction.buttons(actions) }
 				.editorMenuActions(source.displayName, actions)
 				.accessibilityFocused($focus, equals: source.id.uuidString)
 			}
@@ -841,7 +855,15 @@ struct ProjectEditorView: View {
 			next.removeClips([clip.id])
 			commit(next, action: "Remove Clip")
 		})
+		actions.append(deleteAction(source, rowID: rowID))
 		return actions
+	}
+
+	private func deleteAction(_ source: ProjectMediaSource, rowID: String) -> EditorMenuAction {
+		EditorMenuAction("Delete from Project") {
+			trigger = rowID
+			deletingSource = source
+		}
 	}
 
 	private func beginRename(_ source: ProjectMediaSource) {
@@ -966,9 +988,13 @@ struct ProjectEditorView: View {
 		case .overwrite: "Overwrite"
 		case .split: "Insert Clip"
 		}
+		let editedPlacement = updating && next.placements != project.placements
 		try save(next, action: action)
 		activeTrack = destination.id
-		if updating { board = nil }
+		if updating {
+			if editedPlacement { placementFocus = trigger }
+			board = nil
+		}
 		else { UIAccessibility.post(notification: .announcement, argument: (mode == .append ? "Appended to " : "Added to ") + destination.title) }
 	}
 
