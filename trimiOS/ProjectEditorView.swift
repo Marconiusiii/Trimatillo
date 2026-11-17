@@ -150,7 +150,7 @@ struct ProjectEditorView: View {
 		}
 		.onChange(of: activeTrack) { dropAnchor = nil }
 		.onChange(of: soloTracks) { playback.updateMix(project, solo: soloTracks) }
-		.onChange(of: playback.ready) { if playback.ready && !soloTracks.isEmpty { playback.updateMix(project, solo: soloTracks) } }
+		.onChange(of: playback.ready) { if playback.ready { playback.updateMix(project, solo: soloTracks) } }
 		.onChange(of: tool) { previous, _ in
 			if previous == .mixer { playback.setMixerLoop(nil); soloTracks.removeAll() }
 			playback.playhead.navigationLabel = nil
@@ -529,9 +529,9 @@ struct ProjectEditorView: View {
 				.disabled(!playback.ready)
 			HStack(spacing: 0) {
 				stepButton(forward: false)
-				ProjectShuttleButton(playback: playback, forward: false)
+				ProjectShuttleButton(playback: playback, forward: false, boundary: .zero)
 				ProjectPlayButton(playback: playback)
-				ProjectShuttleButton(playback: playback, forward: true)
+				ProjectShuttleButton(playback: playback, forward: true, boundary: project.duration)
 				stepButton(forward: true)
 				if project.placements.contains(where: { $0.track == .video }) {
 					Button { fullScreenPreview = playback.makePreview() } label: {
@@ -1402,6 +1402,7 @@ struct ProjectEditorView: View {
 private struct ProjectShuttleButton: View {
 	let playback: ProjectPlayback
 	let forward: Bool
+	let boundary: CMTime
 
 	var body: some View {
 		let rate = playback.transport.shuttleRate
@@ -1412,6 +1413,7 @@ private struct ProjectShuttleButton: View {
 				.accessibilityHidden(true)
 		}
 		.accessibilityLabel(Text(name))
+		.accessibilityAction(named: forward ? Text("Go to End") : Text("Go to Start")) { playback.seek(boundary) }
 		.buttonStyle(EditorButtonStyle(square: true, badge: active ? abs(rate).formatted() + "x" : nil, reservesBadgeSpace: true))
 	}
 }

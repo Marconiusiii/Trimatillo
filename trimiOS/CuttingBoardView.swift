@@ -210,8 +210,10 @@ struct CuttingBoardView: View {
 	private var transport: some View {
 		HStack(spacing: 0) {
 			transportButton("Rewind", "backward.fill", showsSpeed: session.rate < 0) { session.shuttle(-1) }
+				.accessibilityAction(named: "Go to Start") { session.seek(.zero) }
 			transportButton(session.rate == 0 ? "Play" : "Pause", session.rate == 0 ? "play.fill" : "pause.fill") { session.toggle() }
 			transportButton("Fast Forward", "forward.fill", showsSpeed: session.rate > 0) { session.shuttle(1) }
+				.accessibilityAction(named: "Go to End") { session.seek(session.duration) }
 			if session.hasVideo {
 				transportButton("Full Screen Preview", "arrow.up.left.and.arrow.down.right") {
 					preview = session.makePreview()

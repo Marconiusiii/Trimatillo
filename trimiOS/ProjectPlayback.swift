@@ -389,6 +389,8 @@ private struct ScrubAudioWindow {
 	}
 
 	private func restartLoop(at start: CMTime) {
+		do { try installPendingMix() }
+		catch { stop(keepingAudio: false); failure = error.localizedDescription; return }
 		let request = loopGeneration
 		playhead.position = start
 		player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
@@ -399,7 +401,11 @@ private struct ScrubAudioWindow {
 		}
 	}
 
-	func pause() { stop(keepingAudio: false) }
+	func pause() {
+		stop(keepingAudio: false)
+		do { try installPendingMix() }
+		catch { failure = error.localizedDescription }
+	}
 
 	private func stop(keepingAudio: Bool) {
 		if playbackRange != nil {
@@ -469,6 +475,7 @@ private struct ScrubAudioWindow {
 		do {
 			// AVPlayer activates the configured session when forward playback starts.
 			try configureAudioSession()
+			try installPendingMix()
 			speed = rate
 			if rate == 1 { player.play() }
 			else { player.playImmediately(atRate: Float(rate)) }
@@ -643,7 +650,7 @@ private struct ScrubAudioWindow {
 	}
 
 	func seek(_ time: CMTime) {
-		if playing || scrubbing || framePreview != nil { pause() }
+		if playing || playbackRange != nil || scrubbing || framePreview != nil { pause() }
 		playhead.position = min(duration, max(.zero, time))
 		player.seek(to: position, toleranceBefore: .zero, toleranceAfter: .zero)
 	}
@@ -677,6 +684,19 @@ private struct ScrubAudioWindow {
 	private var stereoMedia = StereoMedia()
 	private var mixOutputs: [MixOutput] = []
 	private var liveProcessors: [CMPersistentTrackID: TrackMixProcessor] = [:]
+	// AVPlayer owns the steady track levels. Taps preview changes relative to the
+	// installed level until the next transport start, without swapping a playing mix.
+	private var installedLevels: [CMPersistentTrackID: Float] = [:]
+	private var mixProject: EditingProject?
+	private var mixSolo: Set<String> = []
+	private var mixNeedsInstall = false
+
+	private func installPendingMix() throws {
+		guard mixNeedsInstall, let project = mixProject, let item = player.currentItem else { return }
+		item.audioMix = try audioMix(project, solo: mixSolo, live: true)
+		mixNeedsInstall = false
+	}
+
 	private var narrationLevel: Float = 1
 	private var primaryStereo = TrackStereoMix.neutral
 	private var narrationStereo = TrackStereoMix.neutral
@@ -695,25 +715,33 @@ private struct ScrubAudioWindow {
 		parameters.audioTapProcessor = try processor.makeTap()
 	}
 
-	private func audioMix(_ project: EditingProject, solo: Set<String>, live: Bool = false) throws -> AVAudioMix? {
+	private func audioMix(_ project: EditingProject, solo: Set<String>, live: Bool = false, previewingChanges: Bool = false) throws -> AVAudioMix? {
 		guard !mixOutputs.isEmpty else { return nil }
 		let mix = AVMutableAudioMix()
 		var processors: [CMPersistentTrackID: TrackMixProcessor] = [:]
+		var levels: [CMPersistentTrackID: Float] = [:]
 		mix.inputParameters = try mixOutputs.map { output in
 			let parameters = AVMutableAudioMixInputParameters()
 			parameters.trackID = output.id
 			let stereo = project.trackStereo?[output.channel] ?? .neutral
-			let processor = TrackMixProcessor(matrix: stereo.matrix(gain: Double(level(output, project: project, solo: solo))), media: stereoMedia)
+			let gain = level(output, project: project, solo: solo)
+			let base: Float = live && !previewingChanges ? min(1, gain) : 1
+			levels[output.id] = base
+			parameters.setVolume(base, at: .zero)
+			let processor = TrackMixProcessor(matrix: stereo.matrix(gain: base > 0 ? Double(gain / base) : 1), media: stereoMedia)
 			parameters.audioTapProcessor = try processor.makeTap()
 			processors[output.id] = processor
 			if output.channel == EditingProject.descriptionMixID {
 				parameters.audioTimePitchAlgorithm = .timeDomain
 			} else {
-				project.descriptionDucking?.apply(to: parameters, volume: 1, takes: project.audioDescriptions ?? [], duration: duration)
+				project.descriptionDucking?.apply(to: parameters, volume: base, takes: project.audioDescriptions ?? [], duration: duration)
 			}
 			return parameters
 		}
-		if live { liveProcessors = processors }
+		if live {
+			liveProcessors = processors
+			installedLevels = levels
+		}
 		return mix
 	}
 
@@ -731,7 +759,13 @@ private struct ScrubAudioWindow {
 	}
 
 	func updateMix(_ project: EditingProject, solo: Set<String>) {
-		guard projectID == project.id, let item = player.currentItem else { return }
+		guard projectID == project.id else { return }
+		let changed = mixProject?.trackVolumes != project.trackVolumes || mixProject?.trackStereo != project.trackStereo
+			|| mixProject?.masterVolume != project.masterVolume || mixProject?.mutedTracks != project.mutedTracks || mixSolo != solo
+		mixProject = project
+		mixSolo = solo
+		guard changed, let item = player.currentItem else { return }
+		mixNeedsInstall = true
 		warmup?.cancel()
 		window = nil
 		let rewindRate = reverse == nil ? nil : -speed
@@ -745,7 +779,15 @@ private struct ScrubAudioWindow {
 		}
 		for output in mixOutputs {
 			let stereo = project.trackStereo?[output.channel] ?? .neutral
-			liveProcessors[output.id]?.update(stereo.matrix(gain: Double(level(output, project: project, solo: solo))))
+			let gain = level(output, project: project, solo: solo)
+			let base = installedLevels[output.id] ?? 1
+			if base < 1 && gain > base {
+				// Restore headroom once for the drag, including when raising a muted input.
+				do { item.audioMix = try audioMix(project, solo: solo, live: true, previewingChanges: true) }
+				catch { failure = error.localizedDescription }
+				break
+			}
+			liveProcessors[output.id]?.update(stereo.matrix(gain: base > 0 ? Double(gain / base) : 1))
 		}
 		updatePrimaryLevels(project)
 		if let rewindRate {
@@ -822,7 +864,10 @@ private struct ScrubAudioWindow {
 
 	func prepare(_ project: EditingProject) async {
 		if !Self.isOpen(project.id) { ProjectStorage.pruneUnusedRecordings(project) }
+		if projectID != project.id { mixSolo = [] }
 		projectID = project.id
+		mixProject = project
+		mixNeedsInstall = false
 		Self.openPlayers.add(self)
 		cancelPreparation()
 		mixerLoop = nil
@@ -919,7 +964,7 @@ private struct ScrubAudioWindow {
 					failure = "Could not prepare project audio. Check the audio output and reopen the project."
 					return
 				}
-				item.audioMix = try audioMix(project, solo: [], live: true)
+				item.audioMix = try audioMix(mixProject ?? project, solo: mixSolo, live: true)
 			}
 			if !layers.isEmpty, let picture = project.picture {
 				let boundaries = ([CMTime.zero, duration] + layers.flatMap { [$0.0.start, $0.0.end] }).sorted()
@@ -938,7 +983,7 @@ private struct ScrubAudioWindow {
 				item.videoComposition = video
 			}
 			media = sources
-			updatePrimaryLevels(project)
+			updatePrimaryLevels(mixProject ?? project)
 			descriptionDucking = project.descriptionDucking
 			ended = NotificationCenter.default.publisher(for: AVPlayerItem.didPlayToEndTimeNotification, object: item)
 				.receive(on: DispatchQueue.main)

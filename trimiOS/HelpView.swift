@@ -261,6 +261,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Direct Touch Editor to use gestures on the project. The Project Direct Touch Editor Help topic lists each gesture.",
 				"Choose Play to preview the timeline. Choose Pause to stop at the current position.",
 				"Choose Rewind or Fast Forward to play in that direction. Repeat to select 1x, 1.5x, 2x, 4x, or 8x. Changing direction starts at 1x.",
+				"Use the Go to Start accessibility action on Rewind or Go to End on Fast Forward to move to that boundary of the project.",
 				"Drag across Playhead to preview the project from start to end. Lift to leave the playhead there.",
 				"With VoiceOver, focus Playhead, double-tap and hold until you hear three rising tones, then drag left or right. After lifting your finger, use Magic Tap to play or pause at the playhead. Swipe up or down to move five seconds forward or back. For projects shorter than 50 seconds, each swipe moves one tenth of the timeline.",
 				"When scrub audio is unavailable, VoiceOver reads the timecode after a brief pause in your drag or when you lift.",
@@ -342,6 +343,7 @@ private enum HelpTopic: String, CaseIterable {
 			[HelpSection("Move through a clip", [
 				"Play starts at the playhead. Pause holds the current position.",
 				"Fast Forward plays forward. Rewind plays backward. Repeat either control to advance through 1x, 1.5x, 2x, 4x, and 8x. Switching direction starts at 1x.",
+				"Use the Go to Start accessibility action on Rewind or Go to End on Fast Forward to move to that boundary of the edited clip.",
 				"Step Back and Step Forward move to the previous or next frame in a video. In a clip with a variable frame rate, the time between steps can change as you move through it.",
 				"At 24 frames per second, one frame lasts about 41.7 milliseconds. At 60 it lasts about 16.7 milliseconds, and at 120 it lasts about 8.3 milliseconds.",
 				"In an audio-only clip, one step moves one thirtieth of a second. Ten steps move one third of a second.",
