@@ -57,7 +57,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 						("\r", [], tool == .captioner ? "Edit Caption" : "Edit Description")]
 				}
 			} else {
-				bindings += [("d", [.command, .shift], "New Description"), (UIKeyCommand.inputUpArrow, [.alternate, .command], "Previous Track"),
+				bindings += [("x", [], "Quick Crossfade"), ("f", [], "Quick Fade"), ("t", [.command, .shift], "Transitions"), ("d", [.command, .shift], "New Description"), (UIKeyCommand.inputUpArrow, [.alternate, .command], "Previous Track"),
 				(UIKeyCommand.inputDownArrow, [.alternate, .command], "Next Track"),
 				(UIKeyCommand.inputLeftArrow, [.command, .alternate], "Move Earlier"),
 				(UIKeyCommand.inputRightArrow, [.command, .alternate], "Move Later"),

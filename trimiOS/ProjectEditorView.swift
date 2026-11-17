@@ -92,6 +92,8 @@ struct ProjectEditorView: View {
 	@State private var dropAfter = false
 	@State private var dragging: Set<UUID> = []
 	@State private var effects: TimelineTrack?
+	@State private var transitionRequest: ProjectTransitionRequest?
+	@State private var transitionChanged = false
 	@FocusState private var keyboardClip: String?
 	@State private var expanded = true
 	@State private var pickingFile = false
@@ -159,7 +161,7 @@ struct ProjectEditorView: View {
 	}
 
 	private var workspacePage: some View {
-		ProjectEditorKeyboard(enabled: deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(enabled: deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && transitionRequest == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
 			tool: tool, undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
@@ -215,6 +217,7 @@ struct ProjectEditorView: View {
 					ProjectExportView(timeline: timeline, didSave: prepareExportConfirmation)
 				}
 			}
+			.sheet(item: transitionBinding(direct: false), onDismiss: finishTransition, content: transitionSheet)
 			.sheet(item: $effects, onDismiss: { focus = trigger }) { track in
 				trackEffectsSheet(track)
 			}
@@ -572,7 +575,7 @@ struct ProjectEditorView: View {
 
 	private var directSurface: ProjectTouchSurface {
 		let edit: (() -> Void)? = tool == .describer ? { descriptionTap() } : nil
-		return ProjectTouchSurface(playhead: playback.playhead, playback: playback, formatTime: time, duration: project.duration,
+		return ProjectTouchSurface(playhead: playback.playhead, playback: playback, formatTime: time, transitions: tool == .editor ? { openTransition(quick: false) } : nil, duration: project.duration,
 					captioning: tool == .captioner, editDescription: edit, trackName: touchTrackName, mode: scrubMode, close: { directTouch = false }, swipe: projectSwipe)
 	}
 
@@ -612,6 +615,7 @@ struct ProjectEditorView: View {
 		.background(EditorTheme.workspace)
 		.editorAppearance()
 		.accessibilityAction(.magicTap) { playback.toggle() }
+		.sheet(item: transitionBinding(direct: true), onDismiss: finishTransition, content: transitionSheet)
 		.sheet(item: voiceBinding(direct: true), onDismiss: finishVoice, content: voiceSheet)
 		.sheet(item: descriptionBinding(direct: true), onDismiss: finishDescription, content: descriptionSheet)
 		.sheet(item: captionBinding(direct: true), onDismiss: { finishCaption(direct: true) }, content: captionSheet)
@@ -624,6 +628,8 @@ struct ProjectEditorView: View {
 		let forward = direction == .right
 		let down = direction == .down
 		switch (fingers, direction) {
+		case (4, .down) where tool == .editor: quickCross()
+		case (4, .up) where tool == .editor: openTransition(quick: true)
 		case (2, .down) where tool == .voicer: openVoice()
 		case (2, .up) where tool == .voicer: break
 		case (2, .up) where tool == .describer, (2, .down) where tool == .describer:
@@ -664,6 +670,67 @@ struct ProjectEditorView: View {
 			if playback.ready { navigate(forward: forward, track: selectedTrack) }
 		default: break
 		}
+	}
+
+
+	private func transitionTarget(quick: Bool, track: TimelineTrack?, clip: ProjectPlacement?) throws -> ProjectTransitionRequest {
+		let track = track ?? selectedTrack
+		let clips = project.displayedClips(on: track)
+		let time = playback.position
+		let incoming = clips.first { abs(($0.start.time - time).seconds) < project.frame.seconds / 2 }
+		let outgoing = incoming.flatMap { next in clips.first { $0.end == next.start.time && $0.id != next.id } }
+		guard let selected = clip ?? incoming ?? clips.first(where: { $0.start.time <= time && time < $0.end }) ?? clips.last(where: { $0.end == time }) else {
+			throw ProjectFailure("Move the playhead onto a clip or select a timeline clip.")
+		}
+		let next = clip == nil ? incoming : clips.first { $0.start.time == selected.end }
+		let previous = clip == nil ? outgoing : (next == nil ? clips.first { $0.end == selected.start.time } : selected)
+		return ProjectTransitionRequest(track: track, clip: selected.id,
+			outgoing: quick && clip != nil ? nil : previous?.id,
+			incoming: quick && clip != nil ? nil : (next ?? (previous == nil ? nil : selected))?.id,
+			quickFade: quick, returnTime: time)
+	}
+	private func openTransition(quick: Bool, track: TimelineTrack? = nil, clip: ProjectPlacement? = nil) {
+		do {
+			let request = try transitionTarget(quick: quick, track: track, clip: clip)
+			playback.pause()
+			if clip == nil { trigger = request.track.id }
+			transitionChanged = false
+			transitionRequest = request
+		} catch { self.error = error.localizedDescription }
+	}
+	private func quickCross(track: TimelineTrack? = nil, clip: ProjectPlacement? = nil) {
+		do {
+			let request = try transitionTarget(quick: false, track: track, clip: clip)
+			guard request.between else { throw ProjectFailure("Move to an edit point where two clips meet.") }
+			let effect = ProjectTransition(trackID: request.track.id, outgoing: request.outgoing, incoming: request.incoming,
+				edge: .between, seconds: TransitionEditorView.lastDuration(audio: request.track.kind == .audio))
+			var next = project
+			var effects = next.transitions ?? []
+			effects.removeAll { $0.trackID == effect.trackID && $0.edge == .between && $0.outgoing == effect.outgoing && $0.incoming == effect.incoming }
+			effects.append(effect)
+			next.transitions = effects
+			try next.validateTransitions()
+			let name = effect.title(audio: request.track.kind == .audio)
+			playback.pause()
+			try save(next, action: "Apply " + name)
+			if !directTouch { placementFocus = trigger ?? request.track.id }
+			UIAccessibility.post(notification: .announcement, argument: name + " Applied")
+		} catch { self.error = error.localizedDescription }
+	}
+	private func transitionBinding(direct: Bool) -> Binding<ProjectTransitionRequest?> {
+		Binding(get: { directTouch == direct ? transitionRequest : nil }, set: { if directTouch == direct { transitionRequest = $0 } })
+	}
+	private func transitionSheet(_ request: ProjectTransitionRequest) -> some View {
+		TransitionEditorView(project: project, request: request, format: format, formatTime: time) { next, action in
+			try save(next, action: action)
+			transitionChanged = true
+		}
+	}
+	private func finishTransition() {
+		if directTouch { returnMessage = directTouchReturnMessage() }
+		else if transitionChanged && preparingTimeline { placementFocus = trigger }
+		else { focus = trigger }
+		transitionChanged = false
 	}
 
 	private func openJump() {
@@ -760,6 +827,9 @@ struct ProjectEditorView: View {
 				if enabled && project.needsPacking(track) { confirmPacking = track }
 				else { changeMagnetic(enabled, on: track) }
 			},
+			EditorMenuAction("Transitions") { trigger = track.id; openTransition(quick: false, track: track) },
+			EditorMenuAction("Quick Fade") { trigger = track.id; openTransition(quick: true, track: track) },
+			EditorMenuAction(track.kind == .audio ? "Cross Fade" : "Cross Dissolve") { trigger = track.id; quickCross(track: track) },
 			EditorMenuAction("Track Effects") { trigger = track.id; playback.pause(); effects = track }
 		]
 		if !dragging.isEmpty && project.displayedClips(on: track).isEmpty && project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == track.kind }) {
@@ -851,7 +921,11 @@ struct ProjectEditorView: View {
 
 	private func clipActions(_ clip: ProjectPlacement, source: ProjectMediaSource, rowID: String, linked: Bool) -> [EditorMenuAction] {
 		let name = clip.displayName(for: source)
+		let track = linked ? project.audioPartner(for: clip.trackID) : project.tracks.first { $0.id == clip.trackID }
 		var actions = [
+			EditorMenuAction("Transitions") { trigger = rowID; openTransition(quick: false, track: track, clip: clip) },
+			EditorMenuAction("Quick Fade") { trigger = rowID; openTransition(quick: true, track: track, clip: clip) },
+			EditorMenuAction(linked || clip.track == .audio ? "Cross Fade" : "Cross Dissolve") { trigger = rowID; quickCross(track: track, clip: clip) },
 			EditorMenuAction("Open Cutting Board") { openBoard(source, placement: clip, rowID: rowID) },
 			EditorMenuAction("Move to Playhead") {
 				playback.pause()
@@ -1035,7 +1109,9 @@ struct ProjectEditorView: View {
 		var next = next
 		if let point = next.markIn, point.time > next.duration { next.markIn = nil }
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
-		next.version = 10
+		next.cleanTransitions()
+		try next.validateTransitions()
+		next.version = 11
 		try ProjectLibrary.save(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
@@ -1084,7 +1160,7 @@ struct ProjectEditorView: View {
 		func timelineReferences(_ model: EditingProject) -> [UUID: ProjectMediaSource.Reference] {
 			Dictionary(uniqueKeysWithValues: model.sources.filter { usedSources.contains($0.id) }.map { ($0.id, $0.reference) })
 		}
-		let rebuild = project.trackEffects != next.trackEffects || project.audioDescriptions != next.audioDescriptions || project.descriptionDucking != next.descriptionDucking || project.picture != next.picture || project.placements != next.placements || timelineReferences(project) != timelineReferences(next) || project.tracks != next.tracks
+		let rebuild = project.transitions != next.transitions || project.trackEffects != next.trackEffects || project.audioDescriptions != next.audioDescriptions || project.descriptionDucking != next.descriptionDucking || project.picture != next.picture || project.placements != next.placements || timelineReferences(project) != timelineReferences(next) || project.tracks != next.tracks
 		if !rebuild && (project.trackStereo != next.trackStereo || project.trackVolumes != next.trackVolumes || project.masterVolume != next.masterVolume || project.mutedTracks != next.mutedTracks) {
 			playback.updateMix(next, solo: soloTracks)
 		}
@@ -1323,6 +1399,9 @@ struct ProjectEditorView: View {
 		case "c", "\r":
 			if let clip, let source = project.sources.first(where: { $0.id == clip.sourceID }) { openBoard(source, placement: clip, rowID: focusedClip == nil ? nil : focusedRow) }
 		case "z": history(back: !flags.contains(.shift))
+		case "x": quickCross(track: track, clip: focusedClip)
+		case "f": openTransition(quick: true, track: track, clip: focusedClip)
+		case "t" where flags.contains([.command, .shift]): openTransition(quick: false, track: track, clip: focusedClip)
 		case "t": UIAccessibility.post(notification: .announcement, argument: time(position))
 		case "i", "o":
 			playback.pause()
@@ -1903,7 +1982,7 @@ private struct ProjectExportView: View {
 	}
 }
 
-private struct ProjectTimelineSlider: View {
+struct ProjectTimelineSlider: View {
 	@ObservedObject var playhead: ProjectPlayhead
 	let playback: ProjectPlayback
 	let duration: CMTime
@@ -2098,6 +2177,7 @@ private struct ProjectTouchSurface: UIViewRepresentable {
 	@ObservedObject var playhead: ProjectPlayhead
 	let playback: ProjectPlayback
 	let formatTime: (CMTime) -> String
+	let transitions: (() -> Void)?
 	let duration: CMTime
 	let captioning: Bool
 	let editDescription: (() -> Void)?
@@ -2111,7 +2191,7 @@ private struct ProjectTouchSurface: UIViewRepresentable {
 		view.isAccessibilityElement = true
 		view.accessibilityLabel = "Direct Touch Editor"
 		view.accessibilityTraits = .allowsDirectInteraction
-		view.installTimelineGestures(projectTimeline: true, captioning: captioning, join: editDescription == nil ? nil : #selector(Surface.descriptionTap))
+		view.installTimelineGestures(projectTimeline: true, captioning: captioning, transitions: transitions != nil, join: editDescription == nil ? nil : #selector(Surface.descriptionTap))
 		view.backgroundColor = UIColor(EditorTheme.surface)
 		configureProjectPreview(view.video)
 		view.layer.addSublayer(view.cursor)
@@ -2150,6 +2230,8 @@ private struct ProjectTouchSurface: UIViewRepresentable {
 			cursor.frame = CGRect(x: max(0, bounds.width - 3) * min(1, max(0, fraction)), y: 0, width: 3, height: bounds.height)
 			CATransaction.commit()
 		}
+
+		@objc func openTransitions() { control?.transitions?() }
 
 		@objc func announcePosition() {
 			guard let control else { return }

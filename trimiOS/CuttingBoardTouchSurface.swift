@@ -40,13 +40,14 @@ struct CuttingBoardTouchSurface: UIViewRepresentable {
 @MainActor @objc protocol TimelineGestureHandling {
 	func closeEditor()
 	func announcePosition()
+	func openTransitions()
 	func toggle()
 	func scrub(_ hold: UILongPressGestureRecognizer)
 	func swipe(_ gesture: UISwipeGestureRecognizer)
 }
 
 extension TimelineGestureHandling where Self: UIView {
-	func installTimelineGestures(projectTimeline: Bool, captioning: Bool = false, placement: Bool = false, join: Selector? = nil) {
+	func installTimelineGestures(projectTimeline: Bool, captioning: Bool = false, transitions: Bool = false, placement: Bool = false, join: Selector? = nil) {
 		accessibilityDirectTouchOptions = [.silentOnTouch]
 		isMultipleTouchEnabled = true
 
@@ -71,10 +72,15 @@ extension TimelineGestureHandling where Self: UIView {
 		positionTap.numberOfTouchesRequired = 3
 		addGestureRecognizer(positionTap)
 
+		let transitionTap = transitions ? UITapGestureRecognizer(target: self, action: #selector(openTransitions)) : nil
+		if let transitionTap {
+			transitionTap.numberOfTouchesRequired = 4
+			addGestureRecognizer(transitionTap)
+		}
 		let horizontal: [UISwipeGestureRecognizer.Direction] = [.left, .right]
 		let all = horizontal + [.up, .down]
 		let groups = [all, projectTimeline && !captioning ? all : horizontal + [.down], all,
-			projectTimeline ? [] : (placement ? all : horizontal)]
+			projectTimeline ? (transitions ? [.up, .down] : []) : (placement ? all : horizontal)]
 		for (index, directions) in groups.enumerated() {
 			let count = index + 1
 			for direction in directions {
@@ -83,6 +89,7 @@ extension TimelineGestureHandling where Self: UIView {
 				swipe.direction = direction
 				if count == 1 { swipe.require(toFail: hold) }
 				if count == 3 { positionTap.require(toFail: swipe) }
+				if count == 4 { transitionTap?.require(toFail: swipe) }
 				addGestureRecognizer(swipe)
 			}
 		}
@@ -140,6 +147,8 @@ final class TimelineSurface: UIView, TimelineGestureHandling {
 
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError() }
+
+	@objc func openTransitions() {}
 
 	@objc func announcePosition() {
 		let time = session.rate > 0 && session.player.rate > 0 ? session.player.currentTime() : session.position

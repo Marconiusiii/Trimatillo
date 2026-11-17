@@ -240,6 +240,10 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe left to snap to the previous edit point on the selected track.",
 				"Swipe down to undo the last project edit.",
 				"Swipe up to redo the last project edit you undid."
+			]), HelpSection("Four fingers", [
+				"Swipe down at an edit point to apply Cross Dissolve on a video track or Cross Fade on an audio track. The first duration is one second. Later uses follow the duration last saved for Cross Dissolve or Cross Fade.",
+				"Swipe up to open Quick Fade. Set Fade In and Fade Out and their durations, preview the result, then choose Save.",
+				"Tap once to open Transitions for the clip or edit point on the selected track. Choose a transition, set its duration, preview it, then choose Save. Cancel returns without applying the changes."
 			]), HelpSection("Track navigation", [
 				"Switching tracks keeps the playhead in place. Playback and scrubbing include the full project mix.",
 				"At a shared cut, the edit point uses the name of the clip beginning there in either direction. Start, End, In, and Out are also stops.",
@@ -269,6 +273,17 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Even Out Volume from Effects to soften louder passages within clips. Start Smoothing Above sets the level where smoothing begins. A higher Smoothing Strength reduces louder passages more.",
 				"During playback, turn Bypass Effects on to hear the original levels and off to hear the effects. Adjust Volume to change the level of the whole track.",
 				"Use the Remove button under an effect to take it off the track. Save applies your changes to existing clips and clips added later. Cancel discards your changes. In Editor, choose Undo to reverse a save."
+			]), HelpSection("Add and preview transitions", numbered: true, [
+				"Select a timeline clip, or move the playhead to the cut where two clips meet. Open Transitions from the clip menu or its accessibility actions. The track heading also offers Transitions, Quick Fade, and Cross Dissolve or Cross Fade.",
+				"At a cut, choose a transition and its Duration in Seconds. Video choices include Cross Dissolve, Fade Out/Fade In through black, Fade Through White, directional wipes, slides, covers and reveals, circles, and Pixel Dissolve. Audio offers Cross Fade and Fade Out/Fade In.",
+				"Use Easing with a wipe, slide, cover, reveal, or circle to change its movement over time. Linear keeps a steady pace. Ease In slows toward the incoming picture, Ease Out accelerates away from the outgoing picture, and Easy Ease smooths both ends.",
+				"Turn on Crossfade Audio to include linked video sound. Choose Linear or Equal Power for the audio curve. Equal Power maintains more volume around the middle of a crossfade.",
+				"Choose Play or use Magic Tap to preview. Playback loops around the transition. Adjust the settings to prepare an updated preview. Use the playhead to choose another position.",
+				"Choose Save to apply the transition, or Cancel to discard the changes. Reopen Transitions at the same cut to adjust it or choose Remove Transition and Save. Undo and Redo restore saved transition changes.",
+				"Choose Quick Fade to apply Fade In, Fade Out, or both, with separate durations. At a shared cut, Fade Out affects the outgoing clip and Fade In affects the incoming clip. From a selected clip's menu, both apply to that clip.",
+				"Cross transitions use extra source material on both sides of the cut. If there is too little available, shorten the transition or adjust the cut in the Cutting Board. The project duration stays the same.",
+				"Transitions follow their clips. Removing a clip, separating a joined pair, or shortening a clip beyond its transition removes the affected transition. Undo restores it.",
+				"In Editor, press X for a quick crossfade, F for Quick Fade, or Command-Shift-T for Transitions. Commands use the focused clip when one is selected, otherwise the playhead on the selected track."
 			]), HelpSection("Project playback and navigation", [
 				"Choose Direct Touch Editor to use gestures on the project. The Project Direct Touch Editor Help topic lists each gesture.",
 				"Choose Play to preview the timeline. Choose Pause to stop at the current position.",
@@ -308,6 +323,7 @@ private enum HelpTopic: String, CaseIterable {
 				"You can also drag a clip onto the leading or trailing half of another clip to place it before or after that clip."
 			]), Self.projectExport, HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
+				"In Editor, X applies a quick crossfade, F opens Quick Fade, and Command-Shift-T opens Transitions.",
 				"On the project timeline, Space or K plays or pauses. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
 				"I and O mark In and Out. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
 				"Command-Option-Up and Command-Option-Down select a track. C opens its clip at or after the playhead. Return opens the focused clip. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",

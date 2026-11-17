@@ -701,6 +701,7 @@ private struct ScrubAudioWindow {
 		let channel: String
 		var video: String?
 		var clipGain: Float = 1
+		var envelopes: [TransitionAudioEnvelope] = []
 		var auditionClip: UUID?
 		var measurement: ClipLoudnessAnalyzer.Measurement?
 
@@ -772,6 +773,7 @@ private struct ScrubAudioWindow {
 				parameters.audioTimePitchAlgorithm = .timeDomain
 			} else {
 				project.descriptionDucking?.apply(to: parameters, volume: base, takes: project.audioDescriptions ?? [], duration: duration)
+				parameters.applyTransitions(output.envelopes, base: base)
 			}
 			return parameters
 		}
@@ -877,6 +879,7 @@ private struct ScrubAudioWindow {
 				let mix = AVMutableAudioMixInputParameters(track: track)
 				try setLevel(volume, stereo: primaryStereo, on: mix, output: mixOutputs.first { $0.id == track.trackID })
 				if duck, let take { descriptionDucking?.apply(to: mix, volume: 1, takes: [take], duration: range.end) }
+				mix.applyTransitions(mixOutputs.first { $0.id == track.trackID }?.envelopes ?? [], base: 1)
 				levels.append(mix)
 			} else { composition.removeTrack(track) }
 		}
@@ -937,6 +940,8 @@ private struct ScrubAudioWindow {
 		let composition = AVMutableComposition()
 		var sources: [UUID: ProjectMediaAccess] = [:]
 		var layers: [(CMTimeRange, AVMutableVideoCompositionLayerInstruction)] = []
+		var transitionLayers: [TransitionVideoLayer] = []
+		let usesTransitions = project.transitions?.isEmpty == false
 		let preparedMedia = StereoMedia()
 		var builtOutputs: [MixOutput] = []
 		var currentName = ""
@@ -967,7 +972,8 @@ private struct ScrubAudioWindow {
 						let measurement = needsMeasurement ? try await measurements.measure(clip, source: source, asset: access.asset) : nil
 						let clipGain = clip.loudnessGain ?? 1
 						let renderedGain = project.trackEffects?[channel]?.loudness.flatMap { measurement?.gain(for: $0) } ?? clipGain
-						let existing = type == .audio ? (audition != nil ? nil : audioOutputs[renderedGain]) : videoOutput
+						let clipHasTransitions = !project.transitions(for: clip, channel: type == .audio ? channel : track.id).isEmpty
+						let existing = clipHasTransitions ? nil : (type == .audio ? (audition != nil ? nil : audioOutputs[renderedGain]) : videoOutput)
 						let output: AVMutableCompositionTrack
 						if let existing { output = existing }
 						else {
@@ -976,13 +982,14 @@ private struct ScrubAudioWindow {
 							}
 							output = created
 							if type == .audio {
-								audioOutputs[renderedGain] = output
-								builtOutputs.append(MixOutput(id: output.trackID, channel: channel, video: channel == track.id ? nil : track.id, clipGain: clipGain, auditionClip: audition != nil ? clip.id : nil, measurement: measurement))
-							} else { videoOutput = output }
+								if !clipHasTransitions { audioOutputs[renderedGain] = output }
+								builtOutputs.append(MixOutput(id: output.trackID, channel: channel, video: channel == track.id ? nil : track.id, clipGain: clipGain, envelopes: project.audioEnvelopes(for: clip, channel: channel), auditionClip: audition != nil ? clip.id : nil, measurement: measurement))
+							} else if !clipHasTransitions { videoOutput = output }
 						}
 						let available = try await input.load(.timeRange)
-						var cursor = clip.start.time
-						for range in clip.ranges.map(\.range) {
+						let transitionMedia = project.transitionMedia(for: clip, channel: type == .audio ? channel : track.id)
+						var cursor = transitionMedia.start
+						for range in transitionMedia.ranges {
 							let overlap = range.intersection(available)
 							if overlap.isValid && !overlap.isEmpty {
 								let (sourceTrack, sourceRange) = type == .audio ? try await preparedMedia.source(access.asset, track: input, range: overlap) : (input, overlap)
@@ -1001,6 +1008,10 @@ private struct ScrubAudioWindow {
 							layer.setTransform(transform.concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
 								.concatenating(CGAffineTransform(scaleX: scale, y: scale)).concatenating(offset), at: clip.start.time)
 							layers.append((CMTimeRange(start: clip.start.time, end: clip.end), layer))
+							transitionLayers.append(TransitionVideoLayer(id: output.trackID, clipID: clip.id, trackID: track.id,
+								range: CMTimeRange(start: transitionMedia.start, end: cursor),
+								transform: transform.concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
+									.concatenating(CGAffineTransform(scaleX: scale, y: scale)).concatenating(offset)))
 						}
 					}
 				}
@@ -1040,7 +1051,15 @@ private struct ScrubAudioWindow {
 				let video = AVMutableVideoComposition()
 				video.renderSize = CGSize(width: picture.width, height: picture.height)
 				video.frameDuration = picture.frame.time
-				video.instructions = instructions
+				if usesTransitions {
+					let boundaries = Set([CMTime.zero, duration] + transitionLayers.flatMap { [$0.range.start, $0.range.end] }).sorted()
+					video.customVideoCompositorClass = TransitionCompositor.self
+					video.instructions = zip(boundaries, boundaries.dropFirst()).compactMap { start, end in
+						guard start < end else { return nil }
+						return TransitionInstruction(range: CMTimeRange(start: start, end: end),
+							layers: transitionLayers.filter { $0.range.containsTime(start) }, project: project, size: video.renderSize)
+					}
+				} else { video.instructions = instructions }
 				item.videoComposition = video
 			}
 			media = sources
@@ -1181,6 +1200,13 @@ private struct ScrubAudioWindow {
 			changes.append(CaptionPanelChange(time: time, image: image))
 		}
 		let panels = CaptionPanelTimeline(changes: changes)
+		if original.customVideoCompositorClass == TransitionCompositor.self {
+			composition.instructions = try original.instructions.map {
+				guard let instruction = $0 as? TransitionInstruction else { throw CocoaError(.fileReadCorruptFile) }
+				return TransitionInstruction(instruction, panels: panels)
+			}
+			return composition
+		}
 		let instructions = try original.instructions.map { instruction in
 			guard let video = instruction as? AVVideoCompositionInstruction else {
 				throw ProjectFailure("Could not read the project video layout.")
@@ -1193,12 +1219,12 @@ private struct ScrubAudioWindow {
 	}
 }
 
-nonisolated private struct CaptionPanelChange {
+nonisolated struct CaptionPanelChange {
 	let time: CMTime
 	let image: Data?
 }
 
-nonisolated private struct CaptionPanelTimeline {
+nonisolated struct CaptionPanelTimeline {
 	let changes: [CaptionPanelChange]
 
 	func image(at time: CMTime) -> Data? {
