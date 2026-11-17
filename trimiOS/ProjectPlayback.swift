@@ -78,26 +78,34 @@ private final class StereoMedia {
 nonisolated private final class TrackMixProcessor: @unchecked Sendable {
 	private let media: StereoMedia
 	private let lock = NSLock()
-	private var target: StereoMixMatrix
+	private struct Settings {
+		var matrix: StereoMixMatrix
+		var smoothing: TrackAudioEffects.Smoothing?
+		var inputGain: Double
+	}
+	private var target: Settings
+	private var active: Settings
+	private var dynamics = TrackDynamics()
 	private var current: StereoMixMatrix
 	private var format = AudioStreamBasicDescription()
 	private var step = StereoMixMatrix.silent
 	private var remaining = 0
 	private var destination: StereoMixMatrix
 
-	init(matrix: StereoMixMatrix, media: StereoMedia) {
+	init(matrix: StereoMixMatrix, media: StereoMedia, smoothing: TrackAudioEffects.Smoothing? = nil, inputGain: Double = 1) {
 		self.media = media
-		target = matrix
+		target = Settings(matrix: matrix, smoothing: smoothing, inputGain: inputGain)
+		active = target
 		current = matrix
 		destination = matrix
 	}
-	func update(_ matrix: StereoMixMatrix) {
-		lock.withLock { target = matrix }
+	func update(_ matrix: StereoMixMatrix, smoothing: TrackAudioEffects.Smoothing?, inputGain: Double) {
+		lock.withLock { target = Settings(matrix: matrix, smoothing: smoothing, inputGain: inputGain) }
 	}
 
 	func copyProcessor() -> TrackMixProcessor {
 		let matrix = lock.withLock { target }
-		return TrackMixProcessor(matrix: matrix, media: media)
+		return TrackMixProcessor(matrix: matrix.matrix, media: media, smoothing: matrix.smoothing, inputGain: matrix.inputGain)
 	}
 
 	func makeTap() throws -> MTAudioProcessingTap {
@@ -125,12 +133,19 @@ nonisolated private final class TrackMixProcessor: @unchecked Sendable {
 		return tap
 	}
 
-	func prepare(_ value: AudioStreamBasicDescription) { format = value }
+	func prepare(_ value: AudioStreamBasicDescription) {
+		format = value
+		dynamics = TrackDynamics()
+		dynamics.configure(active.smoothing, rate: value.mSampleRate)
+	}
 
 	func process(_ list: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
 		if lock.try() {
-			let next = target
+			let settings = target
 			lock.unlock()
+			if active.smoothing != settings.smoothing { dynamics.configure(settings.smoothing, rate: format.mSampleRate) }
+			active = settings
+			let next = settings.matrix
 			if next != destination {
 				destination = next
 				remaining = max(Int(format.mSampleRate * 0.01), 1)
@@ -144,7 +159,7 @@ nonisolated private final class TrackMixProcessor: @unchecked Sendable {
 		guard format.mFormatID == kAudioFormatLinearPCM,
 			(1...2).contains(format.mChannelsPerFrame),
 			buffers.count >= (planar ? Int(format.mChannelsPerFrame) : 1) else { return }
-		if remaining == 0 && current == StereoMixMatrix() { return }
+		if !dynamics.enabled && remaining == 0 && current == StereoMixMatrix() { return }
 		guard format.mFormatFlags & kAudioFormatFlagIsFloat != 0,
 			format.mFormatFlags & kAudioFormatFlagIsBigEndian == 0,
 			format.mBitsPerChannel == 32, format.mChannelsPerFrame == 2,
@@ -159,7 +174,7 @@ nonisolated private final class TrackMixProcessor: @unchecked Sendable {
 		let offset = planar ? 0 : 1
 		let capacity = min(Int(buffers[0].mDataByteSize), Int(buffers[planar ? 1 : 0].mDataByteSize)) / (4 * stride)
 		let count = min(frames, capacity)
-		if remaining == 0, current.lr == 0, current.rl == 0 {
+		if !dynamics.enabled, remaining == 0, current.lr == 0, current.rl == 0 {
 			var leftGain = Float(current.ll)
 			var rightGain = Float(current.rr)
 			vDSP_vsmul(left, vDSP_Stride(stride), &leftGain, left, vDSP_Stride(stride), vDSP_Length(count))
@@ -171,8 +186,9 @@ nonisolated private final class TrackMixProcessor: @unchecked Sendable {
 			advanceMatrix()
 			let index = frame * stride
 			let l = Double(left[index]), r = Double(right[index+offset])
-			left[index] = Float(l * current.ll + r * current.lr)
-			right[index+offset] = Float(l * current.rl + r * current.rr)
+			let gain = dynamics.enabled ? dynamics.gain(left: l * active.inputGain, right: r * active.inputGain) : 1
+			left[index] = Float((l * current.ll + r * current.lr) * gain)
+			right[index+offset] = Float((l * current.rl + r * current.rr) * gain)
 		}
 	}
 
@@ -230,8 +246,9 @@ nonisolated private final class TrackMixProcessor: @unchecked Sendable {
 			let leftPointer = first.advanced(by: frame * stride)
 			let rightPointer = second.advanced(by: frame * stride + (planar || channels == 1 ? 0 : bytes))
 			let left = read(leftPointer), right = read(rightPointer)
-			let l = left * current.ll + right * current.lr
-			let r = left * current.rl + right * current.rr
+			let gain = dynamics.enabled ? dynamics.gain(left: left * active.inputGain, right: right * active.inputGain) : 1
+			let l = (left * current.ll + right * current.lr) * gain
+			let r = (left * current.rl + right * current.rr) * gain
 			if channels == 1 { write((l+r)/2, leftPointer) }
 			else { write(l, leftPointer); write(r, rightPointer) }
 		}
@@ -337,7 +354,10 @@ private struct ScrubAudioWindow {
 	private var speed: Double = 0
 	private var duration: CMTime = .zero
 
-	init() {
+	let measurements: ClipLoudnessMeasurements
+
+	init(measurements: ClipLoudnessMeasurements? = nil) {
+		self.measurements = measurements ?? ClipLoudnessMeasurements()
 		engine.attach(node)
 		engine.connect(node, to: engine.mainMixerNode, format: format)
 		observer = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] _ in
@@ -681,6 +701,15 @@ private struct ScrubAudioWindow {
 		let channel: String
 		var video: String?
 		var clipGain: Float = 1
+		var auditionClip: UUID?
+		var measurement: ClipLoudnessAnalyzer.Measurement?
+
+		func gain(in project: EditingProject) -> Float {
+			if let settings = project.trackEffects?[channel]?.loudness, let measurement {
+				return measurement.gain(for: settings)
+			}
+			return clipGain
+		}
 	}
 	private var stereoMedia = StereoMedia()
 	private var mixOutputs: [MixOutput] = []
@@ -706,11 +735,19 @@ private struct ScrubAudioWindow {
 		guard project.mutedTracks?.contains(output.channel) != true,
 			solo.isEmpty || solo.contains(output.channel) else { return 0 }
 		let videoLevel = output.video.flatMap { project.trackVolumes?[$0] } ?? 1
-		return output.clipGain * (project.trackVolumes?[output.channel] ?? 1) * videoLevel * (project.masterVolume ?? 1)
+		return output.gain(in: project) * (project.trackVolumes?[output.channel] ?? 1) * videoLevel * (project.masterVolume ?? 1)
 	}
 
-	private func setLevel(_ level: Float, stereo: TrackStereoMix = .neutral, on parameters: AVMutableAudioMixInputParameters, media: StereoMedia? = nil) throws {
-		let processor = TrackMixProcessor(matrix: stereo.matrix(gain: Double(level)), media: media ?? stereoMedia)
+	private func setLevel(_ level: Float, stereo: TrackStereoMix, on parameters: AVMutableAudioMixInputParameters,
+		media: StereoMedia? = nil, output: MixOutput? = nil) throws {
+		var smoothing: TrackAudioEffects.Smoothing?
+		var inputGain = 1.0
+		if let output, let mixProject {
+			smoothing = mixProject.trackEffects?[output.channel]?.smoothing
+			inputGain = Double(output.gain(in: mixProject))
+		}
+		let processor = TrackMixProcessor(matrix: stereo.matrix(gain: Double(level)), media: media ?? stereoMedia,
+			smoothing: smoothing, inputGain: inputGain)
 		parameters.audioTapProcessor = try processor.makeTap()
 	}
 
@@ -723,10 +760,11 @@ private struct ScrubAudioWindow {
 			parameters.trackID = output.id
 			let stereo = project.trackStereo?[output.channel] ?? .neutral
 			let gain = level(output, project: project, solo: solo)
-			let base: Float = live && !previewingChanges ? min(1, gain) : 1
+			let smoothing = project.trackEffects?[output.channel]?.smoothing
+			let base: Float = smoothing == nil && live && !previewingChanges ? min(1, gain) : 1
 			parameters.setVolume(base, at: .zero)
-			if !live || previewingChanges || gain > 1 || stereo != .neutral {
-				let processor = TrackMixProcessor(matrix: stereo.matrix(gain: base > 0 ? Double(gain / base) : 1), media: stereoMedia)
+			if !live || previewingChanges || gain > 1 || stereo != .neutral || smoothing != nil {
+				let processor = TrackMixProcessor(matrix: stereo.matrix(gain: base > 0 ? Double(gain / base) : 1), media: stereoMedia, smoothing: smoothing, inputGain: Double(output.gain(in: project)))
 				parameters.audioTapProcessor = try processor.makeTap()
 				processors[output.id] = processor
 			}
@@ -759,7 +797,7 @@ private struct ScrubAudioWindow {
 
 	func updateMix(_ project: EditingProject, solo: Set<String>, preview: Bool = false) {
 		guard projectID == project.id else { return }
-		let changed = mixProject?.trackVolumes != project.trackVolumes || mixProject?.trackStereo != project.trackStereo
+		let changed = mixProject?.trackEffects != project.trackEffects || mixProject?.trackVolumes != project.trackVolumes || mixProject?.trackStereo != project.trackStereo
 			|| mixProject?.masterVolume != project.masterVolume || mixProject?.mutedTracks != project.mutedTracks || mixSolo != solo
 		mixProject = project
 		mixSolo = solo
@@ -783,7 +821,7 @@ private struct ScrubAudioWindow {
 				for output in mixOutputs {
 					let stereo = project.trackStereo?[output.channel] ?? .neutral
 					let gain = level(output, project: project, solo: solo)
-					liveProcessors[output.id]?.update(stereo.matrix(gain: Double(gain)))
+					liveProcessors[output.id]?.update(stereo.matrix(gain: Double(gain)), smoothing: project.trackEffects?[output.channel]?.smoothing, inputGain: Double(output.gain(in: project)))
 				}
 			} else {
 				item.audioMix = try audioMix(project, solo: solo, live: true, previewingChanges: true)
@@ -837,7 +875,7 @@ private struct ScrubAudioWindow {
 		for track in try await composition.loadTracks(withMediaType: .audio) {
 			if let volume = primaryLevels[track.trackID] {
 				let mix = AVMutableAudioMixInputParameters(track: track)
-				try setLevel(volume, stereo: primaryStereo, on: mix)
+				try setLevel(volume, stereo: primaryStereo, on: mix, output: mixOutputs.first { $0.id == track.trackID })
 				if duck, let take { descriptionDucking?.apply(to: mix, volume: 1, takes: [take], duration: range.end) }
 				levels.append(mix)
 			} else { composition.removeTrack(track) }
@@ -862,8 +900,19 @@ private struct ScrubAudioWindow {
 		openPlayers.allObjects.contains { $0.projectID == id }
 	}
 
-	func prepare(_ project: EditingProject) async {
-		if !Self.isOpen(project.id) { ProjectStorage.pruneUnusedRecordings(project) }
+	func measureAudition(_ project: EditingProject, channel: String) async throws {
+		for index in mixOutputs.indices where mixOutputs[index].channel == channel && mixOutputs[index].measurement == nil {
+			guard let id = mixOutputs[index].auditionClip, let clip = project.placements.first(where: { $0.id == id }),
+				let source = project.sources.first(where: { $0.id == clip.sourceID }), let access = media[clip.sourceID] else { throw CocoaError(.fileReadCorruptFile) }
+			let measurement = try await measurements.measure(clip, source: source, asset: access.asset)
+			try Task.checkCancellation()
+			mixOutputs[index].measurement = measurement
+		}
+	}
+
+	func prepare(_ project: EditingProject, audition: TimelineTrack? = nil) async {
+		if audition == nil { measurements.retainClips(in: project) }
+		if audition == nil && !Self.isOpen(project.id) { ProjectStorage.pruneUnusedRecordings(project) }
 		if projectID != project.id { mixSolo = [] }
 		projectID = project.id
 		mixProject = project
@@ -907,13 +956,18 @@ private struct ScrubAudioWindow {
 					}
 					guard try await access.asset.load(.duration) >= (clip.ranges.map { $0.range.end }.max() ?? .zero) else { throw CocoaError(.fileReadCorruptFile) }
 					for type in [AVMediaType.video, .audio] {
+						if type == .video && audition?.kind == .audio { continue }
 						if type == .audio && clip.omitAudio == true { continue }
 						guard let input = try await access.asset.loadTracks(withMediaType: type).first else {
 							if type == .video && source.picture != nil || type == .audio && source.hasAudio { throw CocoaError(.fileReadCorruptFile) }
 							continue
 						}
+						let channel = track.kind == .video ? project.audioPartner(for: track.id)?.id ?? track.id : track.id
+						let needsMeasurement = type == .audio && project.trackEffects?[channel]?.loudness != nil
+						let measurement = needsMeasurement ? try await measurements.measure(clip, source: source, asset: access.asset) : nil
 						let clipGain = clip.loudnessGain ?? 1
-						let existing = type == .audio ? audioOutputs[clipGain] : videoOutput
+						let renderedGain = project.trackEffects?[channel]?.loudness.flatMap { measurement?.gain(for: $0) } ?? clipGain
+						let existing = type == .audio ? (audition != nil ? nil : audioOutputs[renderedGain]) : videoOutput
 						let output: AVMutableCompositionTrack
 						if let existing { output = existing }
 						else {
@@ -922,9 +976,8 @@ private struct ScrubAudioWindow {
 							}
 							output = created
 							if type == .audio {
-								audioOutputs[clipGain] = output
-								let channel = track.kind == .video ? project.audioPartner(for: track.id)?.id ?? track.id : track.id
-								builtOutputs.append(MixOutput(id: output.trackID, channel: channel, video: channel == track.id ? nil : track.id, clipGain: clipGain))
+								audioOutputs[renderedGain] = output
+								builtOutputs.append(MixOutput(id: output.trackID, channel: channel, video: channel == track.id ? nil : track.id, clipGain: clipGain, auditionClip: audition != nil ? clip.id : nil, measurement: measurement))
 							} else { videoOutput = output }
 						}
 						let available = try await input.load(.timeRange)

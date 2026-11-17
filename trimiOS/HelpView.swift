@@ -105,7 +105,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Open Mixer or press Command-Shift-M. Set In and Out around a passage with voice and background sound. Turn on Loop and press Play to repeat it.",
 				"Choose a track in Timeline Chooser. Command-Option-Up Arrow and Command-Option-Down Arrow cycle through the tracks.",
 				"Turn on Mute to silence the selected track in the project and its export. Turn on Solo to listen to the selected track alone, or solo several tracks to hear them together. Leaving Mixer clears Solo.",
-				"To match clips recorded at different levels, open Track Effects from the audio track heading in Editor and choose Match Loudness. Use Mixer Volume to adjust the matched track as a whole.",
+				"To match clips recorded at different levels, open Track Effects from the audio track heading in Editor. Choose Effects, then Match Loudness. Use Mixer Volume to adjust the matched track as a whole.",
 				"Adjust Volume while listening. Zero dB plays the track at its original level. Raise Volume up to 12 dB to bring up quieter sound.",
 				"Adjust Pan to move the track left or right. Stereo Balance lowers the opposite channel. Center gives both channels their original position and balance.",
 				"Adjust Stereo Width to narrow or widen the sound. Choose Mono to bring both sides together or Original for the recorded width.",
@@ -258,11 +258,13 @@ private enum HelpTopic: String, CaseIterable {
 				"Primary Audio Track includes the linked sound from Primary Video. The linked clip follows the video through trims, splits, moves, and removal. Use Track Effects on Primary Audio Track to adjust its volume.",
 				"Choose a timeline clip to jump to its start or end, remove it, or reopen its Cutting Board. Choose Save Changes to update that placement.",
 				"Use the Undo menu to undo or redo a project change."
-			]), HelpSection("Match clip loudness", numbered: true, [
-				"Choose the audio track in Editor. Open its heading, choose Track Effects, then Match Loudness. On Primary Audio this includes the sound linked to video clips.",
-				"Set Playback Loudness in LUFS to choose how loud each clip should sound. Set Peak Ceiling in dBTP to cap its loudest peak. A clip stays quieter when it needs room for a peak.",
-				"Choose Apply to measure the retained audio in each clip. Playback and export use the adjustments before the track volume. Later mix changes can raise the final peaks.",
-				"Choose Undo to reverse the track adjustment. Apply Match Loudness again after changing a cut to measure the new edit."
+			]), HelpSection("Preview and apply track effects", numbered: true, [
+				"Open the track heading in Editor and choose Track Effects. Move the playhead to the passage you want to hear and choose Play. Magic Tap also plays or pauses the preview.",
+				"On an audio track, open Effects and choose Match Loudness to bring clips recorded at different volumes to a common level. On Primary Audio Track, this includes sound from video clips.",
+				"Set Playback Level to choose how loud the clips should sound. Higher values are louder. Peak Limit sets the highest peak allowed by Match Loudness. A clip with a strong peak may stay quieter.",
+				"Choose Even Out Volume from Effects to soften louder passages within clips. Start Smoothing Above sets the level where smoothing begins. A higher Smoothing Strength reduces louder passages more.",
+				"During playback, turn Bypass Effects on to hear the original levels and off to hear the effects. Adjust Volume to change the level of the whole track.",
+				"Use the Remove button under an effect to take it off the track. Save applies your changes to existing clips and clips added later. Cancel discards your changes. In Editor, choose Undo to reverse a save."
 			]), HelpSection("Project playback and navigation", [
 				"Choose Direct Touch Editor to use gestures on the project. The Project Direct Touch Editor Help topic lists each gesture.",
 				"Choose Play to preview the timeline. Choose Pause to stop at the current position.",

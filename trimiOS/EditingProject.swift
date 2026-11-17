@@ -82,7 +82,7 @@ nonisolated struct ProjectPicture: Codable, Equatable {
 
 nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	var id = UUID()
-	var version = 9
+	var version = 10
 	var name: String
 	var picture: ProjectPicture?
 	var matchesMedia: Bool?
@@ -92,6 +92,7 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	var additionalTracks: [TimelineTrack]?
 	var magneticTracks: [String: Bool]?
 	var trackStereo: [String: TrackStereoMix]?
+	var trackEffects: [String: TrackAudioEffects]?
 	var trackVolumes: [String: Float]?
 	var masterVolume: Float?
 	var mutedTracks: Set<String>?
@@ -465,7 +466,7 @@ nonisolated enum ProjectLibrary {
 	static func load(_ url: URL) throws -> EditingProject {
 		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: manifest(url)))
 		if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), id != project.id { throw CocoaError(.fileReadCorruptFile) }
-		guard (1...9).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		guard (1...10).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
 		try validate(project)
 		if project.version < 3 { project.restoreAudioPartners() }
 		project.assignPlacementLabels()
@@ -511,6 +512,9 @@ nonisolated enum ProjectLibrary {
 			(project.mutedTracks ?? []).isSubset(of: mixIDs) else { throw corrupt }
 		for (id, stereo) in project.trackStereo ?? [:] {
 			guard mixIDs.contains(id), stereo == stereo.normalized else { throw corrupt }
+		}
+		for (id, effects) in project.trackEffects ?? [:] {
+			guard tracks[id] == .audio, effects.isValid else { throw corrupt }
 		}
 		for (id, volume) in project.trackVolumes ?? [:] {
 			guard mixIDs.contains(id), (0...EditingProject.maximumMixerLevel).contains(volume) else { throw corrupt }

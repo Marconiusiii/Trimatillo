@@ -216,23 +216,7 @@ struct ProjectEditorView: View {
 				}
 			}
 			.sheet(item: $effects, onDismiss: { focus = trigger }) { track in
-				TrackEffectsSheet(track: track, project: project, volume: project.trackVolumes?[track.id] ?? 1) { volume, gains in
-					var next = project
-					if volume != (project.trackVolumes?[track.id] ?? 1) {
-						var levels = next.trackVolumes ?? [:]
-						levels[track.id] = volume
-						next.trackVolumes = levels
-					}
-					for index in next.placements.indices {
-						if let gain = gains?[next.placements[index].id] {
-							next.placements[index].loudnessGain = gain == 1 ? nil : gain
-						}
-					}
-					let movesFocus = next.placements != project.placements
-					try save(next, action: gains == nil ? "Track Effects" : "Match Loudness")
-					if movesFocus { placementFocus = track.id }
-					effects = nil
-				}
+				trackEffectsSheet(track)
 			}
 			.fileImporter(isPresented: $pickingFile, allowedContentTypes: [.movie, .audio]) { result in
 				if case .success(let url) = result { importSource { try await ProjectMediaSource.file(url) } }
@@ -1051,7 +1035,7 @@ struct ProjectEditorView: View {
 		var next = next
 		if let point = next.markIn, point.time > next.duration { next.markIn = nil }
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
-		next.version = 9
+		next.version = 10
 		try ProjectLibrary.save(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
@@ -1071,6 +1055,22 @@ struct ProjectEditorView: View {
 		} catch { self.error = error.localizedDescription }
 	}
 
+	private func trackEffectsSheet(_ track: TimelineTrack) -> some View {
+		TrackEffectsSheet(track: track, project: project, start: playback.position, format: format, formatTime: time, measurements: playback.measurements) { volume, effects in
+			var next = project
+			var levels = next.trackVolumes ?? [:]
+			if volume != (levels[track.id] ?? 1) { levels[track.id] = volume }
+			next.trackVolumes = levels.isEmpty ? nil : levels
+			var settings = next.trackEffects ?? [:]
+			settings[track.id] = effects == TrackAudioEffects() ? nil : effects
+			next.trackEffects = settings.isEmpty ? nil : settings
+			let rebuild = next.trackEffects != project.trackEffects
+			try save(next, action: "Track Effects")
+			if rebuild { placementFocus = track.id }
+			self.effects = nil
+		}
+	}
+
 	private func applyMixerEdit(_ next: EditingProject, action: String, commit: Bool) {
 		if commit {
 			do { try save(next, action: action) }
@@ -1084,7 +1084,7 @@ struct ProjectEditorView: View {
 		func timelineReferences(_ model: EditingProject) -> [UUID: ProjectMediaSource.Reference] {
 			Dictionary(uniqueKeysWithValues: model.sources.filter { usedSources.contains($0.id) }.map { ($0.id, $0.reference) })
 		}
-		let rebuild = project.audioDescriptions != next.audioDescriptions || project.descriptionDucking != next.descriptionDucking || project.picture != next.picture || project.placements != next.placements || timelineReferences(project) != timelineReferences(next) || project.tracks != next.tracks
+		let rebuild = project.trackEffects != next.trackEffects || project.audioDescriptions != next.audioDescriptions || project.descriptionDucking != next.descriptionDucking || project.picture != next.picture || project.placements != next.placements || timelineReferences(project) != timelineReferences(next) || project.tracks != next.tracks
 		if !rebuild && (project.trackStereo != next.trackStereo || project.trackVolumes != next.trackVolumes || project.masterVolume != next.masterVolume || project.mutedTracks != next.mutedTracks) {
 			playback.updateMix(next, solo: soloTracks)
 		}
@@ -1485,111 +1485,191 @@ private struct ClipDropTarget: ViewModifier {
 
 private struct TrackEffectsSheet: View {
 	let track: TimelineTrack
-	let project: EditingProject
-	@State var volume: Float
-	let save: (Float, [UUID: Float]?) throws -> Void
-	@State private var error: String?
-	@State private var target = -16.0
-	@State private var ceiling = -1.0
-	@State private var analyzing = false
+	let audition: EditingProject
+	let start: CMTime
+	let format: TimecodeFormat
+	let formatTime: (CMTime) -> String
+	let save: (Float, TrackAudioEffects) throws -> Void
+	@StateObject private var preview: ProjectPlayback
 	@Environment(\.dismiss) private var dismiss
+	@Environment(\.scenePhase) private var phase
+	@State private var volume: Double
+	@State private var effects: TrackAudioEffects
+	@State private var bypass = false
+	@State private var measuring = false
+	@State private var error: String?
+	@AccessibilityFocusState private var pickerFocused: Bool
 
-	private var audioClips: [ProjectPlacement] {
-		project.displayedClips(on: track).filter { $0.omitAudio != true }
+	init(track: TimelineTrack, project: EditingProject, start: CMTime, format: TimecodeFormat,
+		formatTime: @escaping (CMTime) -> String, measurements: ClipLoudnessMeasurements, save: @escaping (Float, TrackAudioEffects) throws -> Void) {
+		self.track = track
+		self.start = start
+		self.format = format
+		self.formatTime = formatTime
+		_preview = StateObject(wrappedValue: ProjectPlayback(measurements: measurements))
+		self.save = save
+		_volume = State(initialValue: Double(project.trackVolumes?[track.id] ?? 1))
+		_effects = State(initialValue: project.trackEffects?[track.id] ?? TrackAudioEffects())
+		var draft = project
+		let audio = project.audioPartner(for: track.id)
+		let clips = project.displayedClips(on: track) + (audio.map { project.clips(on: $0) } ?? [])
+		let ids = Set(clips.map(\.id))
+		draft.placements = project.placements.filter { ids.contains($0.id) }
+		draft.audioDescriptions = nil
+		draft.descriptionDucking = nil
+		draft.mutedTracks = nil
+		audition = draft
 	}
 
 	var body: some View {
 		NavigationStack {
 			Form {
-				Section {
-					Slider(value: $volume, in: 0...EditingProject.maximumMixerLevel, step: 0.01) { Text("Volume") }
-						.accessibilityValue(volume.formatted(.percent))
-					LabeledContent("Volume", value: volume.formatted(.percent))
-						.accessibilityHidden(true)
-					if track.kind == .audio {
-						NavigationLink("Match Loudness") { matchLoudness }
-							.disabled(audioClips.isEmpty)
+				if audition.duration > .zero {
+					Section {
+						if track.kind == .video {
+							ProjectPreview(player: preview.player)
+								.aspectRatio(CGFloat(audition.picture?.width ?? 16) / CGFloat(audition.picture?.height ?? 9), contentMode: .fit)
+						}
+						ProjectTimelineSlider(playhead: preview.playhead, playback: preview, duration: audition.duration,
+							points: audition.editPoints(on: track), frame: audition.frame, format: format, formatTime: formatTime)
+						Button { preview.toggle() } label: {
+							Label(preview.transport.playing ? "Pause" : "Play", systemImage: preview.transport.playing ? "pause.fill" : "play.fill")
+								.labelStyle(.iconOnly).frame(maxWidth: .infinity, minHeight: 44)
+						}
+						Toggle("Bypass Effects", isOn: $bypass)
+							.disabled(!hasPreviewEffects)
 					}
-				} header: { Text(track.title).accessibilityAddTraits(.isHeader) }
-			}
-			.editorListMargins()
-			.navigationTitle("Track Effects")
-			.navigationBarTitleDisplayMode(.inline)
-			.toolbar {
-				ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
-				ToolbarItem(placement: .topBarTrailing) {
-					Button("Save") {
-						do { try save(volume, nil) } catch { self.error = error.localizedDescription }
+					.disabled(!preview.ready)
+				}
+				Section {
+					slider("Volume", value: $volume, range: 0...Double(EditingProject.maximumMixerLevel), step: 0.01,
+						reading: volume.formatted(.percent.precision(.fractionLength(0))))
+					if track.kind == .audio {
+						Menu {
+							Button("Match Loudness") {
+								effects.loudness = .init()
+								bypass = false
+								measuring = preview.ready
+								pickerFocused = true
+							}.disabled(effects.loudness != nil)
+							Button("Even Out Volume") {
+								effects.smoothing = .init()
+								bypass = false
+								pickerFocused = true
+							}.disabled(effects.smoothing != nil)
+						} label: {
+							Text("Effects").editorTouchRow(alignment: .leading)
+						}
+						.accessibilityFocused($pickerFocused)
 					}
 				}
+				if let settings = effects.loudness {
+					let loudness = effectBinding(\.loudness, current: settings)
+					Section {
+						slider("Playback Level", value: loudness.target, range: -30 ... -10, step: 1,
+							reading: number(loudness.wrappedValue.target) + " loudness units")
+						slider("Peak Limit", value: loudness.peak, range: -9 ... -1, step: 0.1,
+							reading: number(loudness.wrappedValue.peak) + " decibels")
+						Button("Remove Match Loudness", role: .destructive) { effects.loudness = nil }
+					} header: { Text("Match Loudness").accessibilityAddTraits(.isHeader) }
+				}
+				if let settings = effects.smoothing {
+					let smoothing = effectBinding(\.smoothing, current: settings)
+					Section {
+						slider("Start Smoothing Above", value: smoothing.threshold, range: -40 ... 0, step: 1,
+							reading: number(smoothing.wrappedValue.threshold) + " decibels")
+						slider("Smoothing Strength", value: smoothing.ratio, range: 1...10, step: 1,
+							reading: number(smoothing.wrappedValue.ratio) + " to 1")
+						Button("Remove Even Out Volume", role: .destructive) { effects.smoothing = nil }
+					} header: { Text("Even Out Volume").accessibilityAddTraits(.isHeader) }
+				}
 			}
+			.editorListMargins()
+			.accessibilityHidden(busy)
+			.disabled(busy)
+			.overlay {
+				if busy { LoadingStatusView(measuring ? "Measuring Loudness" : "Loading Track Preview", cancel: { dismiss() }) }
+			}
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+				ToolbarItem(placement: .principal) { Text(track.title).accessibilityAddTraits(.isHeader) }
+				ToolbarItem(placement: .confirmationAction) {
+					Button("Save") {
+						do { preview.pause(); try save(Float(volume), effects) }
+						catch { self.error = error.localizedDescription }
+					}.disabled(busy)
+				}
+			}
+			.toolbar(busy ? .hidden : .visible, for: .navigationBar)
 		}
 		.editorAppearance()
-		.interactiveDismissDisabled(analyzing)
-		.alert("Track Effects", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+		.accessibilityAction(.magicTap) { if !busy { preview.toggle() } }
+		.task {
+			preview.playhead.position = start
+			await preview.prepare(audition, audition: track)
+		}
+		.task(id: measuring) {
+			guard measuring else { return }
+			do {
+				try await preview.measureAudition(audition, channel: track.id)
+				try Task.checkCancellation()
+				measuring = false
+				updatePreview()
+				pickerFocused = true
+			} catch {
+				guard !Task.isCancelled else { return }
+				effects.loudness = nil
+				measuring = false
+				self.error = "Could not measure the audio. Reconnect the clip in Project Media."
+			}
+		}
+		.onChange(of: preview.ready) { if preview.ready { updatePreview() } }
+		.onChange(of: preview.failure) { error = preview.failure }
+		.onChange(of: volume) { updatePreview() }
+		.onChange(of: effects) { updatePreview() }
+		.onChange(of: bypass) { updatePreview() }
+		.onChange(of: phase) { if phase != .active { preview.pause() } }
+		.onDisappear { preview.cancelPreparation(); preview.pause() }
+		.alert(track.title, isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
 			Button("OK") { error = nil }
 		} message: { Text(error ?? "") }
 	}
 
-	private var matchLoudness: some View {
-		Group {
-			if analyzing {
-				LoadingStatusView("Measuring Loudness", cancel: { analyzing = false })
-					.task { await analyze() }
-			} else {
-				Form {
-					loudnessSlider("Playback Loudness", value: $target, range: -30 ... -10, step: 1, unit: "LUFS")
-					loudnessSlider("Peak Ceiling", value: $ceiling, range: -9 ... -1, step: 0.1, unit: "dBTP")
-				}
-				.editorListMargins()
-			}
-		}
-		.navigationTitle("Match Loudness")
-		.navigationBarTitleDisplayMode(.inline)
-		.navigationBarBackButtonHidden(analyzing)
-		.toolbar {
-			if !analyzing {
-				ToolbarItem(placement: .confirmationAction) { Button("Apply") { analyzing = true } }
-			}
-		}
+	private func effectBinding<T>(_ key: WritableKeyPath<TrackAudioEffects, T?>, current: T) -> Binding<T> {
+		// SwiftUI can read a slider during its section's removal animation.
+		Binding(get: { effects[keyPath: key] ?? current }, set: { value in
+			if effects[keyPath: key] != nil { effects[keyPath: key] = value }
+		})
 	}
 
-	private func loudnessSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, unit: String) -> some View {
-		let reading = value.wrappedValue.formatted(.number.precision(.fractionLength(0...1))) + " " + unit
-		return VStack(spacing: 0) {
+	private var busy: Bool { preview.preparing || measuring }
+	private var hasPreviewEffects: Bool {
+		if track.kind == .audio { return effects != TrackAudioEffects() }
+		return audition.audioPartner(for: track.id).flatMap { audition.trackEffects?[$0.id] } != nil
+	}
+
+	private func updatePreview() {
+		guard preview.ready, !measuring else { return }
+		var draft = audition
+		var levels = draft.trackVolumes ?? [:]
+		levels[track.id] = Float(volume)
+		draft.trackVolumes = levels
+		var settings = draft.trackEffects ?? [:]
+		if track.kind == .audio { settings[track.id] = bypass ? nil : effects }
+		else if bypass, let audio = draft.audioPartner(for: track.id) { settings[audio.id] = nil }
+		draft.trackEffects = settings
+		preview.updateMix(draft, solo: [], preview: true)
+	}
+
+	private func number(_ value: Double) -> String { value.formatted(.number.precision(.fractionLength(0...1))) }
+
+	private func slider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, reading: String) -> some View {
+		VStack(spacing: 0) {
 			LabeledContent(label, value: reading).accessibilityHidden(true)
 			Slider(value: value, in: range, step: step) { Text(label) }
 				.frame(minHeight: 48)
 				.accessibilityValue(reading)
-		}
-	}
-
-	private func analyze() async {
-		do {
-			var gains: [UUID: Float] = [:]
-			let bySource = Dictionary(grouping: audioClips, by: \.sourceID)
-			for source in project.sources {
-				guard let clips = bySource[source.id] else { continue }
-				try Task.checkCancellation()
-				let access = try await source.open()
-				defer { withExtendedLifetime(access) {} }
-				for clip in clips {
-					do {
-						gains[clip.id] = try await ClipLoudnessAnalyzer.gain(asset: access.asset, ranges: clip.ranges, target: target, ceiling: ceiling)
-					} catch {
-						try Task.checkCancellation()
-						throw ProjectFailure("Could not measure " + clip.displayName(for: source) + ". Open the clip in the Cutting Board to check its audio.")
-					}
-				}
-			}
-			try Task.checkCancellation()
-			guard analyzing else { return }
-			try save(volume, gains)
-		} catch {
-			if !Task.isCancelled {
-				analyzing = false
-				self.error = error.localizedDescription
-			}
 		}
 	}
 }
