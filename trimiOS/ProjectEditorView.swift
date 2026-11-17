@@ -364,6 +364,11 @@ struct ProjectEditorView: View {
 				.accessibilityFocused($focus, equals: source.id.uuidString)
 			}
 		}
+		TimelineChooser(selection: Binding(get: { activeTrack }, set: { track in
+			activeTrack = track
+			keyboardClip = nil
+			playback.playhead.navigationLabel = nil
+		}), options: project.tracks, title: \.title)
 		ForEach(project.tracks) { track in
 			Section {
 				let clips = project.displayedClips(on: track)

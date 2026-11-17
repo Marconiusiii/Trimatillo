@@ -99,13 +99,13 @@ private enum HelpTopic: String, CaseIterable {
 		case .describer:
 			[HelpSection("Describe a passage", numbered: true, [
 				"Open Describer in a project. Mark In at the beginning of the passage and Out at its end.",
-				"For a written entry, select Descriptive Transcript in Timeline. Choose New Description or press Command-Shift-D. In Written Description, enter Description Text and choose Save.",
+				"For a written entry, select Descriptive Transcript in Timeline Chooser. Choose New Description or press Command-Shift-D. In Written Description, enter Description Text and choose Save.",
 				"Choose Play In to Out to repeat the passage. Choose Stop Preview when you are finished.",
-				"For narration, select Audio Description in Timeline and choose New Description. In Audio Description, you can change Recording Name. Choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
+				"For narration, select Audio Description in Timeline Chooser and choose New Description. In Audio Description, you can change Recording Name. Choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
 				"Choose Play Take to hear the original recording. Speed Up to Fit trims silence from the end of the take. Your voice plays at its recorded speed if it fits before Out. Longer narration speeds up and keeps its pitch. Choose Trim at Out to play the original take up to Out. Play with Primary Audio previews the result against the passage.",
 				"Choose Save to add the recording to Audio Description. To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
 			]), HelpSection("Review and export", numbered: true, [
-				"Adjust the Timeline wheel to Descriptive Transcript or Audio Description. The entries under the timeline heading change as you turn the wheel. The playhead and markers stay in place.",
+				"Adjust the Timeline Chooser wheel to Descriptive Transcript or Audio Description. The entries under the timeline heading change as you turn the wheel. The playhead and markers stay in place.",
 				"Open an entry's menu or accessibility actions to go to its start, edit, or delete it. Return edits a focused entry with a keyboard. Mark a new range and choose Use Marked Range while editing to change its timing. Undo restores a deleted entry.",
 				"A transcript spans the marked range. A shorter recording ends when the take ends. Entries on the two timelines can be changed independently.",
 				"On the Audio Description timeline, choose Audio Ducking to lower project audio during descriptions. Set the amount and fade, then choose Save. Project playback and movie export use the same mix.",
@@ -195,7 +195,7 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Track navigation", [
 				"Switching tracks keeps the playhead in place. Playback and scrubbing include the full project mix.",
 				"At a shared cut, the edit point uses the name of the clip beginning there in either direction. Start, End, In, and Out are also stops.",
-				"In the main Editor, choose Select Track from a track heading. Use the Next Edit Point and Previous Edit Point actions on the step buttons to reach the same stops."
+				"In the main Editor, adjust Timeline Chooser to select the active track. You can also choose Select Track from a track heading. Use the Next Edit Point and Previous Edit Point actions on the step buttons to reach the same stops."
 			])]
 		case .projects:
 			[HelpSection("Create a project", numbered: true, [

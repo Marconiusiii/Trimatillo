@@ -10,6 +10,71 @@ struct DescriptionEntry: Identifiable {
 	var editing: Bool { transcript != nil || take != nil }
 }
 
+struct TimelineChooser<Option: Identifiable>: View {
+	@Binding var selection: Option.ID
+	let options: [Option]
+	let title: KeyPath<Option, String>
+	private let label = "Timeline Chooser"
+
+	var body: some View {
+		VStack(alignment: .leading, spacing: 0) {
+			Text(label)
+				.padding(.horizontal, 12)
+				.accessibilityHidden(true)
+			Wheel(selection: $selection, options: options, title: title, label: label)
+				.frame(height: 100)
+		}
+	}
+
+	private struct Wheel: UIViewRepresentable {
+		@Binding var selection: Option.ID
+		let options: [Option]
+		let title: KeyPath<Option, String>
+		let label: String
+
+		func makeCoordinator() -> Coordinator { Coordinator(self) }
+
+		func sizeThatFits(_ proposal: ProposedViewSize, uiView: UIPickerView, context: Context) -> CGSize? {
+			guard let width = proposal.width, let height = proposal.height else { return nil }
+			return CGSize(width: width, height: height)
+		}
+
+		func makeUIView(context: Context) -> UIPickerView {
+			let picker = UIPickerView()
+			picker.delegate = context.coordinator
+			picker.dataSource = context.coordinator
+			return picker
+		}
+
+		func updateUIView(_ picker: UIPickerView, context: Context) {
+			let previous = context.coordinator.wheel.options
+			context.coordinator.wheel = self
+			if !previous.elementsEqual(options, by: { $0.id == $1.id && $0[keyPath: title] == $1[keyPath: title] }) {
+				picker.reloadAllComponents()
+			}
+			if let row = options.firstIndex(where: { $0.id == selection }), picker.selectedRow(inComponent: 0) != row {
+				picker.selectRow(row, inComponent: 0, animated: false)
+			}
+		}
+
+		final class Coordinator: NSObject, UIPickerViewDataSource, UIPickerViewAccessibilityDelegate {
+			var wheel: Wheel
+			init(_ wheel: Wheel) { self.wheel = wheel }
+
+			func numberOfComponents(in pickerView: UIPickerView) -> Int { 1 }
+			func pickerView(_ pickerView: UIPickerView, numberOfRowsInComponent component: Int) -> Int { wheel.options.count }
+			func pickerView(_ pickerView: UIPickerView, accessibilityLabelForComponent component: Int) -> String? { wheel.label }
+			func pickerView(_ pickerView: UIPickerView, titleForRow row: Int, forComponent component: Int) -> String? {
+				wheel.options[row][keyPath: wheel.title]
+			}
+			func pickerView(_ pickerView: UIPickerView, didSelectRow row: Int, inComponent component: Int) {
+				guard wheel.options.indices.contains(row) else { return }
+				wheel.selection = wheel.options[row].id
+			}
+		}
+	}
+}
+
 struct DescriberView: View {
 	@Binding var project: EditingProject
 	@Binding var timeline: DescriptionTimeline
@@ -19,50 +84,82 @@ struct DescriberView: View {
 	let open: (UUID?) -> Void
 	let seek: (CMTime) -> Void
 	let save: (EditingProject, String) throws -> Void
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@State private var outgoingTimeline: DescriptionTimeline?
+	@State private var transitionStart: Date?
+	private let fadeDuration = 0.12
 	@State private var shared: ExportFile?
 	@State private var error: String?
 	@State private var ducking = false
 	@State private var mix = DescriptionDucking()
 
 	var body: some View {
-		Picker("Timeline", selection: $timeline) {
-			ForEach(DescriptionTimeline.allCases) { Text($0.rawValue).tag($0) }
-		}
-		.pickerStyle(.wheel)
+		TimelineChooser(selection: $timeline, options: DescriptionTimeline.allCases, title: \.rawValue)
 		.alert("Describer", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
 			Button("OK") {}
 		} message: { Text(error ?? "") }
 		Button("New Description") { open(nil) }
 			.buttonStyle(EditorButtonStyle())
 			.accessibilityFocused(focus, equals: "newDescription")
+		TimelineView(.animation(paused: transitionStart == nil || reduceMotion)) { frame in
+			let elapsed = transitionStart.map { max(0, frame.date.timeIntervalSince($0)) } ?? 2 * fadeDuration
+			let fadingOut = !reduceMotion && elapsed < fadeDuration
+			let visible = fadingOut ? outgoingTimeline ?? timeline : timeline
+			let opacity = reduceMotion ? 1 : min(1, abs(elapsed / fadeDuration - 1))
+			VStack(alignment: .leading, spacing: 0) { timelineContents(for: visible) }
+				.buttonStyle(.borderless)
+				.opacity(opacity * opacity * (3 - 2 * opacity))
+				.allowsHitTesting(visible == timeline)
+		}
+		.onChange(of: timeline) { previous, _ in
+			let now = Date.now
+			if !reduceMotion {
+				if transitionStart.map({ now.timeIntervalSince($0) >= fadeDuration }) ?? true {
+					outgoingTimeline = previous
+				}
+				transitionStart = now
+			}
+		}
+		.task(id: transitionStart) {
+			guard transitionStart != nil else { return }
+			do { try await Task.sleep(for: .seconds(2 * fadeDuration)) } catch { return }
+			transitionStart = nil
+			outgoingTimeline = nil
+		}
+	}
+
+	@ViewBuilder private func timelineContents(for timeline: DescriptionTimeline) -> some View {
 		switch timeline {
 		case .transcript: exportTranscriptButton
 		case .audio: duckingButton
 		}
-		Section {
-			ForEach(project.descriptionRows(timeline)) { row in
-				let actions = [
-					EditorMenuAction("Go to Start") { seek(row.start) },
-					EditorMenuAction("Edit " + timeline.rawValue) { open(row.id) },
-					EditorMenuAction("Delete " + timeline.rawValue) { delete(row.id) }
-				]
-				Menu { EditorMenuAction.buttons(actions) } label: {
-					VStack(alignment: .leading) {
-						Text(row.name)
-						Text(time(row.start) + " to " + time(row.end)).font(.subheadline)
-					}.editorTouchRow(alignment: .leading)
-				}
-				.contextMenu { EditorMenuAction.buttons(actions) }
-				.editorMenuActions(row.name, actions)
-				.accessibilityValue(time(row.start) + " to " + time(row.end))
-				.focused(keyboardFocus, equals: row.id.uuidString)
-				.accessibilityFocused(focus, equals: row.id.uuidString)
+		Text(timeline.rawValue)
+			.font(.headline)
+			.padding(12)
+			.accessibilityAddTraits(.isHeader)
+		ForEach(project.descriptionRows(timeline)) { row in
+			let actions = [
+				EditorMenuAction("Go to Start") { seek(row.start) },
+				EditorMenuAction("Edit " + timeline.rawValue) { open(row.id) },
+				EditorMenuAction("Delete " + timeline.rawValue) { delete(row.id) }
+			]
+			Menu { EditorMenuAction.buttons(actions) } label: {
+				VStack(alignment: .leading) {
+					Text(row.name)
+					Text(time(row.start) + " to " + time(row.end)).font(.subheadline)
+				}.editorTouchRow(alignment: .leading)
 			}
-		} header: { Text(timeline.rawValue).accessibilityAddTraits(.isHeader) }
+			.contextMenu { EditorMenuAction.buttons(actions) }
+			.editorMenuActions(row.name, actions)
+			.accessibilityValue(time(row.start) + " to " + time(row.end))
+			.focused(keyboardFocus, equals: row.id.uuidString)
+			.accessibilityFocused(focus, equals: row.id.uuidString)
+		}
 	}
 
 	private var duckingButton: some View {
 		Button("Audio Ducking") { mix = project.descriptionDucking ?? DescriptionDucking(); ducking = true }
+			.buttonStyle(EditorButtonStyle())
 			.accessibilityFocused(focus, equals: "ducking")
 			.sheet(isPresented: $ducking, onDismiss: { focus.wrappedValue = "ducking" }) {
 				NavigationStack {
@@ -102,6 +199,7 @@ struct DescriberView: View {
 				shared = file
 			} catch { self.error = error.localizedDescription }
 		}
+		.buttonStyle(EditorButtonStyle())
 		.disabled(project.descriptiveTranscript?.isEmpty != false)
 		.accessibilityFocused(focus, equals: "exportDescription")
 		.sheet(item: $shared, onDismiss: { focus.wrappedValue = "exportDescription" }) { file in
