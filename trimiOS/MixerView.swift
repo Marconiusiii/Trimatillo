@@ -12,6 +12,8 @@ struct MixerView: View {
 	@ObservedObject var playback: ProjectPlayback
 	let apply: (EditingProject, String, Bool) -> Void
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
+	@Environment(\.dynamicTypeSize) private var textSize
+	@ScaledMetric(relativeTo: .body) private var inlineChooserWidth: CGFloat = 190
 
 	private var channel: MixerChannel {
 		project.mixerChannels.first { $0.id == selection } ?? MixerChannel(id: TimelineTrack.primaryAudio.id, title: TimelineTrack.primaryAudio.title)
@@ -20,9 +22,20 @@ struct MixerView: View {
 	var body: some View {
 		Toggle("Loop", isOn: Binding(get: { playback.mixerLoop != nil }, set: { playback.setMixerLoop($0 ? project.captionRange : nil) }))
 			.disabled(project.captionRange == nil)
-		TimelineChooser(selection: Binding(get: { selection }, set: { id in
-			withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { selection = id }
-		}), options: project.mixerChannels, title: \.title)
+		Group {
+			if textSize.isAccessibilitySize {
+				stackedTrackControls
+			} else {
+				ViewThatFits(in: .horizontal) {
+					HStack(spacing: 0) {
+						trackChooser.frame(minWidth: inlineChooserWidth, idealWidth: inlineChooserWidth, maxWidth: .infinity)
+						trackButtons.fixedSize(horizontal: true, vertical: false)
+					}
+					stackedTrackControls
+				}
+			}
+		}
+		.listRowInsets(EdgeInsets())
 		Section {
 			MixerSlider(title: "Volume", level: project.trackVolumes?[channel.id] ?? 1) { level, commit in
 				var next = project
@@ -30,19 +43,6 @@ struct MixerView: View {
 				levels[channel.id] = level
 				next.trackVolumes = levels
 				apply(next, "Track Volume", commit)
-			}
-			HStack(spacing: 0) {
-				mixToggle("Mute", enabled: project.mutedTracks?.contains(channel.id) == true) { muted in
-					var next = project
-					var tracks = next.mutedTracks ?? []
-					if muted { tracks.insert(channel.id) } else { tracks.remove(channel.id) }
-					next.mutedTracks = tracks
-					apply(next, "Track Mute", true)
-				}
-				mixToggle("Solo", enabled: solo.contains(channel.id)) { enabled in
-					let id = channel.id
-					solo = enabled ? solo.union([id]) : solo.subtracting([id])
-				}
 			}
 			stereoSlider("Pan", key: \.pan, range: -1...1)
 			stereoSlider("Stereo Balance", key: \.balance, range: -1...1)
@@ -77,6 +77,36 @@ struct MixerView: View {
 			.padding(.horizontal, 12)
 		}
 	}
+
+	private var stackedTrackControls: some View {
+		VStack(spacing: 0) {
+			trackChooser
+			trackButtons
+		}
+	}
+
+	private var trackChooser: some View {
+		TimelineChooser(selection: Binding(get: { selection }, set: { id in
+			withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { selection = id }
+		}), options: project.mixerChannels, title: \.title)
+	}
+
+	private var trackButtons: some View {
+		HStack(spacing: 0) {
+			mixToggle("Mute", enabled: project.mutedTracks?.contains(channel.id) == true) { muted in
+				var next = project
+				var tracks = next.mutedTracks ?? []
+				if muted { tracks.insert(channel.id) } else { tracks.remove(channel.id) }
+				next.mutedTracks = tracks
+				apply(next, "Track Mute", true)
+			}
+			mixToggle("Solo", enabled: solo.contains(channel.id)) { enabled in
+				let id = channel.id
+				solo = enabled ? solo.union([id]) : solo.subtracting([id])
+			}
+		}
+	}
+
 	private var stereo: TrackStereoMix { project.trackStereo?[channel.id] ?? .neutral }
 
 	private func changeStereo<Value>(_ key: WritableKeyPath<TrackStereoMix, Value>, to value: Value, action: String, commit: Bool) {

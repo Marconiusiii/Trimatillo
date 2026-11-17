@@ -103,8 +103,9 @@ private enum HelpTopic: String, CaseIterable {
 		case .mixer:
 			[HelpSection("Mix voice and project audio", numbered: true, [
 				"Open Mixer or press Command-Shift-M. Set In and Out around a passage with voice and background sound. Turn on Loop and press Play to repeat it.",
-				"Choose Primary Audio in Timeline Chooser. Lower Volume while listening. Zero dB plays at the original level. Raise Volume up to 12 dB to bring up quieter sound. Choose the voice track to adjust its level. Command-Option-Up Arrow and Command-Option-Down Arrow cycle through the tracks.",
-				"Turn on Solo to listen to one or more tracks together. Leaving Mixer clears Solo. Turn on Mute to silence a track in the project and its export.",
+				"Choose a track in Timeline Chooser. Command-Option-Up Arrow and Command-Option-Down Arrow cycle through the tracks.",
+				"Turn on Mute to silence the selected track in the project and its export. Turn on Solo to listen to the selected track alone, or solo several tracks to hear them together. Leaving Mixer clears Solo.",
+				"Adjust Volume while listening. Zero dB plays the track at its original level. Raise Volume up to 12 dB to bring up quieter sound.",
 				"Adjust Pan to move the track left or right. Stereo Balance lowers the opposite channel. Center gives both channels their original position and balance.",
 				"Adjust Stereo Width to narrow or widen the sound. Choose Mono to bring both sides together or Original for the recorded width.",
 				"Use Channel Routing to keep both channels, send the left or right input to both sides, or swap left and right.",
