@@ -1065,8 +1065,9 @@ struct ProjectEditorView: View {
 	private func applyMixerEdit(_ next: EditingProject, action: String, commit: Bool) {
 		if commit {
 			do { try save(next, action: action) }
-			catch { playback.updateMix(project, solo: soloTracks); self.error = error.localizedDescription }
-		} else { playback.updateMix(next, solo: soloTracks) }
+			catch { self.error = error.localizedDescription }
+			playback.updateMix(project, solo: soloTracks)
+		} else { playback.updateMix(next, solo: soloTracks, preview: true) }
 	}
 
 	private func update(_ next: EditingProject) {
