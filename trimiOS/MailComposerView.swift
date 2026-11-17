@@ -9,7 +9,7 @@ struct MailComposerView: UIViewControllerRepresentable {
 		return "Version \(info?["CFBundleShortVersionString"] as? String ?? "") (\(info?["CFBundleVersion"] as? String ?? ""))"
 	}
 	static var bodyText: String {
-		"Trimatillo \(version)\n\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)\n\n"
+		"Trimatillo \(version)\n\(UIDevice.current.systemName) \(UIDevice.current.systemVersion)\n\nPlease describe the issue below.\n\n"
 	}
 	static var fallback: URL? {
 		var components = URLComponents()
