@@ -7,91 +7,236 @@ import Observation
 import SwiftUI
 import CoreImage
 
-// AVAudioMix handles attenuation and ducking. Add a post-effects gain stage only above unity.
-nonisolated private final class MixerBoost {
-	let gain: Float
-	private var format = AudioStreamBasicDescription()
+// Retain prepared stereo ranges for as long as a player, reader, or export uses its mix.
+private final class StereoMedia {
+	private struct RangeKey: Hashable {
+		let url: URL?
+		let assetID: ObjectIdentifier?
+		let trackID: CMPersistentTrackID
+		let start: CMTime
+		let duration: CMTime
+	}
+	private var ranges: [RangeKey: (file: ExportFile, asset: AVURLAsset, track: AVAssetTrack)] = [:]
 
-	init(_ gain: Float) { self.gain = gain }
+	func source(_ asset: AVAsset, track: AVAssetTrack, range: CMTimeRange) async throws -> (AVAssetTrack, CMTimeRange) {
+		let formats = try await track.load(.formatDescriptions)
+		if !formats.isEmpty && formats.allSatisfy({ CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mChannelsPerFrame == 2 }) {
+			return (track, range)
+		}
+		let url = (asset as? AVURLAsset)?.url
+		let key = RangeKey(url: url, assetID: url == nil ? ObjectIdentifier(asset) : nil, trackID: track.trackID, start: range.start, duration: range.duration)
+		let local = CMTimeRange(start: .zero, duration: range.duration)
+		if let cached = ranges[key] { return (cached.track, local) }
+		let file = try await Self.convert(asset, track: track, range: range, rate: formats.first.flatMap {
+			CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mSampleRate
+		} ?? 48000)
+		let stereoAsset = AVURLAsset(url: file.url)
+		guard let converted = try await stereoAsset.loadTracks(withMediaType: .audio).first else {
+			throw ProjectFailure("Could not prepare stereo audio. Reopen the project and try again.")
+		}
+		ranges[key] = (file, stereoAsset, converted)
+		return (converted, local)
+	}
+
+	@concurrent private static func convert(_ asset: AVAsset, track: AVAssetTrack, range: CMTimeRange, rate: Double) async throws -> ExportFile {
+		let file = try ExportFile(name: "Stereo", suffix: "caf")
+		let reader = try AVAssetReader(asset: asset)
+		let output = AVAssetReaderAudioMixOutput(audioTracks: [track], audioSettings: [
+			AVFormatIDKey: kAudioFormatLinearPCM, AVNumberOfChannelsKey: 2, AVSampleRateKey: rate,
+			AVLinearPCMBitDepthKey: 32, AVLinearPCMIsFloatKey: true, AVLinearPCMIsNonInterleaved: false
+		])
+		reader.timeRange = range
+		output.alwaysCopiesSampleData = false
+		guard reader.canAdd(output) else { throw CocoaError(.featureUnsupported) }
+		reader.add(output)
+		let audio = try AVAudioFile(forWriting: file.url, settings: [
+			AVFormatIDKey: kAudioFormatAppleLossless, AVNumberOfChannelsKey: 2,
+			AVSampleRateKey: rate, AVEncoderBitDepthHintKey: 24
+		], commonFormat: .pcmFormatFloat32, interleaved: true)
+		guard reader.startReading() else { throw reader.error ?? CocoaError(.fileReadCorruptFile) }
+		defer { reader.cancelReading() }
+		var buffer: AVAudioPCMBuffer?
+		while let sample = output.copyNextSampleBuffer() {
+			try Task.checkCancellation()
+			let count = CMSampleBufferGetNumSamples(sample)
+			guard count > 0 else { continue }
+			if Int(buffer?.frameCapacity ?? 0) < count {
+				buffer = AVAudioPCMBuffer(pcmFormat: audio.processingFormat, frameCapacity: AVAudioFrameCount(count))
+			}
+			guard let buffer else { throw CocoaError(.fileReadTooLarge) }
+			buffer.frameLength = AVAudioFrameCount(count)
+			let status = CMSampleBufferCopyPCMDataIntoAudioBufferList(sample, at: 0, frameCount: Int32(count), into: buffer.mutableAudioBufferList)
+			guard status == noErr else { throw NSError(domain: NSOSStatusErrorDomain, code: Int(status)) }
+			try audio.write(from: buffer)
+		}
+		guard reader.status == .completed else { throw reader.error ?? CocoaError(.fileReadCorruptFile) }
+		return file
+	}
+}
+
+/// One state per composition audio track; no waits or model access on the render callback.
+nonisolated private final class TrackMixProcessor: @unchecked Sendable {
+	private let media: StereoMedia
+	private let lock = NSLock()
+	private var target: StereoMixMatrix
+	private var current: StereoMixMatrix
+	private var format = AudioStreamBasicDescription()
+	private var step = StereoMixMatrix.silent
+	private var remaining = 0
+	private var destination: StereoMixMatrix
+
+	init(matrix: StereoMixMatrix, media: StereoMedia) {
+		self.media = media
+		target = matrix
+		current = matrix
+		destination = matrix
+	}
+	func update(_ matrix: StereoMixMatrix) {
+		lock.withLock { target = matrix }
+	}
+
+	func copyProcessor() -> TrackMixProcessor {
+		let matrix = lock.withLock { target }
+		return TrackMixProcessor(matrix: matrix, media: media)
+	}
 
 	func makeTap() throws -> MTAudioProcessingTap {
-		let owner = Unmanaged.passRetained(self)
 		var callbacks = MTAudioProcessingTapCallbacks(version: kMTAudioProcessingTapCallbacksVersion_0,
-			clientInfo: owner.toOpaque(), init: { _, info, storage in storage.pointee = info },
-			finalize: { Unmanaged<MixerBoost>.fromOpaque(MTAudioProcessingTapGetStorage($0)).release() },
+			clientInfo: Unmanaged.passRetained(self).toOpaque(),
+			init: { _, info, storage in storage.pointee = info },
+			finalize: { tap in Unmanaged<TrackMixProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).release() },
 			prepare: { tap, _, format in
-				Unmanaged<MixerBoost>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue().format = format.pointee
-			}, unprepare: nil, process: { tap, count, _, buffers, frames, flags in
-				guard MTAudioProcessingTapGetSourceAudio(tap, count, buffers, flags, nil, frames) == noErr else { frames.pointee = 0; return }
-				Unmanaged<MixerBoost>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue().process(buffers, frames: frames.pointee)
+				let state = Unmanaged<TrackMixProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
+				state.prepare(format.pointee)
+			}, unprepare: nil,
+			process: { tap, requested, _, buffers, frames, flags in
+				let status = MTAudioProcessingTapGetSourceAudio(tap, requested, buffers, flags, nil, frames)
+				guard status == noErr else { frames.pointee = 0; return }
+				let state = Unmanaged<TrackMixProcessor>.fromOpaque(MTAudioProcessingTapGetStorage(tap)).takeUnretainedValue()
+				state.process(buffers, frames: frames.pointee)
 			})
 		var tap: MTAudioProcessingTap?
-		let status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks, kMTAudioProcessingTapCreationFlag_PostEffects, &tap)
+		let status = MTAudioProcessingTapCreate(kCFAllocatorDefault, &callbacks,
+			kMTAudioProcessingTapCreationFlag_PostEffects, &tap)
 		guard status == noErr, let tap else {
-			owner.release()
-			throw ProjectFailure("Could not apply audio gain. Reopen the project and try again.")
+			Unmanaged<TrackMixProcessor>.fromOpaque(callbacks.clientInfo!).release()
+			throw NSError(domain: NSOSStatusErrorDomain, code: Int(status))
 		}
 		return tap
 	}
 
-	private func process(_ list: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
-		let flags = format.mFormatFlags
-		let channels = flags & kAudioFormatFlagIsNonInterleaved == 0 ? Int(format.mChannelsPerFrame) : 1
-		guard format.mFormatID == kAudioFormatLinearPCM, channels > 0 else { return }
-		let stride = Int(format.mBytesPerFrame) / channels
-		let bits = Int(format.mBitsPerChannel)
-		guard (1...8).contains(stride), bits > 0, bits <= stride * 8 else { return }
-		for buffer in UnsafeMutableAudioBufferListPointer(list) {
-			guard let data = buffer.mData else { continue }
-			let count = min(frames * channels, Int(buffer.mDataByteSize) / stride)
-			if flags & kAudioFormatFlagIsFloat != 0 && flags & kAudioFormatFlagIsBigEndian == 0 {
-				if stride == 4 && bits == 32 {
-					let samples = data.assumingMemoryBound(to: Float.self)
-					var scale = gain
-					vDSP_vsmul(samples, 1, &scale, samples, 1, vDSP_Length(count))
-				} else if stride == 8 && bits == 64 {
-					let samples = data.assumingMemoryBound(to: Double.self)
-					var scale = Double(gain)
-					vDSP_vsmulD(samples, 1, &scale, samples, 1, vDSP_Length(count))
-				}
-			} else if flags & kAudioFormatFlagIsFloat != 0 {
-				let bytes = data.assumingMemoryBound(to: UInt8.self)
-				for index in 0..<count {
-					let sample = UnsafeMutableRawBufferPointer(start: bytes.advanced(by: index * stride), count: stride)
-					if bits == 32 && stride == 4 {
-						let value = Float(bitPattern: UInt32(bigEndian: sample.loadUnaligned(as: UInt32.self)))
-						sample.storeBytes(of: (value * gain).bitPattern.bigEndian, as: UInt32.self)
-					} else if bits == 64 && stride == 8 {
-						let value = Double(bitPattern: UInt64(bigEndian: sample.loadUnaligned(as: UInt64.self)))
-						sample.storeBytes(of: (value * Double(gain)).bitPattern.bigEndian, as: UInt64.self)
-					}
-				}
-			} else if bits <= 32 {
-				let center = Int64(1) << (bits - 1)
-				let mask = UInt64(2 * center - 1)
-				let highShift = flags & kAudioFormatFlagIsAlignedHigh == 0 ? 0 : stride * 8 - bits
-				let signed = flags & kAudioFormatFlagIsSignedInteger != 0
-				for index in 0..<count {
-					let sample = data.advanced(by: index * stride).assumingMemoryBound(to: UInt8.self)
-					var raw: UInt64 = 0
-					for byte in 0..<stride {
-						let offset = flags & kAudioFormatFlagIsBigEndian == 0 ? byte : stride - 1 - byte
-						raw |= UInt64(sample[offset]) << (8 * byte)
-					}
-					raw = (raw >> highShift) & mask
-					var value = Int64(raw)
-					if !signed { value -= center }
-					else if value >= center { value -= center * 2 }
-					value = min(center - 1, max(-center, Int64((Double(value) * Double(gain)).rounded())))
-					raw = (UInt64(bitPattern: signed ? value : value + center) & mask) << highShift
-					for byte in 0..<stride {
-						let offset = flags & kAudioFormatFlagIsBigEndian == 0 ? byte : stride - 1 - byte
-						sample[offset] = UInt8(truncatingIfNeeded: raw >> (8 * byte))
-					}
-				}
+	func prepare(_ value: AudioStreamBasicDescription) { format = value }
+
+	func process(_ list: UnsafeMutablePointer<AudioBufferList>, frames: Int) {
+		if lock.try() {
+			let next = target
+			lock.unlock()
+			if next != destination {
+				destination = next
+				remaining = max(Int(format.mSampleRate * 0.01), 1)
+				let n = Double(remaining)
+				step = StereoMixMatrix(ll: (next.ll - current.ll) / n, lr: (next.lr - current.lr) / n,
+					rl: (next.rl - current.rl) / n, rr: (next.rr - current.rr) / n)
 			}
 		}
+		let buffers = UnsafeMutableAudioBufferListPointer(list)
+		let planar = format.mFormatFlags & kAudioFormatFlagIsNonInterleaved != 0
+		guard format.mFormatID == kAudioFormatLinearPCM,
+			(1...2).contains(format.mChannelsPerFrame),
+			buffers.count >= (planar ? Int(format.mChannelsPerFrame) : 1) else { return }
+		if remaining == 0 && current == StereoMixMatrix() { return }
+		guard format.mFormatFlags & kAudioFormatFlagIsFloat != 0,
+			format.mFormatFlags & kAudioFormatFlagIsBigEndian == 0,
+			format.mBitsPerChannel == 32, format.mChannelsPerFrame == 2,
+			let leftData = buffers[0].mData,
+			let rightData = buffers[planar ? 1 : 0].mData else {
+			processOtherPCM(buffers, frames: frames, planar: planar)
+			return
+		}
+		let left = leftData.assumingMemoryBound(to: Float.self)
+		let right = rightData.assumingMemoryBound(to: Float.self)
+		let stride = planar ? 1 : 2
+		let offset = planar ? 0 : 1
+		let capacity = min(Int(buffers[0].mDataByteSize), Int(buffers[planar ? 1 : 0].mDataByteSize)) / (4 * stride)
+		let count = min(frames, capacity)
+		if remaining == 0, current.lr == 0, current.rl == 0 {
+			var leftGain = Float(current.ll)
+			var rightGain = Float(current.rr)
+			vDSP_vsmul(left, vDSP_Stride(stride), &leftGain, left, vDSP_Stride(stride), vDSP_Length(count))
+			let rightStart = right.advanced(by: offset)
+			vDSP_vsmul(rightStart, vDSP_Stride(stride), &rightGain, rightStart, vDSP_Stride(stride), vDSP_Length(count))
+			return
+		}
+		for frame in 0..<count {
+			advanceMatrix()
+			let index = frame * stride
+			let l = Double(left[index]), r = Double(right[index+offset])
+			left[index] = Float(l * current.ll + r * current.lr)
+			right[index+offset] = Float(l * current.rl + r * current.rr)
+		}
 	}
+
+	private func advanceMatrix() {
+		if remaining > 0 {
+			current.ll += step.ll
+			current.lr += step.lr
+			current.rl += step.rl
+			current.rr += step.rr
+			remaining -= 1
+			if remaining == 0 { current = destination }
+		}
+	}
+
+	private func processOtherPCM(_ buffers: UnsafeMutableAudioBufferListPointer, frames: Int, planar: Bool) {
+		let channels = Int(format.mChannelsPerFrame)
+		let bytes = Int(format.mBytesPerFrame) / (planar ? 1 : channels)
+		let isFloat = format.mFormatFlags & kAudioFormatFlagIsFloat != 0
+		let bigEndian = format.mFormatFlags & kAudioFormatFlagIsBigEndian != 0
+		let signed = format.mFormatFlags & kAudioFormatFlagIsSignedInteger != 0
+		let bits = Int(format.mBitsPerChannel)
+		let shift = format.mFormatFlags & kAudioFormatFlagIsAlignedHigh == 0 ? 0 : bytes * 8 - bits
+		guard (1...8).contains(bytes), bits <= bytes * 8,
+			(isFloat && [32, 64].contains(bits) || !isFloat && bits > 0 && bits <= 32),
+			let first = buffers[0].mData else { return }
+		let stride = bytes * (planar ? 1 : channels)
+		let rightBuffer = planar && channels == 2 ? 1 : 0
+		guard let second = buffers[rightBuffer].mData else { return }
+		let capacity = min(Int(buffers[0].mDataByteSize), Int(buffers[rightBuffer].mDataByteSize)) / stride
+		let scale = pow(2, Double(bits - 1))
+		func read(_ pointer: UnsafeMutableRawPointer) -> Double {
+			var raw: UInt64 = 0
+			let data = pointer.assumingMemoryBound(to: UInt8.self)
+			for index in 0..<bytes { raw |= UInt64(data[index]) << (8 * (bigEndian ? bytes-1-index : index)) }
+			if isFloat { return bits == 32 ? Double(Float(bitPattern: UInt32(truncatingIfNeeded: raw))) : Double(bitPattern: raw) }
+			let mask = (UInt64(1) << bits) - 1
+			raw = (raw >> shift) & mask
+			if !signed { return (Double(raw) - scale) / scale }
+			if raw & (UInt64(1) << (bits-1)) != 0 { raw |= ~mask }
+			return Double(Int64(bitPattern: raw)) / scale
+		}
+		func write(_ value: Double, _ pointer: UnsafeMutableRawPointer) {
+			let raw: UInt64
+			if isFloat { raw = bits == 32 ? UInt64(Float(value).bitPattern) : value.bitPattern }
+			else {
+				let bounded = min(max(value.isFinite ? value : 0, -1), 1 - 1 / scale)
+				let integer = Int64((bounded * scale).rounded()) + (signed ? 0 : Int64(scale))
+				raw = (UInt64(bitPattern: integer) & ((UInt64(1) << bits) - 1)) << shift
+			}
+			let data = pointer.assumingMemoryBound(to: UInt8.self)
+			for index in 0..<bytes { data[index] = UInt8(truncatingIfNeeded: raw >> (8 * (bigEndian ? bytes-1-index : index))) }
+		}
+		for frame in 0..<min(frames, capacity) {
+			advanceMatrix()
+			let leftPointer = first.advanced(by: frame * stride)
+			let rightPointer = second.advanced(by: frame * stride + (planar || channels == 1 ? 0 : bytes))
+			let left = read(leftPointer), right = read(rightPointer)
+			let l = left * current.ll + right * current.lr
+			let r = left * current.rl + right * current.rr
+			if channels == 1 { write((l+r)/2, leftPointer) }
+			else { write(l, leftPointer); write(r, rightPointer) }
+		}
+	}
+
 }
 
 @MainActor final class ProjectPlayhead: ObservableObject {
@@ -126,9 +271,9 @@ private struct ScrubAudioWindow {
 		return Array(samples[offset..<end])
 	}
 
-	static func read(item: AVPlayerItem, at time: CMTime) async throws -> Self {
+	static func read(item: AVPlayerItem, mix: AVAudioMix?, at time: CMTime) async throws -> Self {
 		let start = max(0, frame(at: time) - 9600)
-		let samples = try await FrameAudioSamples.read(asset: item.asset, mix: item.audioMix,
+		let samples = try await FrameAudioSamples.read(asset: item.asset, mix: mix,
 			at: CMTime(value: start, timescale: 48000), length: 0.8)
 		return Self(startFrame: start, samples: samples)
 	}
@@ -221,7 +366,11 @@ private struct ScrubAudioWindow {
 		guard let item = player.currentItem else { return nil }
 		let forwardRate = max(0, speed)
 		pause()
-		return PreviewPlayback(item: item, start: position, rate: Float(forwardRate)) { [weak self] time in
+		let snapshot = AVPlayerItem(asset: item.asset)
+		snapshot.videoComposition = item.videoComposition
+		do { snapshot.audioMix = try independentMix(item) }
+		catch { failure = error.localizedDescription; return nil }
+		return PreviewPlayback(item: snapshot, start: position, rate: Float(forwardRate)) { [weak self] time in
 			self?.seek(time)
 		}
 	}
@@ -361,7 +510,7 @@ private struct ScrubAudioWindow {
 		reverse = Task {
 			do {
 				let hasAudio = try await !item.asset.loadTracks(withMediaType: .audio).isEmpty
-				try await ReverseAudioPlayback.run(from: start, speed: rate, asset: item.asset, mix: item.audioMix,
+				try await ReverseAudioPlayback.run(from: start, speed: rate, asset: item.asset, mix: independentMix(item),
 					hasAudio: hasAudio, engine: engine, node: node, format: format) { time in
 					playhead.position = time
 					player.seek(to: time, toleranceBefore: .zero, toleranceAfter: .zero, completionHandler: { _ in })
@@ -384,7 +533,7 @@ private struct ScrubAudioWindow {
 		let start = target == duration ? max(.zero, duration - frame) : target
 		framePreview = Task {
 			do {
-				let samples = try await FrameAudioSamples.read(asset: item.asset, mix: item.audioMix,
+				let samples = try await FrameAudioSamples.read(asset: item.asset, mix: independentMix(item),
 					at: start, length: min(frame, duration - start).seconds)
 				try Task.checkCancellation()
 				if let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: format) {
@@ -406,7 +555,7 @@ private struct ScrubAudioWindow {
 		guard window?.contains(target) != true else { return }
 		warmup?.cancel()
 		warmup = Task {
-			guard let decoded = try? await ScrubAudioWindow.read(item: item, at: target),
+			guard let decoded = try? await ScrubAudioWindow.read(item: item, mix: independentMix(item), at: target),
 				!Task.isCancelled, player.currentItem === item else { return }
 			window = decoded
 		}
@@ -463,7 +612,7 @@ private struct ScrubAudioWindow {
 					var samples = window?.grain(at: point)
 					if samples == nil {
 						let previousDirectionChanges = directionChanges
-						let decoded = try await ScrubAudioWindow.read(item: item, at: point)
+						let decoded = try await ScrubAudioWindow.read(item: item, mix: independentMix(item), at: point)
 						try Task.checkCancellation()
 						window = decoded
 						if let latest = pendingScrub, decoded.contains(latest) {
@@ -525,8 +674,12 @@ private struct ScrubAudioWindow {
 		let channel: String
 		var video: String?
 	}
+	private var stereoMedia = StereoMedia()
 	private var mixOutputs: [MixOutput] = []
+	private var liveProcessors: [CMPersistentTrackID: TrackMixProcessor] = [:]
 	private var narrationLevel: Float = 1
+	private var primaryStereo = TrackStereoMix.neutral
+	private var narrationStereo = TrackStereoMix.neutral
 	private var masterLevel: Float = 1
 	private var primaryLevels: [CMPersistentTrackID: Float] = [:]
 
@@ -537,25 +690,42 @@ private struct ScrubAudioWindow {
 		return (project.masterVolume ?? 1) * (project.trackVolumes?[output.channel] ?? 1) * videoLevel
 	}
 
-	private func setLevel(_ level: Float, on parameters: AVMutableAudioMixInputParameters) throws {
-		parameters.setVolume(min(1, level), at: .zero)
-		if level > 1 { parameters.audioTapProcessor = try MixerBoost(level).makeTap() }
+	private func setLevel(_ level: Float, stereo: TrackStereoMix = .neutral, on parameters: AVMutableAudioMixInputParameters, media: StereoMedia? = nil) throws {
+		let processor = TrackMixProcessor(matrix: stereo.matrix(gain: Double(level)), media: media ?? stereoMedia)
+		parameters.audioTapProcessor = try processor.makeTap()
 	}
 
-	private func audioMix(_ project: EditingProject, solo: Set<String>) throws -> AVAudioMix? {
+	private func audioMix(_ project: EditingProject, solo: Set<String>, live: Bool = false) throws -> AVAudioMix? {
 		guard !mixOutputs.isEmpty else { return nil }
 		let mix = AVMutableAudioMix()
+		var processors: [CMPersistentTrackID: TrackMixProcessor] = [:]
 		mix.inputParameters = try mixOutputs.map { output in
 			let parameters = AVMutableAudioMixInputParameters()
 			parameters.trackID = output.id
-			let volume = level(output, project: project, solo: solo)
-			try setLevel(volume, on: parameters)
+			let stereo = project.trackStereo?[output.channel] ?? .neutral
+			let processor = TrackMixProcessor(matrix: stereo.matrix(gain: Double(level(output, project: project, solo: solo))), media: stereoMedia)
+			parameters.audioTapProcessor = try processor.makeTap()
+			processors[output.id] = processor
 			if output.channel == EditingProject.descriptionMixID {
 				parameters.audioTimePitchAlgorithm = .timeDomain
 			} else {
-				project.descriptionDucking?.apply(to: parameters, volume: min(1, volume), takes: project.audioDescriptions ?? [], duration: duration)
+				project.descriptionDucking?.apply(to: parameters, volume: 1, takes: project.audioDescriptions ?? [], duration: duration)
 			}
 			return parameters
+		}
+		if live { liveProcessors = processors }
+		return mix
+	}
+
+	// Each AVFoundation consumer needs its own tap and render state.
+	private func independentMix(_ item: AVPlayerItem) throws -> AVAudioMix? {
+		guard let original = item.audioMix else { return nil }
+		let mix = AVMutableAudioMix()
+		mix.inputParameters = try original.inputParameters.map { parameters in
+			guard let copy = parameters.mutableCopy() as? AVMutableAudioMixInputParameters,
+				let processor = liveProcessors[parameters.trackID] else { throw CocoaError(.fileReadCorruptFile) }
+			copy.audioTapProcessor = try processor.copyProcessor().makeTap()
+			return copy
 		}
 		return mix
 	}
@@ -573,8 +743,10 @@ private struct ScrubAudioWindow {
 			node.stop()
 			audibleScrubPosition = nil
 		}
-		do { item.audioMix = try audioMix(project, solo: solo) }
-		catch { failure = error.localizedDescription; return }
+		for output in mixOutputs {
+			let stereo = project.trackStereo?[output.channel] ?? .neutral
+			liveProcessors[output.id]?.update(stereo.matrix(gain: Double(level(output, project: project, solo: solo))))
+		}
 		updatePrimaryLevels(project)
 		if let rewindRate {
 			playReverse(rewindRate, item: item)
@@ -583,12 +755,32 @@ private struct ScrubAudioWindow {
 	}
 
 	private func updatePrimaryLevels(_ project: EditingProject) {
+		primaryStereo = project.trackStereo?[TimelineTrack.primaryAudio.id] ?? .neutral
+		narrationStereo = project.trackStereo?[EditingProject.descriptionMixID] ?? .neutral
 		masterLevel = project.masterVolume ?? 1
 		narrationLevel = project.mutedTracks?.contains(EditingProject.descriptionMixID) == true ? 0 : masterLevel * (project.trackVolumes?[EditingProject.descriptionMixID] ?? 1)
 		primaryLevels = [:]
 		for output in mixOutputs where output.channel == TimelineTrack.primaryAudio.id {
 			primaryLevels[output.id] = level(output, project: project, solo: [])
 		}
+	}
+
+	private func insertTake(_ take: DescriptionTake, url: URL, in composition: AVMutableComposition, media: StereoMedia) async throws -> AVMutableAudioMixInputParameters {
+		let parameters = try await take.insert(in: composition, url: url)
+		guard let track = composition.track(withTrackID: parameters.trackID),
+			let segment = track.segments.first(where: { !$0.isEmpty }) else { throw CocoaError(.fileReadCorruptFile) }
+		let asset = AVURLAsset(url: url)
+		guard let input = try await asset.loadTracks(withMediaType: .audio).first else { throw CocoaError(.fileReadCorruptFile) }
+		let mapping = segment.timeMapping
+		let (source, range) = try await media.source(asset, track: input, range: mapping.source)
+		if source !== input {
+			track.removeTimeRange(mapping.target)
+			try track.insertTimeRange(range, of: source, at: mapping.target.start)
+			if range.duration != mapping.target.duration {
+				track.scaleTimeRange(CMTimeRange(start: mapping.target.start, duration: range.duration), toDuration: mapping.target.duration)
+			}
+		}
+		return parameters
 	}
 
 	func descriptionPreview(range: CMTimeRange, take: DescriptionTake?, url: URL?, duck: Bool = true) async throws -> AVPlayerItem {
@@ -603,14 +795,15 @@ private struct ScrubAudioWindow {
 		for track in try await composition.loadTracks(withMediaType: .audio) {
 			if let volume = primaryLevels[track.trackID] {
 				let mix = AVMutableAudioMixInputParameters(track: track)
-				try setLevel(volume, on: mix)
-				if duck, let take { descriptionDucking?.apply(to: mix, volume: min(1, volume), takes: [take], duration: range.end) }
+				try setLevel(volume, stereo: primaryStereo, on: mix)
+				if duck, let take { descriptionDucking?.apply(to: mix, volume: 1, takes: [take], duration: range.end) }
 				levels.append(mix)
 			} else { composition.removeTrack(track) }
 		}
 		if let take, let url {
-			let parameters = try await take.insert(in: composition, url: url)
-			try setLevel(duck ? narrationLevel : masterLevel, on: parameters)
+			let takeMedia = StereoMedia()
+			let parameters = try await insertTake(take, url: url, in: composition, media: takeMedia)
+			try setLevel(duck ? narrationLevel : masterLevel, stereo: duck ? narrationStereo : .neutral, on: parameters, media: takeMedia)
 			levels.append(parameters)
 		}
 		let preview = AVPlayerItem(asset: composition)
@@ -641,6 +834,8 @@ private struct ScrubAudioWindow {
 		playbackFailed = nil
 		player.replaceCurrentItem(with: nil)
 		media = [:]
+		liveProcessors = [:]
+		stereoMedia = StereoMedia()
 		duration = project.duration
 		preparing = duration > .zero
 		playhead.position = min(position, duration)
@@ -648,6 +843,7 @@ private struct ScrubAudioWindow {
 		let composition = AVMutableComposition()
 		var sources: [UUID: ProjectMediaAccess] = [:]
 		var layers: [(CMTimeRange, AVMutableVideoCompositionLayerInstruction)] = []
+		let preparedMedia = StereoMedia()
 		var builtOutputs: [MixOutput] = []
 		var currentName = ""
 		do {
@@ -683,7 +879,8 @@ private struct ScrubAudioWindow {
 						for range in clip.ranges.map(\.range) {
 							let overlap = range.intersection(available)
 							if overlap.isValid && !overlap.isEmpty {
-								try output.insertTimeRange(overlap, of: input, at: cursor + (overlap.start - range.start))
+								let (sourceTrack, sourceRange) = type == .audio ? try await preparedMedia.source(access.asset, track: input, range: overlap) : (input, overlap)
+								try output.insertTimeRange(sourceRange, of: sourceTrack, at: cursor + (overlap.start - range.start))
 							}
 							cursor = cursor + range.duration
 						}
@@ -706,7 +903,7 @@ private struct ScrubAudioWindow {
 				try Task.checkCancellation()
 				currentName = take.name
 				let url = try ProjectStorage.recording(take.recording, project: project.id)
-				let parameters = try await take.insert(in: composition, url: url)
+				let parameters = try await insertTake(take, url: url, in: composition, media: preparedMedia)
 				builtOutputs.append(MixOutput(id: parameters.trackID, channel: EditingProject.descriptionMixID))
 			}
 			if composition.duration > duration { composition.removeTimeRange(CMTimeRange(start: duration, end: composition.duration)) }
@@ -714,6 +911,7 @@ private struct ScrubAudioWindow {
 			guard generation == request else { return }
 			if composition.duration < duration { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: duration)) }
 			let item = AVPlayerItem(asset: composition)
+			stereoMedia = preparedMedia
 			mixOutputs = builtOutputs
 			if !builtOutputs.isEmpty {
 				do { try configureAudioSession() } catch {
@@ -721,7 +919,7 @@ private struct ScrubAudioWindow {
 					failure = "Could not prepare project audio. Check the audio output and reopen the project."
 					return
 				}
-				item.audioMix = try audioMix(project, solo: [])
+				item.audioMix = try audioMix(project, solo: [], live: true)
 			}
 			if !layers.isEmpty, let picture = project.picture {
 				let boundaries = ([CMTime.zero, duration] + layers.flatMap { [$0.0.start, $0.0.end] }).sorted()

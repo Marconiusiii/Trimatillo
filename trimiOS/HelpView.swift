@@ -72,7 +72,7 @@ private enum HelpTopic: String, CaseIterable {
 
 	var introduction: String {
 		switch self {
-		case .mixer: "Adjust the level of each audio track while listening to the project."
+		case .mixer: "Adjust the volume and stereo position of each track while listening to the project."
 		case .voicer: "Record a voice-over take and place it at a chosen time in your project."
 		case .describer: "Describe what happens in a passage with a timed transcript, a spoken recording, or both."
 		case .captioner: "Write timed text for dialogue, music, and sounds as you play through your project."
@@ -105,8 +105,11 @@ private enum HelpTopic: String, CaseIterable {
 				"Open Mixer or press Command-Shift-M. Set In and Out around a passage with voice and background sound. Turn on Loop and press Play to repeat it.",
 				"Choose Primary Audio in Timeline Chooser. Lower Volume while listening. Zero dB plays at the original level. Raise Volume up to 12 dB to bring up quieter sound. Choose the voice track to adjust its level. Command-Option-Up Arrow and Command-Option-Down Arrow cycle through the tracks.",
 				"Turn on Solo to listen to one or more tracks together. Leaving Mixer clears Solo. Turn on Mute to silence a track in the project and its export.",
-				"Adjust Master Volume to change the level of the whole mix. Reset Track Mix restores the selected track to zero dB and clears Mute and Solo. Choose Undo to restore a saved level or mute setting.",
-				"Choose Export in Project Actions to render the saved levels, mute settings, and description ducking. Solo applies only while listening in Mixer."
+				"Adjust Pan to move the track left or right. Stereo Balance lowers the opposite channel. Center gives both channels their original position and balance.",
+				"Adjust Stereo Width to narrow or widen the sound. Choose Mono to bring both sides together or Original for the recorded width.",
+				"Use Channel Routing to keep both channels, send the left or right input to both sides, or swap left and right.",
+				"Adjust Master Volume to change the level of the whole mix. Reset Track Mix restores the original volume, stereo position, width, and routing, and clears Mute and Solo. Choose Undo to reverse a saved mix adjustment.",
+				"Choose Export in Project Actions to render the saved levels, stereo settings, mute settings, and description ducking. Solo applies only while listening in Mixer."
 			])]
 		case .voicer:
 			[HelpSection("Record a take", numbered: true, [

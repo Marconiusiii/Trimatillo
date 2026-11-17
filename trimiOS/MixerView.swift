@@ -24,14 +24,13 @@ struct MixerView: View {
 			withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.18)) { selection = id }
 		}), options: project.mixerChannels, title: \.title)
 		Section {
-			MixerLevelSlider(title: "Volume", level: project.trackVolumes?[channel.id] ?? 1) { level, commit in
+			MixerSlider(title: "Volume", level: project.trackVolumes?[channel.id] ?? 1) { level, commit in
 				var next = project
 				var levels = next.trackVolumes ?? [:]
 				levels[channel.id] = level
 				next.trackVolumes = levels
 				apply(next, "Track Volume", commit)
 			}
-			.id(channel.id)
 			HStack(spacing: 0) {
 				mixToggle("Mute", enabled: project.mutedTracks?.contains(channel.id) == true) { muted in
 					var next = project
@@ -45,8 +44,18 @@ struct MixerView: View {
 					solo = enabled ? solo.union([id]) : solo.subtracting([id])
 				}
 			}
+			stereoSlider("Pan", key: \.pan, range: -1...1)
+			stereoSlider("Stereo Balance", key: \.balance, range: -1...1)
+			stereoSlider("Stereo Width", key: \.width, range: 0...2)
+			Picker("Channel Routing", selection: Binding(get: { stereo.routing }, set: { routing in
+				changeStereo(\.routing, to: routing, action: "Channel Routing", commit: true)
+			})) {
+				ForEach(TrackChannelRouting.allCases) { route in Text(route.title).tag(route) }
+			}
+			.pickerStyle(.menu)
 			Button("Reset Track Mix") {
 				var next = project
+				next.trackStereo?.removeValue(forKey: channel.id)
 				next.trackVolumes?.removeValue(forKey: channel.id)
 				next.mutedTracks?.remove(channel.id)
 				solo.remove(channel.id)
@@ -57,9 +66,10 @@ struct MixerView: View {
 			Text(channel.title).font(.headline).accessibilityAddTraits(.isHeader)
 				.contentTransition(.opacity)
 		}
+		.id(channel.id)
 		.listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
 		Section {
-			MixerLevelSlider(title: "Master Volume", level: project.masterVolume ?? 1) { level, commit in
+			MixerSlider(title: "Master Volume", level: project.masterVolume ?? 1) { level, commit in
 				var next = project
 				next.masterVolume = level
 				apply(next, "Master Volume", commit)
@@ -67,6 +77,33 @@ struct MixerView: View {
 			.padding(.horizontal, 12)
 		}
 	}
+	private var stereo: TrackStereoMix { project.trackStereo?[channel.id] ?? .neutral }
+
+	private func changeStereo<Value>(_ key: WritableKeyPath<TrackStereoMix, Value>, to value: Value, action: String, commit: Bool) {
+		var next = project
+		var settings = stereo
+		settings[keyPath: key] = value
+		var tracks = next.trackStereo ?? [:]
+		tracks[channel.id] = settings == .neutral ? nil : settings
+		next.trackStereo = tracks.isEmpty ? nil : tracks
+		apply(next, action, commit)
+	}
+
+	private func stereoSlider(_ title: String, key: WritableKeyPath<TrackStereoMix, Double>, range: ClosedRange<Double>) -> some View {
+		MixerSlider(title: title, value: stereo[keyPath: key], range: range, step: 0.01, display: { value in
+			let percent = Int((value * 100).rounded())
+			if key == \.width {
+				if percent == 0 { return "Mono" }
+				if percent == 100 { return "Original" }
+				return "\(percent)%"
+			}
+			if percent == 0 { return "Center" }
+			return "\(abs(percent))% " + (percent < 0 ? "left" : "right")
+		}) { value, commit in
+			changeStereo(key, to: value, action: title, commit: commit)
+		}
+	}
+
 	private func mixToggle(_ title: String, enabled: Bool, change: @escaping (Bool) -> Void) -> some View {
 		Toggle(isOn: Binding(get: { enabled }, set: change)) {
 			HStack {
@@ -80,42 +117,46 @@ struct MixerView: View {
 
 }
 
-private struct MixerLevelSlider: View {
+private struct MixerSlider: View {
 	let title: String
-	let level: Float
-	let change: (Float, Bool) -> Void
+	let value: Double
+	let range: ClosedRange<Double>
+	let step: Double
+	let display: (Double) -> String
+	let change: (Double, Bool) -> Void
 	@State private var dragging = false
 	@State private var draft: Double?
-
-	private var decibels: Double {
-		draft ?? (level > 0 ? max(-60, 20 * log10(Double(level))) : -60.5)
-	}
-
-	private func linear(_ db: Double) -> Float {
-		db < -60 ? 0 : Float(pow(10, db / 20))
-	}
 
 	private func finish() {
 		dragging = false
 		if let draft {
-			change(linear(draft), true)
+			change(draft, true)
 			self.draft = nil
 		}
 	}
 
 	var body: some View {
-		let value = decibels < -60 ? "Silent" : String(format: "%.1f dB", decibels)
+		let label = display(draft ?? value)
 		VStack(spacing: 0) {
-			LabeledContent(title, value: value).accessibilityHidden(true)
-			Slider(value: Binding(get: { decibels }, set: { db in
-				if dragging { draft = db }
-				change(linear(db), !dragging)
-			}), in: -60.5...12, step: 0.5, onEditingChanged: { editing in
+			LabeledContent(title, value: label).accessibilityHidden(true)
+			Slider(value: Binding(get: { draft ?? value }, set: { newValue in
+				if dragging { draft = newValue }
+				change(newValue, !dragging)
+			}), in: range, step: step, onEditingChanged: { editing in
 				if editing { dragging = true } else { finish() }
 			}) { Text(title) }
 			.frame(minHeight: 48)
-			.accessibilityValue(value)
+			.accessibilityValue(label)
 		}
 		.onDisappear { finish() }
+	}
+}
+
+private extension MixerSlider {
+	init(title: String, level: Float, change: @escaping (Float, Bool) -> Void) {
+		self.init(title: title, value: level > 0 ? max(-60, 20 * log10(Double(level))) : -60.5,
+			range: -60.5...12, step: 0.5, display: { $0 < -60 ? "Silent" : String(format: "%.1f dB", $0) }) { db, commit in
+			change(db < -60 ? 0 : Float(pow(10, db / 20)), commit)
+		}
 	}
 }

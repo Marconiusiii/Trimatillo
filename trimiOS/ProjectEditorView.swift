@@ -1042,7 +1042,7 @@ struct ProjectEditorView: View {
 		var next = next
 		if let point = next.markIn, point.time > next.duration { next.markIn = nil }
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
-		next.version = 7
+		next.version = 8
 		try ProjectLibrary.save(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
@@ -1075,7 +1075,7 @@ struct ProjectEditorView: View {
 			Dictionary(uniqueKeysWithValues: model.sources.filter { usedSources.contains($0.id) }.map { ($0.id, $0.reference) })
 		}
 		let rebuild = project.audioDescriptions != next.audioDescriptions || project.descriptionDucking != next.descriptionDucking || project.picture != next.picture || project.placements != next.placements || timelineReferences(project) != timelineReferences(next) || project.tracks != next.tracks
-		if !rebuild && (project.trackVolumes != next.trackVolumes || project.masterVolume != next.masterVolume || project.mutedTracks != next.mutedTracks) {
+		if !rebuild && (project.trackStereo != next.trackStereo || project.trackVolumes != next.trackVolumes || project.masterVolume != next.masterVolume || project.mutedTracks != next.mutedTracks) {
 			playback.updateMix(next, solo: soloTracks)
 		}
 		if playback.mixerLoop != nil { playback.setMixerLoop(next.captionRange) }
