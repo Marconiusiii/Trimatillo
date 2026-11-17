@@ -20,6 +20,7 @@ extension DirectTouchScrubbing {
 }
 
 struct CuttingBoardTouchSurface: UIViewRepresentable {
+	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	@AppStorage("directTouchScrubbing", store: EditorPreferences.shared) private var scrubbing = DirectTouchScrubbing.absolute
 	let session: CuttingBoardSession
@@ -31,12 +32,14 @@ struct CuttingBoardTouchSurface: UIViewRepresentable {
 		view.projectActions = projectActions
 		view.controlColor = color
 		view.scrubbing = scrubbing
+		view.format = format
 		view.updatePosition()
 	}
 }
 
 @MainActor @objc protocol TimelineGestureHandling {
 	func closeEditor()
+	func announcePosition()
 	func toggle()
 	func scrub(_ hold: UILongPressGestureRecognizer)
 	func swipe(_ gesture: UISwipeGestureRecognizer)
@@ -64,6 +67,10 @@ extension TimelineGestureHandling where Self: UIView {
 
 		closeTap.require(toFail: hold)
 		addGestureRecognizer(hold)
+		let positionTap = UITapGestureRecognizer(target: self, action: #selector(announcePosition))
+		positionTap.numberOfTouchesRequired = 3
+		addGestureRecognizer(positionTap)
+
 		let horizontal: [UISwipeGestureRecognizer.Direction] = [.left, .right]
 		let all = horizontal + [.up, .down]
 		let groups = [all, projectTimeline && !captioning ? all : horizontal + [.down], all,
@@ -75,6 +82,7 @@ extension TimelineGestureHandling where Self: UIView {
 				swipe.numberOfTouchesRequired = count
 				swipe.direction = direction
 				if count == 1 { swipe.require(toFail: hold) }
+				if count == 3 { positionTap.require(toFail: swipe) }
 				addGestureRecognizer(swipe)
 			}
 		}
@@ -96,6 +104,7 @@ final class TimelineSurface: UIView, TimelineGestureHandling {
 	private var origin: CMTime = .zero
 	private let onClose: (() -> Void)?
 	var scrubbing = DirectTouchScrubbing.absolute
+	var format = TimecodeFormat.milliseconds
 	private var scrubStartX: CGFloat = 0
 	private var scrubGeneration: Int?
 	private var previousSize = CGSize.zero
@@ -131,6 +140,12 @@ final class TimelineSurface: UIView, TimelineGestureHandling {
 
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError() }
+
+	@objc func announcePosition() {
+		let time = session.rate > 0 && session.player.rate > 0 ? session.player.currentTime() : session.position
+		let position = time.isNumeric ? min(session.duration, max(.zero, time)) : session.position
+		UIAccessibility.post(notification: .announcement, argument: session.timecode(position, format: format))
+	}
 
 	@objc private func openJoin() { session.showJoin() }
 

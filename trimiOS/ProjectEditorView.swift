@@ -572,7 +572,7 @@ struct ProjectEditorView: View {
 
 	private var directSurface: ProjectTouchSurface {
 		let edit: (() -> Void)? = tool == .describer ? { descriptionTap() } : nil
-		return ProjectTouchSurface(playhead: playback.playhead, playback: playback, duration: project.duration,
+		return ProjectTouchSurface(playhead: playback.playhead, playback: playback, formatTime: time, duration: project.duration,
 					captioning: tool == .captioner, editDescription: edit, trackName: touchTrackName, mode: scrubMode, close: { directTouch = false }, swipe: projectSwipe)
 	}
 
@@ -2097,6 +2097,7 @@ private struct ProjectSliderControl: UIViewRepresentable {
 private struct ProjectTouchSurface: UIViewRepresentable {
 	@ObservedObject var playhead: ProjectPlayhead
 	let playback: ProjectPlayback
+	let formatTime: (CMTime) -> String
 	let duration: CMTime
 	let captioning: Bool
 	let editDescription: (() -> Void)?
@@ -2148,6 +2149,11 @@ private struct ProjectTouchSurface: UIViewRepresentable {
 			cursor.backgroundColor = UIColor(EditorTheme.playhead).resolvedColor(with: traitCollection).cgColor
 			cursor.frame = CGRect(x: max(0, bounds.width - 3) * min(1, max(0, fraction)), y: 0, width: 3, height: bounds.height)
 			CATransaction.commit()
+		}
+
+		@objc func announcePosition() {
+			guard let control else { return }
+			UIAccessibility.post(notification: .announcement, argument: control.formatTime(control.playback.position))
 		}
 
 		@objc func descriptionTap() { control?.editDescription?() }

@@ -135,6 +135,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe left to rewind. Repeat to increase speed.",
 				"Swipe down to open Record Voice Over at the playhead. After Add to Project or Cancel, VoiceOver announces In Direct Touch Editor when the surface is ready."
 			]), HelpSection("Three fingers in Voicer Direct Touch", [
+				"Tap once to hear the current playhead position.",
 				"Swipe right to go to the next voice-over edit point or project marker.",
 				"Swipe left to go to the previous voice-over edit point or project marker.",
 				"Swipe down to undo a project edit.",
@@ -170,6 +171,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe up to open Written Description for the marked passage. Description Text is ready to type.",
 				"Swipe down to open Audio Description for the marked passage. Choose Record to start a take."
 			]), HelpSection("Three fingers in Describer Direct Touch", [
+				"Tap once to hear the current playhead position.",
 				"Swipe right to reach the next entry boundary or project End.",
 				"Swipe left to reach the previous entry boundary or project Start.",
 				"Swipe down to undo.",
@@ -200,6 +202,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe left to rewind. Repeat to increase rewind speed.",
 				"Swipe down to open New Caption for the marked passage. Cancel returns to the surface without saving."
 			]), HelpSection("Three fingers in Captioner Direct Touch", [
+				"Tap once to hear the current playhead position.",
 				"Swipe right to move to the next caption start, marker, or project boundary.",
 				"Swipe left to move to the previous caption start, marker, or project boundary.",
 				"Swipe down to undo the last project change.",
@@ -232,6 +235,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe up to select the track above and load its edit points.",
 				"Swipe down to select the track below and load its edit points. From Primary Video, one swipe down selects Primary Audio Track."
 			]), HelpSection("Three fingers", [
+				"Tap once to hear the current playhead position.",
 				"Swipe right to snap to the next edit point on the selected track.",
 				"Swipe left to snap to the previous edit point on the selected track.",
 				"Swipe down to undo the last project edit.",
@@ -407,6 +411,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe left to rewind. Repeat to increase the rewind speed through the same five speeds.",
 				"Swipe down to delete the marked range. When material remains on both sides, the two sections meet at a join."
 			]), HelpSection("Three fingers", [
+				"Tap once to hear the current playhead position.",
 				"Swipe right to move to the next join, marker, or end of the clip.",
 				"Swipe left to move to the previous join, marker, or start of the clip.",
 				"Swipe down to undo the last edit. Repeat to undo earlier edits. VoiceOver announces the action after each Undo.",
