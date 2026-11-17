@@ -216,13 +216,22 @@ struct ProjectEditorView: View {
 				}
 			}
 			.sheet(item: $effects, onDismiss: { focus = trigger }) { track in
-				TrackEffectsSheet(track: track, volume: project.trackVolumes?[track.id] ?? 1) { volume in
+				TrackEffectsSheet(track: track, project: project, volume: project.trackVolumes?[track.id] ?? 1) { volume, gains in
 					var next = project
-					var levels = next.trackVolumes ?? [:]
-					levels[track.id] = volume
-					next.trackVolumes = levels
-					do { try save(next, action: "Track Effects"); effects = nil; return nil }
-					catch { return error.localizedDescription }
+					if volume != (project.trackVolumes?[track.id] ?? 1) {
+						var levels = next.trackVolumes ?? [:]
+						levels[track.id] = volume
+						next.trackVolumes = levels
+					}
+					for index in next.placements.indices {
+						if let gain = gains?[next.placements[index].id] {
+							next.placements[index].loudnessGain = gain == 1 ? nil : gain
+						}
+					}
+					let movesFocus = next.placements != project.placements
+					try save(next, action: gains == nil ? "Track Effects" : "Match Loudness")
+					if movesFocus { placementFocus = track.id }
+					effects = nil
 				}
 			}
 			.fileImporter(isPresented: $pickingFile, allowedContentTypes: [.movie, .audio]) { result in
@@ -1042,7 +1051,7 @@ struct ProjectEditorView: View {
 		var next = next
 		if let point = next.markIn, point.time > next.duration { next.markIn = nil }
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
-		next.version = 8
+		next.version = 9
 		try ProjectLibrary.save(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
@@ -1476,10 +1485,18 @@ private struct ClipDropTarget: ViewModifier {
 
 private struct TrackEffectsSheet: View {
 	let track: TimelineTrack
+	let project: EditingProject
 	@State var volume: Float
-	let save: (Float) -> String?
+	let save: (Float, [UUID: Float]?) throws -> Void
 	@State private var error: String?
+	@State private var target = -16.0
+	@State private var ceiling = -1.0
+	@State private var analyzing = false
 	@Environment(\.dismiss) private var dismiss
+
+	private var audioClips: [ProjectPlacement] {
+		project.displayedClips(on: track).filter { $0.omitAudio != true }
+	}
 
 	var body: some View {
 		NavigationStack {
@@ -1488,17 +1505,92 @@ private struct TrackEffectsSheet: View {
 					Slider(value: $volume, in: 0...EditingProject.maximumMixerLevel, step: 0.01) { Text("Volume") }
 						.accessibilityValue(volume.formatted(.percent))
 					LabeledContent("Volume", value: volume.formatted(.percent))
+						.accessibilityHidden(true)
+					if track.kind == .audio {
+						NavigationLink("Match Loudness") { matchLoudness }
+							.disabled(audioClips.isEmpty)
+					}
 				} header: { Text(track.title).accessibilityAddTraits(.isHeader) }
-				if let error { Text(error) }
 			}
 			.editorListMargins()
 			.navigationTitle("Track Effects")
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .topBarLeading) { Button("Cancel") { dismiss() } }
-				ToolbarItem(placement: .topBarTrailing) { Button("Save") { error = save(volume) } }
+				ToolbarItem(placement: .topBarTrailing) {
+					Button("Save") {
+						do { try save(volume, nil) } catch { self.error = error.localizedDescription }
+					}
+				}
 			}
-		}.editorAppearance()
+		}
+		.editorAppearance()
+		.interactiveDismissDisabled(analyzing)
+		.alert("Track Effects", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+			Button("OK") { error = nil }
+		} message: { Text(error ?? "") }
+	}
+
+	private var matchLoudness: some View {
+		Group {
+			if analyzing {
+				LoadingStatusView("Measuring Loudness", cancel: { analyzing = false })
+					.task { await analyze() }
+			} else {
+				Form {
+					loudnessSlider("Playback Loudness", value: $target, range: -30 ... -10, step: 1, unit: "LUFS")
+					loudnessSlider("Peak Ceiling", value: $ceiling, range: -9 ... -1, step: 0.1, unit: "dBTP")
+				}
+				.editorListMargins()
+			}
+		}
+		.navigationTitle("Match Loudness")
+		.navigationBarTitleDisplayMode(.inline)
+		.navigationBarBackButtonHidden(analyzing)
+		.toolbar {
+			if !analyzing {
+				ToolbarItem(placement: .confirmationAction) { Button("Apply") { analyzing = true } }
+			}
+		}
+	}
+
+	private func loudnessSlider(_ label: String, value: Binding<Double>, range: ClosedRange<Double>, step: Double, unit: String) -> some View {
+		let reading = value.wrappedValue.formatted(.number.precision(.fractionLength(0...1))) + " " + unit
+		return VStack(spacing: 0) {
+			LabeledContent(label, value: reading).accessibilityHidden(true)
+			Slider(value: value, in: range, step: step) { Text(label) }
+				.frame(minHeight: 48)
+				.accessibilityValue(reading)
+		}
+	}
+
+	private func analyze() async {
+		do {
+			var gains: [UUID: Float] = [:]
+			let bySource = Dictionary(grouping: audioClips, by: \.sourceID)
+			for source in project.sources {
+				guard let clips = bySource[source.id] else { continue }
+				try Task.checkCancellation()
+				let access = try await source.open()
+				defer { withExtendedLifetime(access) {} }
+				for clip in clips {
+					do {
+						gains[clip.id] = try await ClipLoudnessAnalyzer.gain(asset: access.asset, ranges: clip.ranges, target: target, ceiling: ceiling)
+					} catch {
+						try Task.checkCancellation()
+						throw ProjectFailure("Could not measure " + clip.displayName(for: source) + ". Open the clip in the Cutting Board to check its audio.")
+					}
+				}
+			}
+			try Task.checkCancellation()
+			guard analyzing else { return }
+			try save(volume, gains)
+		} catch {
+			if !Task.isCancelled {
+				analyzing = false
+				self.error = error.localizedDescription
+			}
+		}
 	}
 }
 

@@ -680,6 +680,7 @@ private struct ScrubAudioWindow {
 		let id: CMPersistentTrackID
 		let channel: String
 		var video: String?
+		var clipGain: Float = 1
 	}
 	private var stereoMedia = StereoMedia()
 	private var mixOutputs: [MixOutput] = []
@@ -705,7 +706,7 @@ private struct ScrubAudioWindow {
 		guard project.mutedTracks?.contains(output.channel) != true,
 			solo.isEmpty || solo.contains(output.channel) else { return 0 }
 		let videoLevel = output.video.flatMap { project.trackVolumes?[$0] } ?? 1
-		return (project.masterVolume ?? 1) * (project.trackVolumes?[output.channel] ?? 1) * videoLevel
+		return output.clipGain * (project.trackVolumes?[output.channel] ?? 1) * videoLevel * (project.masterVolume ?? 1)
 	}
 
 	private func setLevel(_ level: Float, stereo: TrackStereoMix = .neutral, on parameters: AVMutableAudioMixInputParameters, media: StereoMedia? = nil) throws {
@@ -892,7 +893,8 @@ private struct ScrubAudioWindow {
 		var currentName = ""
 		do {
 			for track in project.tracks {
-				var outputs: [AVMediaType: AVMutableCompositionTrack] = [:]
+				var videoOutput: AVMutableCompositionTrack?
+				var audioOutputs: [Float: AVMutableCompositionTrack] = [:]
 				for clip in project.clips(on: track) {
 					try Task.checkCancellation()
 					guard let source = project.sources.first(where: { $0.id == clip.sourceID }) else { throw CocoaError(.fileReadCorruptFile) }
@@ -910,14 +912,21 @@ private struct ScrubAudioWindow {
 							if type == .video && source.picture != nil || type == .audio && source.hasAudio { throw CocoaError(.fileReadCorruptFile) }
 							continue
 						}
-						if outputs[type] == nil {
-							outputs[type] = composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid)
-							if type == .audio, let output = outputs[type] {
-								let channel = track.kind == .video ? project.audioPartner(for: track.id)?.id ?? track.id : track.id
-								builtOutputs.append(MixOutput(id: output.trackID, channel: channel, video: channel == track.id ? nil : track.id))
+						let clipGain = clip.loudnessGain ?? 1
+						let existing = type == .audio ? audioOutputs[clipGain] : videoOutput
+						let output: AVMutableCompositionTrack
+						if let existing { output = existing }
+						else {
+							guard let created = composition.addMutableTrack(withMediaType: type, preferredTrackID: kCMPersistentTrackID_Invalid) else {
+								throw CocoaError(.featureUnsupported)
 							}
+							output = created
+							if type == .audio {
+								audioOutputs[clipGain] = output
+								let channel = track.kind == .video ? project.audioPartner(for: track.id)?.id ?? track.id : track.id
+								builtOutputs.append(MixOutput(id: output.trackID, channel: channel, video: channel == track.id ? nil : track.id, clipGain: clipGain))
+							} else { videoOutput = output }
 						}
-						guard let output = outputs[type] else { throw CocoaError(.featureUnsupported) }
 						let available = try await input.load(.timeRange)
 						var cursor = clip.start.time
 						for range in clip.ranges.map(\.range) {

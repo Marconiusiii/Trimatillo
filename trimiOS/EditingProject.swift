@@ -56,6 +56,7 @@ nonisolated struct ProjectPlacement: Identifiable, Codable, Equatable {
 	var track: ProjectTrack
 	var additionalTrack: String?
 	var omitAudio: Bool?
+	var loudnessGain: Float?
 	var trackID: String { additionalTrack ?? track.rawValue }
 	var start: ProjectTime
 	var ranges: [ProjectRange]
@@ -81,7 +82,7 @@ nonisolated struct ProjectPicture: Codable, Equatable {
 
 nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	var id = UUID()
-	var version = 8
+	var version = 9
 	var name: String
 	var picture: ProjectPicture?
 	var matchesMedia: Bool?
@@ -286,9 +287,11 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 				start = min(max(start, first.start.time), last.end)
 			}
 		}
+		let previous = id.flatMap { placementID in placements.first { $0.id == placementID } }
 		let clip = ProjectPlacement(id: id ?? UUID(), sourceID: source.id,
-			labelIndex: id.flatMap { id in placements.first(where: { $0.id == id })?.labelIndex }, track: track.kind,
+			labelIndex: previous?.labelIndex, track: track.kind,
 			additionalTrack: track.id == track.kind.rawValue ? nil : track.id, omitAudio: omitAudio,
+			loudnessGain: previous?.sourceID == source.id ? previous?.loudnessGain : nil,
 			start: ProjectTime(start), ranges: ranges.map(ProjectRange.init))
 		if mode == .update || mode == .append {
 			let existing = clips(on: track)
@@ -462,7 +465,7 @@ nonisolated enum ProjectLibrary {
 	static func load(_ url: URL) throws -> EditingProject {
 		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: manifest(url)))
 		if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), id != project.id { throw CocoaError(.fileReadCorruptFile) }
-		guard (1...8).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		guard (1...9).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
 		try validate(project)
 		if project.version < 3 { project.restoreAudioPartners() }
 		project.assignPlacementLabels()
@@ -516,7 +519,7 @@ nonisolated enum ProjectLibrary {
 		for clip in project.placements {
 			guard ids.insert(clip.id).inserted, let source = sources[clip.sourceID],
 				tracks[clip.trackID] == clip.track, clip.track == (source.picture == nil ? .audio : .video),
-				validTime(clip.start), !clip.ranges.isEmpty else { throw corrupt }
+				(0...1001).contains(clip.loudnessGain ?? 1), validTime(clip.start), !clip.ranges.isEmpty else { throw corrupt }
 			for range in clip.ranges {
 				guard validTime(range.start), validTime(range.length), range.length.value > 0,
 					range.range.end.isNumeric, range.range.end <= source.duration.time else { throw corrupt }
