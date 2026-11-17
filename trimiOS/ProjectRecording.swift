@@ -9,6 +9,13 @@ import SwiftUI
 	@Published private(set) var draft: UUID?
 	@Published var failure: String?
 	let player = AVPlayer()
+	private let voiceOver: Bool
+
+	init(voiceOver: Bool = false) {
+		self.voiceOver = voiceOver
+		super.init()
+	}
+
 	private var recorder: AVAudioRecorder?
 	private var cue: AVAudioPlayer?
 	private var stopCue: AVAudioPlayer?
@@ -32,11 +39,11 @@ import SwiftUI
 		try? AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback, options: [.mixWithOthers])
 	}
 
-	func preview(playback: ProjectPlayback, range: CMTimeRange, take: DescriptionTake?, url: URL?) async {
+	func preview(playback: ProjectPlayback, range: CMTimeRange, take: DescriptionTake?, url: URL?, duck: Bool = true) async {
 		stopPreview()
 		let request = generation
 		do {
-			let item = try await playback.descriptionPreview(range: range, take: take, url: url)
+			let item = try await playback.descriptionPreview(range: range, take: take, url: url, duck: duck)
 			guard generation == request else { return }
 			player.replaceCurrentItem(with: item)
 			guard await player.seek(to: range.start, toleranceBefore: .zero, toleranceAfter: .zero), generation == request else { return }
@@ -73,8 +80,17 @@ import SwiftUI
 			guard allowed else { throw ProjectFailure("Allow microphone access for Trimatillo in Settings to record a take.") }
 			let home = ProjectLibrary.directory.appendingPathComponent(project.id.uuidString)
 			if try !ProjectStorage.directoryExists(home) { try ProjectLibrary.save(project, replacing: project) }
-			let directory = try ProjectStorage.recordings(project.id, drafts: true, create: true)
-			let item = try await playback.descriptionPreview(range: range, take: nil, url: nil)
+			let directory = try ProjectStorage.recordings(project.id, drafts: true, create: true, voiceOver: voiceOver)
+			let item: AVPlayerItem?
+			if voiceOver {
+				if range.duration > .zero {
+					guard let current = playback.player.currentItem, playback.ready else { throw ProjectFailure("Wait for the timeline to finish loading.") }
+					let monitor = AVPlayerItem(asset: current.asset)
+					monitor.audioMix = current.audioMix
+					monitor.videoComposition = current.videoComposition
+					item = monitor
+				} else { item = nil }
+			} else { item = try await playback.descriptionPreview(range: range, take: nil, url: nil) }
 			guard request == generation else { return }
 			if !ownsSession {
 				ownsSession = true
@@ -83,11 +99,9 @@ import SwiftUI
 			stopCue = try AVAudioPlayer(data: Self.fallingCue)
 			stopCue?.prepareToPlay()
 			player.replaceCurrentItem(with: item)
-			guard await player.seek(to: range.start, toleranceBefore: .zero, toleranceAfter: .zero) else {
+			if item != nil, !(await player.seek(to: range.start, toleranceBefore: .zero, toleranceAfter: .zero)) {
 				throw ProjectFailure("Could not position the preview. Choose Record again.")
 			}
-			guard request == generation else { return }
-			try await playStartCue(request: request)
 			guard request == generation else { return }
 			let id = UUID()
 			let url = directory.appendingPathComponent(id.uuidString + ".caf")
@@ -96,6 +110,15 @@ import SwiftUI
 				AVLinearPCMBitDepthKey: 16, AVLinearPCMIsFloatKey: false
 			])
 			capture.delegate = self
+			do {
+				guard capture.prepareToRecord() else { throw ProjectFailure("Could not prepare the microphone. Check the input in Settings.") }
+				try await playStartCue(request: request)
+				guard request == generation else { throw CancellationError() }
+			} catch {
+				capture.stop()
+				capture.deleteRecording()
+				throw error
+			}
 			guard capture.record() else {
 				capture.deleteRecording()
 				throw ProjectFailure("Could not start recording. Check the microphone and available storage.")
@@ -103,7 +126,9 @@ import SwiftUI
 			selectDraft(id)
 			recorder = capture
 			phase = .recording
-			player.play()
+			if voiceOver {
+				if item != nil { player.playImmediately(atRate: 1) }
+			} else { player.play() }
 		} catch {
 			if request == generation { interrupt(); failure = error.localizedDescription }
 		}
@@ -153,11 +178,11 @@ import SwiftUI
 	}
 
 	func availableDrafts(project: UUID) -> [URL] {
-		guard let directory = try? ProjectStorage.recordings(project, drafts: true),
+		guard let directory = try? ProjectStorage.recordings(project, drafts: true, voiceOver: voiceOver),
 			let files = try? FileManager.default.contentsOfDirectory(at: directory, includingPropertiesForKeys: [.creationDateKey]) else { return [] }
 		return files.filter {
 			guard $0.pathExtension == "caf", let id = UUID(uuidString: $0.deletingPathExtension().lastPathComponent) else { return false }
-			return !Self.reserved.contains(id) && (try? ProjectStorage.recording(id, project: project, draft: true)) != nil
+			return !Self.reserved.contains(id) && (try? ProjectStorage.recording(id, project: project, draft: true, voiceOver: voiceOver)) != nil
 		}.sorted { $0.lastPathComponent < $1.lastPathComponent }
 	}
 

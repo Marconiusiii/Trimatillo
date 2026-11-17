@@ -38,6 +38,7 @@ nonisolated struct TimelineTrack: Identifiable, Codable, Equatable {
 	let kind: ProjectTrack
 	let name: String
 	var linkedVideoID: String?
+	var isVoiceOver: Bool?
 
 	var videoPartnerID: String? { self == .primaryAudio ? TimelineTrack.primaryVideo.id : linkedVideoID }
 
@@ -80,7 +81,7 @@ nonisolated struct ProjectPicture: Codable, Equatable {
 
 nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	var id = UUID()
-	var version = 1
+	var version = 6
 	var name: String
 	var picture: ProjectPicture?
 	var matchesMedia: Bool?
@@ -88,6 +89,7 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	var sources: [ProjectMediaSource] = []
 	var placements: [ProjectPlacement] = []
 	var additionalTracks: [TimelineTrack]?
+	var magneticTracks: [String: Bool]?
 	var trackVolumes: [String: Float]?
 	var tracks: [TimelineTrack] {
 		let extra = additionalTracks ?? []
@@ -116,18 +118,28 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 		}.sorted { $0.start.time < $1.start.time }
 	}
 
-	func navigationPoint(from position: CMTime, forward: Bool, on track: TimelineTrack) -> (time: CMTime, name: String) {
-		let clips = displayedClips(on: track)
-		let end = duration
-		let boundaries = [.zero, end] + [markIn?.time, markOut?.time].compactMap { $0 } +
+	var voiceClips: [ProjectPlacement] {
+		tracks.filter { $0.isVoiceOver == true }.flatMap { clips(on: $0) }
+	}
+
+	func editPoints(on track: TimelineTrack) -> [CMTime] { editPoints(for: displayedClips(on: track)) }
+
+	func editPoints(for clips: [ProjectPlacement]) -> [CMTime] {
+		[.zero, duration] + [markIn?.time, markOut?.time].compactMap { $0 } +
 			clips.flatMap { [$0.start.time, $0.end] }
+	}
+
+	func navigationPoint(from position: CMTime, forward: Bool, on track: TimelineTrack, voiceOver: Bool = false) -> (time: CMTime, name: String) {
+		let clips = voiceOver ? voiceClips : displayedClips(on: track)
+		let end = duration
+		let boundaries = editPoints(for: clips)
 		let time = forward ? boundaries.filter { $0 > position }.min() ?? end :
 			boundaries.filter { $0 < position }.max() ?? .zero
 		if time == .zero { return (time, "Start") }
 		if time == end { return (time, "End") }
 		if time == markIn?.time { return (time, "In") }
 		if time == markOut?.time { return (time, "Out") }
-		let kind = track.kind.rawValue + " edit point"
+		let kind = (voiceOver ? "Voice Over" : track.kind.rawValue) + " edit point"
 		// At a shared cut the incoming clip supplies the name in both directions.
 		guard let clip = clips.first(where: { $0.start.time == time }) ?? clips.first(where: { $0.end == time }),
 			let source = sources.first(where: { $0.id == clip.sourceID }) else { return (time, kind) }
@@ -170,15 +182,79 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 		for track in tracks where videoIDs.contains(track.id) { ensureAudioPartner(for: track) }
 	}
 
-	mutating func createTrack(_ name: String, kind: ProjectTrack) throws -> TimelineTrack {
+	func isMagnetic(_ track: TimelineTrack) -> Bool {
+		magneticTracks?[track.id] ?? (track == .primaryVideo || track == .primaryAudio)
+	}
+
+	func needsPacking(_ track: TimelineTrack) -> Bool {
+		var cursor = CMTime.zero
+		for clip in clips(on: track) {
+			if clip.start.time != cursor { return true }
+			cursor = clip.end
+		}
+		return false
+	}
+
+	mutating func setMagnetic(_ enabled: Bool, on track: TimelineTrack) {
+		var modes = magneticTracks ?? [:]
+		modes[track.id] = enabled
+		magneticTracks = modes
+		if enabled {
+			var cursor = CMTime.zero
+			for index in placements.indices.filter({ placements[$0].trackID == track.id }).sorted(by: { placements[$0].start.time < placements[$1].start.time }) {
+				placements[index].start = ProjectTime(cursor)
+				cursor = placements[index].end
+			}
+		}
+	}
+
+	private mutating func shiftClips(on track: TimelineTrack, from time: CMTime, by amount: CMTime) {
+		for index in placements.indices where placements[index].trackID == track.id && placements[index].start.time >= time {
+			placements[index].start = ProjectTime(placements[index].start.time + amount)
+		}
+	}
+
+	mutating func removeClips(_ ids: Set<UUID>) {
+		let removed = placements.filter { ids.contains($0.id) }.sorted { $0.start.time > $1.start.time }
+		placements.removeAll { ids.contains($0.id) }
+		for clip in removed {
+			if let track = tracks.first(where: { $0.id == clip.trackID }), isMagnetic(track) {
+				shiftClips(on: track, from: clip.end, by: .zero - clip.duration)
+			}
+		}
+	}
+
+	mutating func createTrack(_ name: String, kind: ProjectTrack, voiceOver: Bool? = nil) throws -> TimelineTrack {
 		let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
 		guard !name.isEmpty else { throw ProjectFailure("Enter a track name.") }
-		let track = TimelineTrack(id: UUID().uuidString, kind: kind, name: name)
+		let track = TimelineTrack(id: UUID().uuidString, kind: kind, name: name, isVoiceOver: voiceOver)
 		guard !tracks.contains(where: { $0.title.localizedCaseInsensitiveCompare(track.title) == .orderedSame }) else {
 			throw ProjectFailure("Choose another name for this track.")
 		}
 		additionalTracks = (additionalTracks ?? []) + [track]
 		return track
+	}
+
+	mutating func addVoiceOver(_ source: ProjectMediaSource, at start: CMTime) throws {
+		let range = CMTimeRange(start: start, duration: source.duration.time)
+		let track: TimelineTrack
+		if let available = tracks.first(where: { track in
+			track.isVoiceOver == true && !isMagnetic(track) && !clips(on: track).contains {
+				$0.start.time < range.end && $0.end > start
+			}
+		}) {
+			track = available
+		} else {
+			var number = 1
+			var name = "Voice Over"
+			while tracks.contains(where: { $0.kind == .audio && $0.name.localizedCaseInsensitiveCompare(name) == .orderedSame }) {
+				number += 1
+				name = "Voice Over " + String(number)
+			}
+			track = try createTrack(name, kind: .audio, voiceOver: true)
+		}
+		try place(source, ranges: [CMTimeRange(start: .zero, duration: source.duration.time)], at: start, on: track, mode: .append)
+		sources.append(source)
 	}
 
 	mutating func place(_ source: ProjectMediaSource, ranges: [CMTimeRange], at start: CMTime,
@@ -187,37 +263,33 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 			!ranges.isEmpty, ranges.allSatisfy({ $0.isValid && $0.start >= .zero && $0.duration > .zero && $0.end <= source.duration.time }) else {
 			throw ProjectFailure("Choose a compatible track and a valid clip range.")
 		}
+		var start = start
+		if isMagnetic(track), mode == .split || mode == .overwrite {
+			let existing = clips(on: track)
+			if let first = existing.first, let last = existing.last {
+				start = min(max(start, first.start.time), last.end)
+			}
+		}
 		let clip = ProjectPlacement(id: id ?? UUID(), sourceID: source.id,
 			labelIndex: id.flatMap { id in placements.first(where: { $0.id == id })?.labelIndex }, track: track.kind,
 			additionalTrack: track.id == track.kind.rawValue ? nil : track.id, omitAudio: omitAudio,
 			start: ProjectTime(start), ranges: ranges.map(ProjectRange.init))
-		if mode == .update {
-			guard placements.contains(where: { $0.id == id }) else { throw ProjectFailure("Reopen the timeline clip to save its edits.") }
-		}
 		if mode == .update || mode == .append {
-			guard !clips(on: track).contains(where: { $0.id != id && $0.end > start && $0.start.time < clip.end }) else {
-				throw ProjectFailure("The edit overlaps another clip. Use Add at Playhead to split or overwrite.")
+			let existing = clips(on: track)
+			if mode == .update && isMagnetic(track) {
+				guard let previous = existing.first(where: { $0.id == id }), previous.start.time == start else {
+					throw ProjectFailure("Reopen the timeline clip before saving its edits.")
+				}
+				shiftClips(on: track, from: previous.end, by: clip.duration - previous.duration)
+			} else {
+				guard mode != .update || existing.contains(where: { $0.id == id }) else { throw ProjectFailure("Reopen the timeline clip to save its edits.") }
+				guard !existing.contains(where: { $0.id != id && $0.end > start && $0.start.time < clip.end }) else {
+					throw ProjectFailure("The edit overlaps another clip. Use Add at Playhead to split or overwrite.")
+				}
 			}
 			placements.removeAll { $0.id == id }
 		} else {
-			placements = placements.flatMap { existing -> [ProjectPlacement] in
-				guard existing.trackID == track.id, existing.end > start else { return [existing] }
-				if mode == .overwrite && existing.start.time >= clip.end { return [existing] }
-				if mode == .split && existing.start.time >= start {
-					var later = existing
-					later.start = ProjectTime(existing.start.time + clip.duration)
-					return [later]
-				}
-				let left = existing.slice(from: existing.start.time, to: start)
-				let rightStart = mode == .split ? start : clip.end
-				var right = existing.slice(from: rightStart, to: existing.end)
-				if left != nil {
-					right?.id = UUID()
-					right?.labelIndex = nil
-				}
-				if mode == .split { right?.start = ProjectTime(clip.end) }
-				return [left, right].compactMap { $0 }
-			}
+			makeRoom(for: clip, mode: mode)
 		}
 		placements.append(clip)
 		if source.hasAudio && !omitAudio { ensureAudioPartner(for: track) }
@@ -225,45 +297,94 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 		if picture == nil { picture = source.picture }
 	}
 
+	private mutating func makeRoom(for clip: ProjectPlacement, mode: PlacementMode) {
+		let start = clip.start.time
+		placements = placements.flatMap { existing -> [ProjectPlacement] in
+			guard existing.trackID == clip.trackID, existing.end > start else { return [existing] }
+			if mode == .overwrite && existing.start.time >= clip.end { return [existing] }
+			if mode == .split && existing.start.time >= start {
+				var later = existing
+				later.start = ProjectTime(existing.start.time + clip.duration)
+				return [later]
+			}
+			let left = existing.slice(from: existing.start.time, to: start)
+			let rightStart = mode == .split ? start : clip.end
+			var right = existing.slice(from: rightStart, to: existing.end)
+			if left != nil {
+				right?.id = UUID()
+				right?.labelIndex = nil
+			}
+			if mode == .split { right?.start = ProjectTime(clip.end) }
+			return [left, right].compactMap { $0 }
+		}
+	}
+
+	mutating func moveClip(_ id: UUID, to requested: CMTime, on track: TimelineTrack, exact: Bool) throws {
+		guard var clip = placements.first(where: { $0.id == id }), track.kind == clip.track,
+			requested.isNumeric, requested >= .zero, requested.seconds * 48000 < Double(Int64.max) else {
+			throw ProjectFailure("Enter a valid clip start.")
+		}
+		if clip.trackID == track.id && requested == clip.start.time { return }
+		var next = self
+		next.removeClips([id])
+		let others = next.clips(on: track)
+		var start = requested
+		if next.isMagnetic(track), !others.isEmpty || clip.trackID == track.id {
+			let earliest = others.first?.start.time ?? clip.start.time
+			let latest = others.last?.end ?? earliest
+			if exact && (start < earliest || start > latest) {
+				throw ProjectFailure("This time would leave a gap. Choose a time within the track or turn Magnetic off in Track Actions.")
+			}
+			start = min(max(earliest, start), latest)
+		}
+		clip.additionalTrack = track.id == track.kind.rawValue ? nil : track.id
+		clip.start = ProjectTime(start)
+		if next.isMagnetic(track) {
+			next.makeRoom(for: clip, mode: .split)
+		} else if others.contains(where: { $0.end > start && $0.start.time < clip.end }) {
+			throw ProjectFailure("The clip overlaps another clip. Choose an open time on this track.")
+		}
+		next.placements.append(clip)
+		if clip.omitAudio != true && sources.contains(where: { $0.id == clip.sourceID && $0.hasAudio }) { next.ensureAudioPartner(for: track) }
+		next.assignPlacementLabels()
+		self = next
+	}
+
 	mutating func move(_ ids: Set<UUID>, to track: TimelineTrack, beside anchor: UUID?, after: Bool) throws {
 		let moving = placements.filter { ids.contains($0.id) }.sorted {
 			if $0.start.time != $1.start.time { return $0.start.time < $1.start.time }
 			return $0.trackID < $1.trackID
 		}
-		guard !moving.isEmpty, moving.count == ids.count, moving.allSatisfy({ $0.track == track.kind }),
-			anchor.map({ !ids.contains($0) }) ?? true else { throw ProjectFailure("Choose a different clip on a compatible track.") }
-		let original = clips(on: track)
-		let lifted = moving.filter { $0.trackID == track.id }
-		let destination = original.filter { !ids.contains($0.id) }.map { item in
-			var clip = item
-			let removed = lifted.filter { $0.end <= item.start.time }.reduce(CMTime.zero) { $0 + $1.duration }
-			clip.start = ProjectTime(item.start.time - removed)
-			return clip
+		guard let first = moving.first, moving.count == ids.count, moving.allSatisfy({ $0.track == track.kind }) else {
+			throw ProjectFailure("Choose clips from a compatible track.")
 		}
+		var next = self
+		next.removeClips(ids)
+		let destination = next.clips(on: track)
+		let magnetic = next.isMagnetic(track)
+		let preserveSpacing = !magnetic && moving.allSatisfy { $0.trackID == first.trackID }
+		let span = preserveSpacing ? moving.last!.end - first.start.time : moving.reduce(.zero) { $0 + $1.duration }
 		let start: CMTime
 		if let anchor {
-			guard let clip = destination.first(where: { $0.id == anchor }) else { throw ProjectFailure("Choose a clip on the destination track.") }
-			start = after ? clip.end : clip.start.time
-		} else { start = destination.last?.end ?? .zero }
-		if track.kind == .video, moving.contains(where: { clip in
-			clip.omitAudio != true && sources.contains { $0.id == clip.sourceID && $0.hasAudio }
-		}) { ensureAudioPartner(for: track) }
-		placements.removeAll { ids.contains($0.id) || $0.trackID == track.id }
-		placements.append(contentsOf: destination)
+			guard let clip = destination.first(where: { $0.id == anchor }) else { throw ProjectFailure("Choose a different destination clip.") }
+			start = after ? clip.end : magnetic ? clip.start.time : clip.start.time - span
+		} else { start = destination.last?.end ?? first.start.time }
+		if magnetic { next.shiftClips(on: track, from: start, by: span) }
 		var cursor = start
 		for var clip in moving {
+			if preserveSpacing { cursor = start + (clip.start.time - first.start.time) }
+			clip.start = ProjectTime(cursor)
 			clip.additionalTrack = track.id == track.kind.rawValue ? nil : track.id
-			clip.start = ProjectTime(cursor)
-			placements.append(clip)
+			guard cursor >= .zero, !next.clips(on: track).contains(where: { $0.end > cursor && $0.start.time < clip.end }) else {
+				throw ProjectFailure("There is not enough open time for this drop. Choose another position.")
+			}
+			next.placements.append(clip)
+			if clip.omitAudio != true && sources.contains(where: { $0.id == clip.sourceID && $0.hasAudio }) { next.ensureAudioPartner(for: track) }
 			cursor = clip.end
 		}
-		for var clip in destination where clip.start.time >= start {
-			if clip.start.time >= cursor { break }
-			clip.start = ProjectTime(cursor)
-			if let index = placements.firstIndex(where: { $0.id == clip.id }) { placements[index] = clip }
-			cursor = clip.end
-		}
+		self = next
 	}
+
 }
 
 extension ProjectPlacement {
@@ -325,10 +446,16 @@ nonisolated enum ProjectLibrary {
 	static func load(_ url: URL) throws -> EditingProject {
 		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: manifest(url)))
 		if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), id != project.id { throw CocoaError(.fileReadCorruptFile) }
-		guard (1...5).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		guard (1...6).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
 		try validate(project)
 		if project.version < 3 { project.restoreAudioPartners() }
 		project.assignPlacementLabels()
+		if project.version < 6 {
+			for track in [TimelineTrack.primaryVideo, .primaryAudio] where project.needsPacking(track) {
+				project.setMagnetic(false, on: track)
+			}
+			project.version = 6
+		}
 		return project
 	}
 
@@ -345,6 +472,7 @@ nonisolated enum ProjectLibrary {
 		if let target = project.targetSeconds, !target.isFinite || target <= 0 { throw corrupt }
 		var sources = [UUID: ProjectMediaSource]()
 		for source in project.sources {
+			if case .recording(let owner, _) = source.reference, owner != project.id { throw corrupt }
 			guard sources.updateValue(source, forKey: source.id) == nil, validTime(source.duration),
 				source.duration.value > 0, source.picture.map(validPicture) ?? source.hasAudio else { throw corrupt }
 		}

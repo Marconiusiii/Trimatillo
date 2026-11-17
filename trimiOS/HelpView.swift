@@ -66,10 +66,12 @@ private enum HelpTopic: String, CaseIterable {
 	case projects = "Multitrack projects"
 	case captioner = "Captioner"
 	case describer = "Describer"
+	case voicer = "Voicer"
 	case projectTouch = "Project Direct Touch Editor"
 
 	var introduction: String {
 		switch self {
+		case .voicer: "Record a voice-over take and place it at a chosen time in your project."
 		case .describer: "Describe what happens in a passage with a timed transcript, a spoken recording, or both."
 		case .captioner: "Write timed text for dialogue, music, and sounds as you play through your project."
 		case .projectTouch: "Explore the assembled project, choose a track, and find the clips that meet at each cut."
@@ -96,6 +98,31 @@ private enum HelpTopic: String, CaseIterable {
 
 	var sections: [HelpSection] {
 		switch self {
+		case .voicer:
+			[HelpSection("Record a take", numbered: true, [
+				"Open Voicer and move the project playhead to the start of the narration.",
+				"Choose Record Voice Over, or press Command-Shift-V from the project. To use a different insertion time, change Insert at Time or Insert at Frame.",
+				"Enter a Clip Name. Choose Record and speak after the rising cue. The project plays while you record. Choose Stop Recording when you finish.",
+				"Choose Play Take to hear your recording alone, or Play with Primary Audio to hear it at the insertion time. Choose Record again to make another take. Recover Take opens a saved draft.",
+				"Choose Add to Project. The take appears on a Voice Over audio track. Takes that overlap use separate tracks. Open the clip in the Editor to trim it or change its placement. Project export includes the recording."
+			]), HelpSection("One finger in Voicer Direct Touch", [
+				"Swipe right to step forward one project frame.",
+				"Swipe left to step back one project frame.",
+				"Double-tap and hold, then drag to scrub through the project.",
+				"Swipe down to mark In. Repeat at the marker to remove it.",
+				"Swipe up to mark Out. Repeat at the marker to remove it.",
+				"Triple-tap to close Direct Touch."
+			]), HelpSection("Two fingers in Voicer Direct Touch", [
+				"Double-tap to play or pause. With VoiceOver, use Magic Tap.",
+				"Swipe right to play forward. Repeat to increase speed.",
+				"Swipe left to rewind. Repeat to increase speed.",
+				"Swipe down to open Record Voice Over at the playhead. Adding or canceling the take returns to Direct Touch."
+			]), HelpSection("Three fingers in Voicer Direct Touch", [
+				"Swipe right to go to the next voice-over edit point or project marker.",
+				"Swipe left to go to the previous voice-over edit point or project marker.",
+				"Swipe down to undo a project edit.",
+				"Swipe up to redo it."
+			])]
 		case .describer:
 			[HelpSection("Describe a passage", numbered: true, [
 				"Open Describer in a project. Mark In at the beginning of the passage and Out at its end.",
@@ -195,7 +222,7 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Track navigation", [
 				"Switching tracks keeps the playhead in place. Playback and scrubbing include the full project mix.",
 				"At a shared cut, the edit point uses the name of the clip beginning there in either direction. Start, End, In, and Out are also stops.",
-				"In the main Editor, adjust Timeline Chooser to select the active track. You can also choose Select Track from a track heading. Use the Next Edit Point and Previous Edit Point actions on the step buttons to reach the same stops."
+				"In the main Editor, adjust Timeline Chooser to select the active track. The Editor shows the selected track and its edit points on the playhead slider. Use the Next Edit Point and Previous Edit Point actions on the step buttons to reach the same stops."
 			])]
 		case .projects:
 			[HelpSection("Create a project", numbered: true, [
@@ -241,9 +268,13 @@ private enum HelpTopic: String, CaseIterable {
 				"When a named video track first receives a clip with audio included, its linked audio track appears. The sound follows the video through edits. Adjust its volume in Track Effects.",
 				"For a video cutaway, choose New Track. Turn off Include Clip Audio to keep the underlying sound. Choose Add."
 			]), HelpSection("Track actions and clip movement", numbered: true, [
-				"Use the track headings to navigate. Open a track menu to select the track or open Track Effects. Set Volume and choose Save.",
+				"Choose a track with Timeline Chooser. Open its heading for Track Actions, including Track Effects and the Magnetic setting.",
+				"The primary tracks start with Magnetic on. Removing or trimming a clip shifts later clips on its track. New tracks use absolute placement. Turn Magnetic off to keep neighboring clips at their project times. Turning it on asks for confirmation when clips need to move together.",
+				"Choose Move to Playhead on a clip to place its start at the playhead. On a magnetic track, a move into another clip splits it and preserves the rest. A move beyond the last clip appends it.",
+				"Choose Move to Time, enter Start Time or Start Frame, then choose Move. Absolute placement needs open time for the clip. To leave a gap on a populated magnetic track, turn Magnetic off first.",
+				"Choose Move to New Track, enter Track Name, and choose Move to keep the clip at its current time on a new track. Moving linked audio moves its video with it.",
 				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it. The drag announcement gives the clip name for one clip and the count for a group.",
-				"On the destination clip, choose Drop Before or Drop After followed by the destination clip name. The confirmation identifies where the clip or group landed. On an empty compatible track, choose Drop on Track. Cancel Drag abandons the move. After a drop, choose Undo or shake the device to restore the previous order. A group move takes one undo.",
+				"Choose the destination track with Timeline Chooser. On the destination clip, choose Drop Before or Drop After followed by the destination clip name. The confirmation identifies where the clip or group landed. On an empty compatible track, choose Drop on Track. Cancel Drag abandons the move. After a drop, choose Undo or shake the device to restore the previous order. A group move takes one undo.",
 				"You can also drag a clip onto the leading or trailing half of another clip to place it before or after that clip."
 			]), Self.projectExport, HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",

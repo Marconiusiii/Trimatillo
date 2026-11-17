@@ -16,6 +16,7 @@ final class ProjectMediaAccess {
 nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 	enum Reference: Codable, Equatable {
 		case file(Data)
+		case recording(project: UUID, id: UUID)
 		case photos(local: String, cloud: String?)
 	}
 
@@ -105,6 +106,8 @@ nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 
 	@MainActor func open() async throws -> ProjectMediaAccess {
 		switch reference {
+		case .recording(let project, let id):
+			return ProjectMediaAccess(asset: AVURLAsset(url: try ProjectStorage.recording(id, project: project)))
 		case .file(let data):
 			var stale = false
 			let url = try URL(resolvingBookmarkData: data, options: .withoutUI, relativeTo: nil, bookmarkDataIsStale: &stale)

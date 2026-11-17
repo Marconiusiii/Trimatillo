@@ -74,6 +74,7 @@ struct ProjectEditorView: View {
 	@Binding var revision: Int
 	let preparedRevision: Int?
 	@State private var tool = ProjectTool.editor
+	@State private var voiceInsertion: VoiceInsertion?
 	@State private var descriptionTimeline = DescriptionTimeline.transcript
 	@State private var descriptionEntry: DescriptionEntry?
 	@State private var descriptionTrigger = "newDescription"
@@ -109,6 +110,14 @@ struct ProjectEditorView: View {
 	@AccessibilityFocusState(for: .voiceOver) private var surfaceFocused: Bool
 	@AppStorage("directTouchScrubbing", store: EditorPreferences.shared) private var scrubMode = DirectTouchScrubbing.absolute
 	@State private var jumping = false
+	@State private var movingToTime: ProjectPlacement?
+	@State private var trackForMove: ProjectPlacement?
+	@State private var newTrackName = ""
+	@FocusState private var typingTrackName: Bool
+	@State private var confirmPacking: TimelineTrack?
+	@State private var placementFocus: String?
+	@State private var placementNeedsRebuild = false
+	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@FocusState private var renamingClip: Bool
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@AccessibilityFocusState private var focus: String?
@@ -132,8 +141,10 @@ struct ProjectEditorView: View {
 			if let message { error = message; playback.failure = nil }
 		}
 		.onChange(of: preparingTimeline) { _, preparing in
+			if !preparing, let placementFocus { focus = placementFocus; self.placementFocus = nil }
 			if !preparing && restoringDescription { restoreDescriptionFocus() }
 		}
+		.onChange(of: activeTrack) { dropAnchor = nil }
 		.onChange(of: tool) {
 			playback.playhead.navigationLabel = nil
 			keyboardClip = nil
@@ -141,7 +152,7 @@ struct ProjectEditorView: View {
 	}
 
 	private var workspacePage: some View {
-		ProjectEditorKeyboard(enabled: descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(enabled: voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
 			tool: tool, undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
@@ -245,6 +256,7 @@ struct ProjectEditorView: View {
 				}
 				.editorAppearance()
 			}
+			.sheet(item: voiceBinding(direct: false), onDismiss: finishVoice, content: voiceSheet)
 			.sheet(item: descriptionBinding(direct: false), onDismiss: finishDescription, content: descriptionSheet)
 			.sheet(item: captionBinding(direct: false), onDismiss: { finishCaption(direct: false) }, content: captionSheet)
 			.fullScreenCover(isPresented: $directTouch, onDismiss: { focus = "projectDirectTouch" }) {
@@ -258,10 +270,46 @@ struct ProjectEditorView: View {
 			.fullScreenCover(item: $board, onDismiss: { focus = trigger }) { editing in
 				CuttingBoardKeyboard(session: editing.session, projectActions: boardActions(editing)) { board = nil }
 			}
+			.sheet(item: $movingToTime, onDismiss: restoreClipFocus) { clip in
+				ProjectJumpSheet(format: format, frame: project.frame, moving: true, initial: time(clip.start.time).replacingOccurrences(of: "Frame ", with: "")) { time in
+					try moveClip(clip, to: time, exact: true)
+				}
+			}
+			.sheet(item: $trackForMove, onDismiss: restoreClipFocus) { clip in
+				NavigationStack {
+					Form { TextField("", text: $newTrackName).focused($typingTrackName).editorFieldLabel("Track Name") }
+						.dismissKeyboardToolbar(while: typingTrackName) { typingTrackName = false }
+						.navigationTitle("Move to New Track")
+						.navigationBarTitleDisplayMode(.inline)
+						.toolbar {
+							ToolbarItem(placement: .principal) { Text("Move to New Track").font(.headline).accessibilityAddTraits(.isHeader) }
+							ToolbarItem(placement: .cancellationAction) { Button("Cancel") { trackForMove = nil } }
+							ToolbarItem(placement: .confirmationAction) { Button("Move") {
+								do {
+									var next = project
+									let track = try next.createTrack(newTrackName, kind: clip.track)
+									try next.moveClip(clip.id, to: clip.start.time, on: track, exact: true)
+									try save(next, action: "Move to New Track")
+									placementFocus = clip.id.uuidString
+									activeTrack = track.id
+									trigger = clip.id.uuidString
+									trackForMove = nil
+								} catch { self.error = error.localizedDescription }
+							}.disabled(newTrackName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty) }
+						}
+						.alert("Move to New Track", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+							Button("OK") {}
+						} message: { Text(error ?? "") }
+				}.editorAppearance()
+			}
+			.alert("Enable Magnetic and reposition clips?", isPresented: Binding(get: { confirmPacking != nil }, set: { if !$0 { confirmPacking = nil } }), presenting: confirmPacking) { track in
+				Button("Cancel", role: .cancel) { focus = track.id }
+				Button("Enable Magnetic") { changeMagnetic(true, on: track) }
+			} message: { track in Text("Clips on " + track.title + " will be placed together from the start of the project.") }
 			.sheet(isPresented: $jumping, onDismiss: { focus = "jump" }) {
 				ProjectJumpSheet(format: format, frame: project.frame) { playback.seek($0) }
 			}
-			.alert("Project", isPresented: Binding(get: { !directTouch && error != nil }, set: { if !$0 { error = nil } })) {
+			.alert("Project", isPresented: Binding(get: { trackForMove == nil && !directTouch && error != nil }, set: { if !$0 { error = nil } })) {
 				Button("OK") { error = nil }
 			} message: { Text(error ?? "") }
 		}
@@ -284,6 +332,20 @@ struct ProjectEditorView: View {
 					}
 					Group {
 						if tool == .editor { projectRows }
+						else if tool == .voicer {
+							transport
+							Button("Record Voice Over", action: openVoice)
+								.buttonStyle(EditorButtonStyle()).accessibilityFocused($focus, equals: "recordVoice")
+							ForEach(project.tracks.filter { $0.isVoiceOver == true }) { track in
+								Text(track.title).font(.headline).accessibilityAddTraits(.isHeader)
+								ForEach(project.clips(on: track)) { clip in
+									if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
+										Button(clip.displayName(for: source)) { playback.seek(clip.start.time) }
+											.accessibilityValue(time(clip.start.time))
+									}
+								}
+							}
+						}
 						else if tool == .describer {
 							transport
 							DescriberView(project: $project, timeline: $descriptionTimeline, focus: $focus, keyboardFocus: $keyboardClip,
@@ -365,48 +427,51 @@ struct ProjectEditorView: View {
 			}
 		}
 		TimelineChooser(selection: Binding(get: { activeTrack }, set: { track in
-			activeTrack = track
+			withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { activeTrack = track }
 			keyboardClip = nil
 			playback.playhead.navigationLabel = nil
 		}), options: project.tracks, title: \.title)
-		ForEach(project.tracks) { track in
-			Section {
-				let clips = project.displayedClips(on: track)
-				if clips.isEmpty {
-					Text("No clips").editorTouchRow(alignment: .leading)
-						.accessibilityDropPoint(.center, description: Text("Drop on " + track.title))
-						.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: false) }
-				} else {
-					ScrollView(.horizontal) {
-						HStack(spacing: 0) {
-							ForEach(clips) { clip in
-								if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
-									clipButton(clip, source: source, track: track, count: clips.count)
-								}
+		trackSection(selectedTrack)
+			.id(selectedTrack.id)
+			.transition(.opacity)
+
+		if let seconds = project.targetSeconds { LabeledContent("Project Duration", value: time(CMTime(seconds: seconds, preferredTimescale: 60000))) }
+	}
+
+	private func trackSection(_ track: TimelineTrack) -> some View {
+		Section {
+			let clips = project.displayedClips(on: track)
+			if clips.isEmpty {
+				Text("No clips").editorTouchRow(alignment: .leading)
+					.accessibilityDropPoint(.center, description: Text("Drop on " + track.title))
+					.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: false) }
+			} else {
+				ScrollView(.horizontal) {
+					HStack(spacing: 0) {
+						ForEach(clips) { clip in
+							if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
+								clipButton(clip, source: source, track: track, count: clips.count)
 							}
 						}
 					}
 				}
-			} header: {
-				let actions = trackActions(track)
-				Menu { EditorMenuAction.buttons(actions) } label: {
-					HStack {
-						Text(track.title)
-						if activeTrack == track.id { Image(systemName: "checkmark").accessibilityHidden(true) }
-						Image(systemName: "chevron.down").accessibilityHidden(true)
-					}
-					.padding(.horizontal, 12)
-					.editorTouchRow(alignment: .leading)
-				}
-					.accessibilityValue(activeTrack == track.id ? "Selected" : "")
-					.accessibilityAddTraits(.isHeader)
-					.contextMenu { EditorMenuAction.buttons(actions) }
-					.accessibilityFocused($focus, equals: track.id)
-					.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: true) }
-					.editorMenuActions(track.title, actions)
 			}
+		} header: {
+			let actions = trackActions(track)
+			Menu { EditorMenuAction.buttons(actions) } label: {
+				HStack {
+					Text(track.title)
+					Image(systemName: "chevron.down").accessibilityHidden(true)
+				}
+				.padding(.horizontal, 12)
+				.editorTouchRow(alignment: .leading)
+			}
+				.accessibilityAddTraits(.isHeader)
+				.contextMenu { EditorMenuAction.buttons(actions) }
+				.accessibilityFocused($focus, equals: track.id)
+				.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: true) }
+				.editorMenuActions(track.title, actions)
 		}
-		if let seconds = project.targetSeconds { LabeledContent("Project Duration", value: time(CMTime(seconds: seconds, preferredTimescale: 60000))) }
 	}
 
 	private var transport: some View {
@@ -418,6 +483,7 @@ struct ProjectEditorView: View {
 			.accessibilityFocused($focus, equals: "projectDirectTouch")
 			.disabled(!playback.ready)
 			ProjectTimelineSlider(playhead: playback.playhead, playback: playback, duration: project.duration,
+				points: tool == .editor ? project.editPoints(on: selectedTrack) : tool == .voicer ? project.editPoints(for: project.voiceClips) : [],
 				frame: project.frame, format: format, formatTime: time)
 				.disabled(!playback.ready)
 			Button("Jump to Time", action: openJump)
@@ -515,6 +581,7 @@ struct ProjectEditorView: View {
 		.background(EditorTheme.workspace)
 		.editorAppearance()
 		.accessibilityAction(.magicTap) { playback.toggle() }
+		.sheet(item: voiceBinding(direct: true), onDismiss: finishVoice, content: voiceSheet)
 		.sheet(item: descriptionBinding(direct: true), onDismiss: finishDescription, content: descriptionSheet)
 		.sheet(item: captionBinding(direct: true), onDismiss: { finishCaption(direct: true) }, content: captionSheet)
 		.alert("Project", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
@@ -526,6 +593,8 @@ struct ProjectEditorView: View {
 		let forward = direction == .right
 		let down = direction == .down
 		switch (fingers, direction) {
+		case (2, .down) where tool == .voicer: openVoice()
+		case (2, .up) where tool == .voicer: break
 		case (2, .up) where tool == .describer, (2, .down) where tool == .describer:
 			descriptionTimeline = down ? .audio : .transcript
 			playback.playhead.navigationLabel = nil
@@ -593,7 +662,7 @@ struct ProjectEditorView: View {
 
 	private func navigate(forward: Bool, track: TimelineTrack) {
 		let point = tool == .describer ? project.descriptionPoint(descriptionTimeline, from: playback.position, forward: forward) : tool == .captioner ? project.captionPoint(from: playback.position, forward: forward) :
-			project.navigationPoint(from: playback.position, forward: forward, on: track)
+			project.navigationPoint(from: playback.position, forward: forward, on: track, voiceOver: tool == .voicer)
 		let label = point.name + ", " + time(point.time)
 		playback.seek(point.time)
 		playback.playhead.navigationLabel = label
@@ -647,13 +716,42 @@ struct ProjectEditorView: View {
 
 	private func trackActions(_ track: TimelineTrack) -> [EditorMenuAction] {
 		var actions = [
-			EditorMenuAction("Select Track") { keyboardClip = nil; activeTrack = track.id; playback.playhead.navigationLabel = nil; focus = track.id },
+			EditorMenuAction(project.isMagnetic(track) ? "Turn Magnetic Off" : "Turn Magnetic On") {
+				let enabled = !project.isMagnetic(track)
+				if enabled && project.needsPacking(track) { confirmPacking = track }
+				else { changeMagnetic(enabled, on: track) }
+			},
 			EditorMenuAction("Track Effects") { trigger = track.id; playback.pause(); effects = track }
 		]
 		if !dragging.isEmpty && project.displayedClips(on: track).isEmpty && project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == track.kind }) {
 			actions.append(EditorMenuAction("Drop on Track") { move(dragging, on: track, beside: nil, after: false) })
 		}
 		return actions
+	}
+
+	private func changeMagnetic(_ enabled: Bool, on track: TimelineTrack) {
+		var next = project
+		next.setMagnetic(enabled, on: track)
+		if next.placements != project.placements { placementFocus = track.id }
+		commit(next, action: enabled ? "Enable Magnetic" : "Disable Magnetic")
+		focus = track.id
+	}
+
+	private func restoreClipFocus() {
+		if placementNeedsRebuild {
+			placementNeedsRebuild = false
+			placementFocus = trigger
+			revision += 1
+		} else { focus = trigger; placementFocus = nil }
+	}
+
+	private func moveClip(_ clip: ProjectPlacement, to time: CMTime, exact: Bool) throws {
+		guard let owner = project.tracks.first(where: { $0.id == clip.trackID }) else { throw ProjectFailure("Reopen the clip on its track.") }
+		var next = project
+		try next.moveClip(clip.id, to: time, on: owner, exact: exact)
+		let moved = next.placements != project.placements
+		try save(next, action: exact ? "Move to Time" : "Move to Playhead")
+		if moved { placementFocus = trigger }
 	}
 
 	private func payload(for clip: ProjectPlacement) -> String {
@@ -716,6 +814,13 @@ struct ProjectEditorView: View {
 		let name = clip.displayName(for: source)
 		var actions = [
 			EditorMenuAction("Open Cutting Board") { openBoard(source, placement: clip, rowID: rowID) },
+			EditorMenuAction("Move to Playhead") {
+				playback.pause()
+				trigger = rowID
+				do { try moveClip(clip, to: playback.position, exact: false) } catch { self.error = error.localizedDescription }
+			},
+			EditorMenuAction("Move to Time") { playback.pause(); trigger = rowID; movingToTime = clip },
+			EditorMenuAction("Move to New Track") { playback.pause(); trigger = rowID; newTrackName = ""; trackForMove = clip },
 			EditorMenuAction(marked.contains(clip.id) ? "Unmark for Editing" : "Mark for Editing") { toggleMark(clip.id) }
 		]
 		if dragging.isEmpty {
@@ -733,7 +838,7 @@ struct ProjectEditorView: View {
 		actions.append(EditorMenuAction("Go to End") { playback.seek(clip.end) })
 		actions.append(EditorMenuAction(linked ? "Remove Linked Clip Pair" : "Remove from Track") {
 			var next = project
-			next.placements.removeAll { $0.id == clip.id }
+			next.removeClips([clip.id])
 			commit(next, action: "Remove Clip")
 		})
 		return actions
@@ -876,7 +981,7 @@ struct ProjectEditorView: View {
 		var next = next
 		if let point = next.markIn, point.time > next.duration { next.markIn = nil }
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
-		next.version = max(next.version, next.descriptiveTranscript != nil || next.audioDescriptions != nil || next.descriptionDucking != nil ? 5 : next.captions != nil ? 4 : (next.additionalTracks?.contains(where: { $0.linkedVideoID != nil }) == true ? 3 : 2))
+		next.version = 6
 		try ProjectLibrary.save(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
@@ -909,16 +1014,41 @@ struct ProjectEditorView: View {
 		dragging.formIntersection(valid)
 		if !next.tracks.contains(where: { $0.id == activeTrack }) { activeTrack = TimelineTrack.primaryVideo.id }
 		if rebuild {
-			if descriptionEntry != nil { descriptionNeedsRebuild = true } else { revision += 1 }
+			if voiceInsertion != nil { placementNeedsRebuild = true }
+			else if descriptionEntry != nil { descriptionNeedsRebuild = true }
+			else if movingToTime != nil || trackForMove != nil { placementNeedsRebuild = true }
+			else { revision += 1 }
 		}
 	}
 
 	private var touchTrackName: String {
 		switch tool {
 		case .editor: selectedTrack.title
-		case .captioner: tool.rawValue
+		case .captioner, .voicer: tool.rawValue
 		case .describer: descriptionTimeline.rawValue
 		}
+	}
+
+	private func openVoice() {
+		playback.pause()
+		voiceInsertion = VoiceInsertion(time: playback.position)
+	}
+
+	private func voiceBinding(direct: Bool) -> Binding<VoiceInsertion?> {
+		Binding(get: { directTouch == direct ? voiceInsertion : nil }, set: { if directTouch == direct { voiceInsertion = $0 } })
+	}
+
+	private func voiceSheet(_ entry: VoiceInsertion) -> some View {
+		VoicerRecordingView(project: project, position: entry.time, format: format,
+			initialTime: time(entry.time).replacingOccurrences(of: "Frame ", with: ""), playback: playback, save: save)
+	}
+
+	private func finishVoice() {
+		if placementNeedsRebuild {
+			placementNeedsRebuild = false
+			if !directTouch { placementFocus = "recordVoice" }
+			revision += 1
+		} else if directTouch { surfaceFocused = true } else { focus = "recordVoice" }
 	}
 
 	private func descriptionBinding(direct: Bool) -> Binding<DescriptionEntry?> {
@@ -1018,6 +1148,11 @@ struct ProjectEditorView: View {
 	}
 
 	private func projectKey(_ key: String, flags: UIKeyModifierFlags) {
+		if key.lowercased() == "v", flags.contains([.command, .shift]) {
+			tool = .voicer
+			openVoice()
+			return
+		}
 		if key.lowercased() == "d", flags.contains([.command, .shift]) {
 			tool = .describer
 			openDescription(nil)
@@ -1029,7 +1164,7 @@ struct ProjectEditorView: View {
 			case "\r" where tool == .describer:
 				let rows = project.descriptionRows(descriptionTimeline)
 				if let row = rows.first(where: { $0.id.uuidString == (keyboardClip ?? focus) }) ?? rows.first(where: { $0.start <= playback.position && playback.position < $0.end }) { openDescription(row.id) }
-			case "\r":
+			case "\r" where tool == .captioner:
 				if let cue = project.captions?.first(where: { ($0.id.uuidString == (keyboardClip ?? focus)) }) ??
 					project.captions?.first(where: { $0.start.time <= playback.position && playback.position < $0.end.time }) { openCaption(cue) }
 			case " ", "k": playback.toggle()
@@ -1126,6 +1261,14 @@ struct ProjectEditorView: View {
 			guard let clip, clip.start.time < position, position < clip.end,
 				let left = clip.slice(from: clip.start.time, to: position),
 				var right = clip.slice(from: position, to: clip.end) else { return }
+			if key != "b", next.isMagnetic(destinationTrack), let source = project.sources.first(where: { $0.id == clip.sourceID }) {
+				let trimmed = key == "[" ? right : left
+				do {
+					try next.place(source, ranges: trimmed.ranges.map(\.range), at: clip.start.time, on: destinationTrack, mode: .update, replacing: clip.id, omitAudio: clip.omitAudio == true)
+					try save(next, action: "Trim Clip")
+				} catch { self.error = error.localizedDescription }
+				return
+			}
 			next.placements.removeAll { $0.id == clip.id }
 			if key != "[" { next.placements.append(left) }
 			if key != "]" {
@@ -1140,7 +1283,7 @@ struct ProjectEditorView: View {
 		case "\u{8}", UIKeyCommand.inputDelete:
 			if let clip {
 				let ids: Set<UUID> = marked.contains(clip.id) ? marked : [clip.id]
-				next.placements.removeAll { ids.contains($0.id) }
+				next.removeClips(ids)
 				commit(next, action: ids.count == 1 ? "Remove Clip" : "Remove Clips")
 			}
 		default: break
@@ -1265,7 +1408,18 @@ private struct TrackEffectsSheet: View {
 private struct ProjectJumpSheet: View {
 	let format: TimecodeFormat
 	let frame: CMTime
-	let seek: (CMTime) -> Void
+	let moving: Bool
+	let initial: String
+	let seek: (CMTime) throws -> Void
+	init(format: TimecodeFormat, frame: CMTime, moving: Bool = false, initial: String = "", seek: @escaping (CMTime) throws -> Void) {
+		self.format = format
+		self.frame = frame
+		self.moving = moving
+		self.initial = initial
+		self.seek = seek
+		_text = State(initialValue: initial)
+	}
+	private var title: String { moving ? "Move to Time" : "Jump to Time" }
 	@Environment(\.dismiss) private var dismiss
 	@FocusState private var typing: Bool
 	@State private var text = ""
@@ -1278,33 +1432,35 @@ private struct ProjectJumpSheet: View {
 					.focused($typing)
 					.autocorrectionDisabled()
 					.onSubmit(jump)
-					.editorFieldLabel(format == .frames ? "Frame" : "Time")
-				if let error { Text(error) }
+					.editorFieldLabel(moving ? (format == .frames ? "Start Frame" : "Start Time") : (format == .frames ? "Frame" : "Time"))
 			}
 			.editorListMargins()
 			.dismissKeyboardToolbar(while: typing) { typing = false }
-			.navigationTitle("Jump to Time")
+			.navigationTitle(title)
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-				ToolbarItem(placement: .principal) { Text("Jump to Time").font(.headline).accessibilityAddTraits(.isHeader) }
-				ToolbarItem(placement: .confirmationAction) { Button("Jump", action: jump) }
+				ToolbarItem(placement: .principal) { Text(title).font(.headline).accessibilityAddTraits(.isHeader) }
+				ToolbarItem(placement: .confirmationAction) { Button(moving ? "Move" : "Jump", action: jump) }
 			}
 		}
 		.editorAppearance()
+		.alert(title, isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) {
+			Button("OK") { typing = true }
+		} message: { Text(error ?? "") }
 		.task { typing = true }
 	}
 
 	private func jump() {
-		if format == .frames, let index = Int32(text), index >= 0 {
-			seek(CMTimeMultiply(frame, multiplier: index))
-		} else if format != .frames, let time = CuttingBoardSession.parse(text) {
-			seek(time)
-		} else {
-			error = "Enter a valid playhead position and choose Jump."
-			return
-		}
-		dismiss()
+		do {
+			if moving && text == initial { dismiss(); return }
+			if format == .frames, let index = Int32(text), index >= 0 {
+				try seek(CMTimeMultiply(frame, multiplier: index))
+			} else if format != .frames, let time = CuttingBoardSession.parse(text) {
+				try seek(time)
+			} else { throw ProjectFailure(moving ? "Enter a valid clip start and choose Move." : "Enter a valid playhead position and choose Jump.") }
+			dismiss()
+		} catch { self.error = error.localizedDescription }
 	}
 }
 
@@ -1482,6 +1638,7 @@ private struct ProjectTimelineSlider: View {
 	@ObservedObject var playhead: ProjectPlayhead
 	let playback: ProjectPlayback
 	let duration: CMTime
+	let points: [CMTime]
 	let frame: CMTime
 	let format: TimecodeFormat
 	let formatTime: (CMTime) -> String
@@ -1491,7 +1648,7 @@ private struct ProjectTimelineSlider: View {
 			Text("Playhead, " + formatTime(playhead.position))
 				.monospacedDigit()
 				.accessibilityHidden(true)
-			ProjectSliderControl(playback: playback, position: playhead.position, duration: duration,
+			ProjectSliderControl(playback: playback, position: playhead.position, duration: duration, points: points,
 				frame: frame, format: format, formatTime: formatTime)
 				.frame(minHeight: 44)
 		}
@@ -1502,6 +1659,7 @@ private struct ProjectSliderControl: UIViewRepresentable {
 	let playback: ProjectPlayback
 	let position: CMTime
 	let duration: CMTime
+	let points: [CMTime]
 	let frame: CMTime
 	let format: TimecodeFormat
 	let formatTime: (CMTime) -> String
@@ -1514,6 +1672,7 @@ private struct ProjectSliderControl: UIViewRepresentable {
 	}
 
 	func updateUIView(_ slider: TimelineSlider, context: Context) {
+		if slider.control?.points != points || slider.control?.duration != duration { slider.invalidateMarks() }
 		slider.control = self
 		slider.isEnabled = context.environment.isEnabled
 		slider.display(position)
@@ -1525,6 +1684,31 @@ private struct ProjectSliderControl: UIViewRepresentable {
 
 	final class TimelineSlider: UISlider {
 		var control: ProjectSliderControl?
+		private let marks = CAShapeLayer()
+		private var markBounds: CGRect?
+		func invalidateMarks() {
+			markBounds = nil
+			setNeedsLayout()
+		}
+		override func layoutSubviews() {
+			super.layoutSubviews()
+			marks.strokeColor = UIColor.label.resolvedColor(with: traitCollection).cgColor
+			guard markBounds != bounds else { return }
+			markBounds = bounds
+			guard let control, control.duration > .zero, !control.points.isEmpty else { marks.path = nil; return }
+			if marks.superlayer == nil { layer.addSublayer(marks) }
+			let track = trackRect(forBounds: bounds)
+			let left = thumbRect(forBounds: bounds, trackRect: track, value: minimumValue).midX
+			let right = thumbRect(forBounds: bounds, trackRect: track, value: maximumValue).midX
+			let path = UIBezierPath()
+			for point in control.points {
+				let x = left + (right - left) * CGFloat(point.seconds / control.duration.seconds)
+				path.move(to: CGPoint(x: x, y: track.maxY + 2))
+				path.addLine(to: CGPoint(x: x, y: track.maxY + 7))
+			}
+			marks.lineWidth = 1.5
+			marks.path = path.cgPath
+		}
 		private var draggingPlayhead = false
 		private var feedback: Task<Void, Never>?
 		private var spokenValue: String?

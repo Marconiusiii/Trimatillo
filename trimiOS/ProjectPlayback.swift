@@ -398,8 +398,12 @@ private struct ScrubAudioWindow {
 	private var descriptionDucking: DescriptionDucking?
 	private var primaryLevels: [CMPersistentTrackID: Float] = [:]
 
-	func descriptionPreview(range: CMTimeRange, take: DescriptionTake?, url: URL?) async throws -> AVPlayerItem {
-		guard ready, let item = player.currentItem, let composition = item.asset.mutableCopy() as? AVMutableComposition else {
+	func descriptionPreview(range: CMTimeRange, take: DescriptionTake?, url: URL?, duck: Bool = true) async throws -> AVPlayerItem {
+		let item = player.currentItem
+		let composition: AVMutableComposition
+		if ready, let copy = item?.asset.mutableCopy() as? AVMutableComposition { composition = copy }
+		else if !duck && duration == .zero { composition = AVMutableComposition() }
+		else {
 			throw ProjectFailure("Wait for the project timeline to finish loading.")
 		}
 		var levels: [AVMutableAudioMixInputParameters] = []
@@ -407,7 +411,7 @@ private struct ScrubAudioWindow {
 			if let volume = primaryLevels[track.trackID] {
 				let mix = AVMutableAudioMixInputParameters(track: track)
 				mix.setVolume(volume, at: .zero)
-				if let take { descriptionDucking?.apply(to: mix, volume: volume, takes: [take], duration: range.end) }
+				if duck, let take { descriptionDucking?.apply(to: mix, volume: volume, takes: [take], duration: range.end) }
 				levels.append(mix)
 			} else { composition.removeTrack(track) }
 		}
@@ -416,7 +420,7 @@ private struct ScrubAudioWindow {
 		let mix = AVMutableAudioMix()
 		mix.inputParameters = levels
 		preview.audioMix = mix
-		preview.videoComposition = item.videoComposition
+		preview.videoComposition = item?.videoComposition
 		preview.forwardPlaybackEndTime = range.end
 		return preview
 	}

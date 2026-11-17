@@ -67,12 +67,14 @@ enum ProjectTool: String, CaseIterable {
 	case editor = "Editor"
 	case captioner = "Captioner"
 	case describer = "Describer"
+	case voicer = "Voicer"
 
 	var symbol: String {
 		switch self {
 		case .editor: "film"
 		case .captioner: "captions.bubble"
 		case .describer: "mic"
+		case .voicer: "waveform"
 		}
 	}
 }
