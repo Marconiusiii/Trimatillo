@@ -74,6 +74,8 @@ struct ProjectEditorView: View {
 	@Binding var revision: Int
 	let preparedRevision: Int?
 	@State private var tool = ProjectTool.editor
+	@State private var mixerTrack = TimelineTrack.primaryAudio.id
+	@State private var soloTracks: Set<String> = []
 	@State private var voiceInsertion: VoiceInsertion?
 	@State private var descriptionTimeline = DescriptionTimeline.transcript
 	@State private var descriptionEntry: DescriptionEntry?
@@ -147,7 +149,10 @@ struct ProjectEditorView: View {
 			if !preparing && restoringDescription { restoreDescriptionFocus() }
 		}
 		.onChange(of: activeTrack) { dropAnchor = nil }
-		.onChange(of: tool) {
+		.onChange(of: soloTracks) { playback.updateMix(project, solo: soloTracks) }
+		.onChange(of: playback.ready) { if playback.ready && !soloTracks.isEmpty { playback.updateMix(project, solo: soloTracks) } }
+		.onChange(of: tool) { previous, _ in
+			if previous == .mixer { playback.setMixerLoop(nil); soloTracks.removeAll() }
 			playback.playhead.navigationLabel = nil
 			keyboardClip = nil
 		}
@@ -346,6 +351,10 @@ struct ProjectEditorView: View {
 					}
 					Group {
 						if tool == .editor { projectRows }
+						else if tool == .mixer {
+							transport
+							MixerView(project: project, selection: $mixerTrack, solo: $soloTracks, playback: playback, apply: applyMixerEdit)
+						}
 						else if tool == .voicer {
 							transport
 							Button("Record Voice Over", action: openVoice)
@@ -393,7 +402,7 @@ struct ProjectEditorView: View {
 		var actions = [EditorMenuAction("Project Settings") { playback.pause(); projectSheet = .settings }]
 		if !project.placements.isEmpty {
 			actions.append(EditorMenuAction("Export") {
-				guard preparedRevision == revision, let timeline = playback.exportTimeline(named: project.name, captions: project.captions ?? []) else {
+				guard preparedRevision == revision, let timeline = playback.exportTimeline(named: project.name, captions: project.captions ?? [], project: project) else {
 					error = playback.player.currentItem?.status == .failed || playback.player.currentItem == nil && preparedRevision == revision
 						? "Could not open the timeline. Reconnect its clips in Project Media and choose Export again."
 						: "The timeline is loading. Choose Export again when Play is available."
@@ -489,16 +498,29 @@ struct ProjectEditorView: View {
 		}
 	}
 
+	private var timelinePoints: [CMTime] {
+		switch tool {
+		case .editor: return project.editPoints(on: selectedTrack)
+		case .voicer: return project.editPoints(for: project.voiceClips)
+		case .mixer:
+			if mixerTrack == EditingProject.descriptionMixID {
+				return project.descriptionRows(.audio).flatMap { [$0.start, $0.end] } + project.editPoints(for: [])
+			}
+			return project.editPoints(on: project.tracks.first { $0.id == mixerTrack } ?? .primaryAudio)
+		default: return []
+		}
+	}
+
 	private var transport: some View {
 		Group {
-			Button("Direct Touch Editor") {
-				directTouch = true
+			if tool != .mixer {
+				Button("Direct Touch Editor") { directTouch = true }
+					.buttonStyle(EditorButtonStyle())
+					.accessibilityFocused($focus, equals: "projectDirectTouch")
+					.disabled(!playback.ready)
 			}
-			.buttonStyle(EditorButtonStyle())
-			.accessibilityFocused($focus, equals: "projectDirectTouch")
-			.disabled(!playback.ready)
 			ProjectTimelineSlider(playhead: playback.playhead, playback: playback, duration: project.duration,
-				points: tool == .editor ? project.editPoints(on: selectedTrack) : tool == .voicer ? project.editPoints(for: project.voiceClips) : [],
+				points: timelinePoints,
 				frame: project.frame, format: format, formatTime: time)
 				.disabled(!playback.ready)
 			Button("Jump to Time", action: openJump)
@@ -677,8 +699,16 @@ struct ProjectEditorView: View {
 	}
 
 	private func navigate(forward: Bool, track: TimelineTrack) {
-		let point = tool == .describer ? project.descriptionPoint(descriptionTimeline, from: playback.position, forward: forward) : tool == .captioner ? project.captionPoint(from: playback.position, forward: forward) :
-			project.navigationPoint(from: playback.position, forward: forward, on: track, voiceOver: tool == .voicer)
+		let point: (time: CMTime, name: String)
+		switch tool {
+		case .captioner: point = project.captionPoint(from: playback.position, forward: forward)
+		case .describer: point = project.descriptionPoint(descriptionTimeline, from: playback.position, forward: forward)
+		case .mixer where mixerTrack == EditingProject.descriptionMixID:
+			point = project.descriptionPoint(.audio, from: playback.position, forward: forward)
+		default:
+			let destination = tool == .mixer ? project.tracks.first { $0.id == mixerTrack } ?? .primaryAudio : track
+			point = project.navigationPoint(from: playback.position, forward: forward, on: destination, voiceOver: tool == .voicer)
+		}
 		let label = point.name + ", " + time(point.time)
 		playback.seek(point.time)
 		playback.playhead.navigationLabel = label
@@ -1012,7 +1042,7 @@ struct ProjectEditorView: View {
 		var next = next
 		if let point = next.markIn, point.time > next.duration { next.markIn = nil }
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
-		next.version = 6
+		next.version = 7
 		try ProjectLibrary.save(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
@@ -1032,12 +1062,25 @@ struct ProjectEditorView: View {
 		} catch { self.error = error.localizedDescription }
 	}
 
+	private func applyMixerEdit(_ next: EditingProject, action: String, commit: Bool) {
+		if commit {
+			do { try save(next, action: action) }
+			catch { playback.updateMix(project, solo: soloTracks); self.error = error.localizedDescription }
+		} else { playback.updateMix(next, solo: soloTracks) }
+	}
+
 	private func update(_ next: EditingProject) {
 		let usedSources = Set(next.placements.map(\.sourceID))
 		func timelineReferences(_ model: EditingProject) -> [UUID: ProjectMediaSource.Reference] {
 			Dictionary(uniqueKeysWithValues: model.sources.filter { usedSources.contains($0.id) }.map { ($0.id, $0.reference) })
 		}
-		let rebuild = project.audioDescriptions != next.audioDescriptions || project.descriptionDucking != next.descriptionDucking || project.picture != next.picture || project.placements != next.placements || timelineReferences(project) != timelineReferences(next) || project.tracks != next.tracks || project.trackVolumes != next.trackVolumes
+		let rebuild = project.audioDescriptions != next.audioDescriptions || project.descriptionDucking != next.descriptionDucking || project.picture != next.picture || project.placements != next.placements || timelineReferences(project) != timelineReferences(next) || project.tracks != next.tracks
+		if !rebuild && (project.trackVolumes != next.trackVolumes || project.masterVolume != next.masterVolume || project.mutedTracks != next.mutedTracks) {
+			playback.updateMix(next, solo: soloTracks)
+		}
+		if playback.mixerLoop != nil { playback.setMixerLoop(next.captionRange) }
+		if !(next.mixerChannels.contains { $0.id == mixerTrack }) { mixerTrack = TimelineTrack.primaryAudio.id }
+		soloTracks.formIntersection(next.mixerChannels.map(\.id))
 		if playback.playhead.navigationLabel != nil { playback.playhead.navigationLabel = nil }
 		project = next
 		let valid = Set(next.placements.map(\.id))
@@ -1055,7 +1098,7 @@ struct ProjectEditorView: View {
 	private var touchTrackName: String {
 		switch tool {
 		case .editor: selectedTrack.title
-		case .captioner, .voicer: tool.rawValue
+		case .captioner, .voicer, .mixer: tool.rawValue
 		case .describer: descriptionTimeline.rawValue
 		}
 	}
@@ -1190,6 +1233,15 @@ struct ProjectEditorView: View {
 	}
 
 	private func projectKey(_ key: String, flags: UIKeyModifierFlags) {
+		if key.lowercased() == "m", flags.contains([.command, .shift]) { tool = .mixer; return }
+		if tool == .mixer, flags.contains([.command, .alternate]), key == UIKeyCommand.inputUpArrow || key == UIKeyCommand.inputDownArrow {
+			let tracks = project.mixerChannels
+			if let index = tracks.firstIndex(where: { $0.id == mixerTrack }) {
+				let delta = key == UIKeyCommand.inputUpArrow ? -1 : 1
+				mixerTrack = tracks[(index + delta + tracks.count) % tracks.count].id
+			}
+			return
+		}
 		if key.lowercased() == "v", flags.contains([.command, .shift]) {
 			tool = .voicer
 			openVoice()
@@ -1430,7 +1482,7 @@ private struct TrackEffectsSheet: View {
 		NavigationStack {
 			Form {
 				Section {
-					Slider(value: $volume, in: 0...1, step: 0.01) { Text("Volume") }
+					Slider(value: $volume, in: 0...EditingProject.maximumMixerLevel, step: 0.01) { Text("Volume") }
 						.accessibilityValue(volume.formatted(.percent))
 					LabeledContent("Volume", value: volume.formatted(.percent))
 				} header: { Text(track.title).accessibilityAddTraits(.isHeader) }

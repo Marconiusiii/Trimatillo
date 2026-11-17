@@ -67,10 +67,12 @@ private enum HelpTopic: String, CaseIterable {
 	case captioner = "Captioner"
 	case describer = "Describer"
 	case voicer = "Voicer"
+	case mixer = "Mixer"
 	case projectTouch = "Project Direct Touch Editor"
 
 	var introduction: String {
 		switch self {
+		case .mixer: "Adjust the level of each audio track while listening to the project."
 		case .voicer: "Record a voice-over take and place it at a chosen time in your project."
 		case .describer: "Describe what happens in a passage with a timed transcript, a spoken recording, or both."
 		case .captioner: "Write timed text for dialogue, music, and sounds as you play through your project."
@@ -98,6 +100,14 @@ private enum HelpTopic: String, CaseIterable {
 
 	var sections: [HelpSection] {
 		switch self {
+		case .mixer:
+			[HelpSection("Mix voice and project audio", numbered: true, [
+				"Open Mixer or press Command-Shift-M. Set In and Out around a passage with voice and background sound. Turn on Loop and press Play to repeat it.",
+				"Choose Primary Audio in Timeline Chooser. Lower Volume while listening. Zero dB plays at the original level. Raise Volume up to 12 dB to bring up quieter sound. Choose the voice track to adjust its level. Command-Option-Up Arrow and Command-Option-Down Arrow cycle through the tracks.",
+				"Turn on Solo to listen to one or more tracks together. Leaving Mixer clears Solo. Turn on Mute to silence a track in the project and its export.",
+				"Adjust Master Volume to change the level of the whole mix. Reset Track Mix restores the selected track to zero dB and clears Mute and Solo. Choose Undo to restore a saved level or mute setting.",
+				"Choose Export in Project Actions to render the saved levels, mute settings, and description ducking. Solo applies only while listening in Mixer."
+			])]
 		case .voicer:
 			[HelpSection("Record a take", numbered: true, [
 				"Open Voicer and move the project playhead to the start of the narration.",

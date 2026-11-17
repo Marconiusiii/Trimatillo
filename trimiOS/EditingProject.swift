@@ -81,7 +81,7 @@ nonisolated struct ProjectPicture: Codable, Equatable {
 
 nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	var id = UUID()
-	var version = 6
+	var version = 7
 	var name: String
 	var picture: ProjectPicture?
 	var matchesMedia: Bool?
@@ -91,6 +91,16 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	var additionalTracks: [TimelineTrack]?
 	var magneticTracks: [String: Bool]?
 	var trackVolumes: [String: Float]?
+	var masterVolume: Float?
+	var mutedTracks: Set<String>?
+	static let maximumMixerLevel = Float(pow(10.0, 12.0 / 20.0))
+	static let descriptionMixID = "audio-description"
+
+	var mixerChannels: [MixerChannel] {
+		var channels = tracks.filter { $0.kind == .audio }.map { MixerChannel(id: $0.id, title: $0.title) }
+		if audioDescriptions?.isEmpty == false { channels.append(MixerChannel(id: Self.descriptionMixID, title: "Audio Description")) }
+		return channels
+	}
 	var tracks: [TimelineTrack] {
 		let extra = additionalTracks ?? []
 		return extra.filter { $0.kind == .video }.reversed() + [.primaryVideo, .primaryAudio] + extra.filter { $0.kind == .audio }
@@ -451,7 +461,7 @@ nonisolated enum ProjectLibrary {
 	static func load(_ url: URL) throws -> EditingProject {
 		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: manifest(url)))
 		if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), id != project.id { throw CocoaError(.fileReadCorruptFile) }
-		guard (1...6).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		guard (1...7).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
 		try validate(project)
 		if project.version < 3 { project.restoreAudioPartners() }
 		project.assignPlacementLabels()
@@ -491,8 +501,12 @@ nonisolated enum ProjectLibrary {
 				guard track.kind == .audio, tracks[videoID] == .video, pairedVideos.insert(videoID).inserted else { throw corrupt }
 			}
 		}
+		let mixIDs = Set(tracks.keys).union([EditingProject.descriptionMixID])
+		guard tracks[EditingProject.descriptionMixID] == nil,
+			(0...EditingProject.maximumMixerLevel).contains(project.masterVolume ?? 1),
+			(project.mutedTracks ?? []).isSubset(of: mixIDs) else { throw corrupt }
 		for (id, volume) in project.trackVolumes ?? [:] {
-			guard tracks[id] != nil, (0...1).contains(volume) else { throw corrupt }
+			guard mixIDs.contains(id), (0...EditingProject.maximumMixerLevel).contains(volume) else { throw corrupt }
 		}
 		var ids = Set<UUID>()
 		for clip in project.placements {

@@ -49,7 +49,10 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 			}
 			if tool != .editor {
 				bindings.removeAll { ["[", "]", "\u{8}", UIKeyCommand.inputDelete, "\r"].contains($0.0) }
-				if tool != .voicer {
+				if tool == .mixer {
+					bindings += [(UIKeyCommand.inputUpArrow, [.alternate, .command], "Previous Audio Track"),
+						(UIKeyCommand.inputDownArrow, [.alternate, .command], "Next Audio Track")]
+				} else if tool != .voicer {
 					bindings += [(tool == .captioner ? "c" : "d", [.command, .shift], tool == .captioner ? "New Caption" : "New Description"),
 						("\r", [], tool == .captioner ? "Edit Caption" : "Edit Description")]
 				}
@@ -62,6 +65,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 				("b", .command, "Split Clip"), ("v", [.command, .alternate], "Drop After"),
 				(UIKeyCommand.inputEscape, [], "Cancel Drag")]
 			}
+			bindings.append(("m", [.command, .shift], "Open Mixer"))
 			bindings.append(("v", [.command, .shift], "Record Voice Over"))
 			return bindings.map { key, flags, title in
 				let command = UIKeyCommand(input: key, modifierFlags: flags, action: #selector(handle(_:)))
