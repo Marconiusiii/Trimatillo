@@ -26,6 +26,7 @@ import SwiftUI
 
 	static var microphoneInUse: Bool { micOwner != nil }
 
+	static let sourcePlaybackKey = "recordingSourceAudioPlayback"
 	static let inputKey = "recordingInput"
 	static func configureInput() throws {
 		let session = AVAudioSession.sharedInstance()
@@ -62,9 +63,10 @@ import SwiftUI
 		generation += 1
 		player.pause()
 		player.replaceCurrentItem(with: nil)
+		player.isMuted = false
 	}
 
-	func start(project: EditingProject, playback: ProjectPlayback, range: CMTimeRange) async {
+	func start(project: EditingProject, playback: ProjectPlayback, range: CMTimeRange, sourcePlayback: Bool) async {
 		guard phase == .idle else { return }
 		if let owner = Self.micOwner, owner !== self {
 			guard owner.phase == .idle else { failure = "Stop the recording in the other window first."; return }
@@ -98,6 +100,7 @@ import SwiftUI
 			}
 			stopCue = try AVAudioPlayer(data: Self.fallingCue)
 			stopCue?.prepareToPlay()
+			player.isMuted = !sourcePlayback
 			player.replaceCurrentItem(with: item)
 			if item != nil, !(await player.seek(to: range.start, toleranceBefore: .zero, toleranceAfter: .zero)) {
 				throw ProjectFailure("Could not position the preview. Choose Record again.")

@@ -102,7 +102,7 @@ private enum HelpTopic: String, CaseIterable {
 			[HelpSection("Record a take", numbered: true, [
 				"Open Voicer and move the project playhead to the start of the narration.",
 				"Choose Record Voice Over, or press Command-Shift-V from the project. To use a different insertion time, change Insert at Time or Insert at Frame.",
-				"Enter a Clip Name. Choose Record and speak after the rising cue. The project plays while you record. Choose Stop Recording when you finish.",
+				"Enter a Clip Name. Leave Source Audio Playback on to hear the project during the take, or turn it off to record with the project audio muted. Choose Record and speak after the rising cue. Choose Stop Recording when you finish.",
 				"Choose Play Take to hear your recording alone, or Play with Primary Audio to hear it at the insertion time. Choose Record again to make another take. Recover Take opens a saved draft.",
 				"Choose Add to Project. The take appears on a Voice Over audio track. Takes that overlap use separate tracks. Project export includes the recording.",
 				"Open the take in the Voice Over timeline. Choose Open Cutting Board, trim the take, then choose Save Changes. Choose Move to Time to change its start.",
@@ -130,7 +130,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Open Describer in a project. Mark In at the beginning of the passage and Out at its end.",
 				"For a written entry, select Descriptive Transcript in Timeline Chooser. Choose New Description or press Command-Shift-D. In Written Description, enter Description Text and choose Save.",
 				"Choose Play In to Out to repeat the passage. Choose Stop Preview when you are finished.",
-				"For narration, select Audio Description in Timeline Chooser and choose New Description. In Audio Description, you can change Recording Name. Choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
+				"For narration, select Audio Description in Timeline Chooser and choose New Description. In Audio Description, you can change Recording Name. Turn off Source Audio Playback to mute the passage during recording. Voicer and Audio Description share this setting. Choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
 				"Choose Play Take to hear the original recording. Speed Up to Fit trims silence from the end of the take. Your voice plays at its recorded speed if it fits before Out. Longer narration speeds up and keeps its pitch. Choose Trim at Out to play the original take up to Out. Play with Primary Audio previews the result against the passage.",
 				"Choose Save to add the recording to Audio Description. When a description sheet closes back to Direct Touch, VoiceOver announces In Direct Touch Editor. To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
 			]), HelpSection("Review and export", numbered: true, [

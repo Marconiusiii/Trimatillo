@@ -234,6 +234,7 @@ struct DescriptionEntryView: View {
 	let playback: ProjectPlayback
 	let time: (CMTime) -> String
 	let save: (EditingProject, String) throws -> Void
+	@AppStorage(ProjectRecording.sourcePlaybackKey, store: EditorPreferences.shared) private var sourcePlayback = true
 	@StateObject private var capture = ProjectRecording()
 	@State private var range: CMTimeRange
 	@State private var text: String
@@ -367,11 +368,13 @@ struct DescriptionEntryView: View {
 
 	@ViewBuilder private var recordingControls: some View {
 		TextField("", text: $name).focused($field, equals: .name).editorFieldLabel("Recording Name")
+		Toggle("Source Audio Playback", isOn: $sourcePlayback)
+			.disabled(capture.phase != .idle)
 		Button(capture.phase == .recording ? "Stop Recording" : "Record") {
 			field = nil
 			playMode = nil
 			if capture.phase == .recording { capture.stop() }
-			else { Task { await capture.start(project: project, playback: playback, range: range) } }
+			else { Task { await capture.start(project: project, playback: playback, range: range, sourcePlayback: sourcePlayback) } }
 		}
 		.accessibilityFocused($recordFocused)
 		.disabled(capture.phase == .preparing)

@@ -13,6 +13,7 @@ struct VoicerRecordingView: View {
 	let initialTime: String
 	let playback: ProjectPlayback
 	let save: (EditingProject, String) throws -> Void
+	@AppStorage(ProjectRecording.sourcePlaybackKey, store: EditorPreferences.shared) private var sourcePlayback = true
 	@StateObject private var capture = ProjectRecording(voiceOver: true)
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.scenePhase) private var scene
@@ -54,6 +55,8 @@ struct VoicerRecordingView: View {
 						.editorFieldLabel(format == .frames ? "Insert at Frame" : "Insert at Time")
 				}
 				.disabled(capture.phase != .idle || busy)
+				Toggle("Source Audio Playback", isOn: $sourcePlayback)
+					.disabled(capture.phase != .idle || busy)
 				Button(capture.phase == .recording ? "Stop Recording" : "Record") {
 					field = nil
 					if capture.phase == .recording { capture.stop() }
@@ -153,7 +156,7 @@ struct VoicerRecordingView: View {
 			let start = try startTime()
 			stopPreview()
 			let range = CMTimeRange(start: start, duration: max(.zero, project.duration - start))
-			Task { await capture.start(project: project, playback: playback, range: range) }
+			Task { await capture.start(project: project, playback: playback, range: range, sourcePlayback: sourcePlayback) }
 		} catch { capture.failure = error.localizedDescription }
 	}
 
