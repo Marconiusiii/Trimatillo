@@ -62,12 +62,32 @@ extension CuttingBoardSession {
 	}
 }
 
+extension View {
+	func directTouchReturnFeedback(_ pending: Binding<String?>, ready: Bool = true, focus: AccessibilityFocusState<Bool>.Binding) -> some View {
+		let message = ready ? pending.wrappedValue : nil
+		return task(id: message) { @MainActor in
+			guard let message, pending.wrappedValue == message else { return }
+			focus.wrappedValue = true
+			await Task.yield()
+			guard !Task.isCancelled, pending.wrappedValue == message else { return }
+			pending.wrappedValue = nil
+			guard UIAccessibility.isVoiceOverRunning else { return }
+			let speech = NSAttributedString(string: message, attributes: [.accessibilitySpeechQueueAnnouncement: true])
+			UIAccessibility.post(notification: .announcement, argument: speech)
+		}
+	}
+}
+
+func directTouchReturnMessage(after confirmation: String? = nil) -> String {
+	[confirmation, "In Direct Touch Editor"].compactMap { $0 }.joined(separator: ". ")
+}
+
 struct BoardProjectActions {
 	let append: () -> Void
 	let split: () -> Void
 	let overwrite: () -> Void
 	let update: (() -> Void)?
-	let placementSheet: (_ directTouch: Bool) -> AnyView
+	let placementSheet: (_ directTouch: Bool, _ placed: @escaping (String) -> Void) -> AnyView
 }
 
 struct CuttingBoardView: View {
@@ -86,6 +106,8 @@ struct CuttingBoardView: View {
 	@AccessibilityFocusState private var playheadFocused: Bool
 	@AccessibilityFocusState private var editActionsFocused: Bool
 	@State private var sheetFromMenu = false
+	@State private var returnMessage: String?
+	@State private var placementConfirmation: String?
 
 	var body: some View {
 		Group {
@@ -103,6 +125,7 @@ struct CuttingBoardView: View {
 					}
 					CuttingBoardTouchSurface(session: session, onClose: closeDirectTouchEditor, projectActions: projectActions)
 						.accessibilityFocused($surfaceFocused)
+						.directTouchReturnFeedback($returnMessage, focus: $surfaceFocused)
 				}
 				.accessibilityAction(.magicTap) { session.toggle() }
 				.sheet(item: $session.sheet, onDismiss: {
@@ -110,7 +133,7 @@ struct CuttingBoardView: View {
 					session.editPointTrace.event("Board sheet dismissed, requesting Direct Touch Editor focus")
 					if session.sheet == nil { session.editPointTrace.end() }
 					#endif
-					surfaceFocused = true
+					returnMessage = directTouchReturnMessage()
 				}) { editorSheet($0) }
 			} else {
 				board
@@ -128,8 +151,10 @@ struct CuttingBoardView: View {
 		.sheet(isPresented: Binding(get: { !showingDirectTouchEditor && session.choosingPlacement }, set: {
 			if !showingDirectTouchEditor { session.choosingPlacement = $0 }
 		}), onDismiss: {
-			if closeDirectTouchEditor == nil { placementFocused = true } else { surfaceFocused = true }
-		}) { projectActions?.placementSheet(closeDirectTouchEditor != nil) }
+			if closeDirectTouchEditor == nil { placementFocused = true }
+			else { returnMessage = directTouchReturnMessage(after: placementConfirmation) }
+			placementConfirmation = nil
+		}) { projectActions?.placementSheet(closeDirectTouchEditor != nil) { placementConfirmation = $0 } }
 		.background(EditorTheme.workspace)
 		.alert("Cutting Board", isPresented: Binding(get: { !showingDirectTouchEditor && session.message != nil && session.sheet == nil }, set: { if !$0 { session.message = nil } })) {
 			Button("OK") { session.message = nil }

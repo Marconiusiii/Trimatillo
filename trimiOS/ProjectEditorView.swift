@@ -108,6 +108,7 @@ struct ProjectEditorView: View {
 	@State private var error: String?
 	@State private var fullScreenPreview: PreviewPlayback?
 	@State private var directTouch = false
+	@State private var returnMessage: String?
 	@AccessibilityFocusState(for: .voiceOver) private var surfaceFocused: Bool
 	@AppStorage("directTouchScrubbing", store: EditorPreferences.shared) private var scrubMode = DirectTouchScrubbing.absolute
 	@State private var jumping = false
@@ -260,7 +261,7 @@ struct ProjectEditorView: View {
 			.sheet(item: voiceBinding(direct: false), onDismiss: finishVoice, content: voiceSheet)
 			.sheet(item: descriptionBinding(direct: false), onDismiss: finishDescription, content: descriptionSheet)
 			.sheet(item: captionBinding(direct: false), onDismiss: { finishCaption(direct: false) }, content: captionSheet)
-			.fullScreenCover(isPresented: $directTouch, onDismiss: { focus = "projectDirectTouch" }) {
+			.fullScreenCover(isPresented: $directTouch, onDismiss: { returnMessage = nil; focus = "projectDirectTouch" }) {
 				directTouchEditor
 			}
 			.fullScreenCover(item: $fullScreenPreview, onDismiss: { focus = "fullScreenPreview" }) { preview in
@@ -312,8 +313,8 @@ struct ProjectEditorView: View {
 				}
 			} message: { source in
 				let count = project.placements.filter { $0.sourceID == source.id }.count
-				if count == 0 { Text("Delete \(source.displayName) from Project Media?") }
-				else { Text("Delete \(source.displayName) from Project Media and remove \(count) timeline \(count == 1 ? "placement" : "placements")?") }
+				if count == 0 { Text("Delete \(source.displayName) from project?") }
+				else { Text("Delete \(source.displayName) from project and remove \(count) \(count == 1 ? "clip" : "clips") from the timeline?") }
 			}
 			.alert("Enable Magnetic and reposition clips?", isPresented: Binding(get: { confirmPacking != nil }, set: { if !$0 { confirmPacking = nil } }), presenting: confirmPacking) { track in
 				Button("Cancel", role: .cancel) { focus = track.id }
@@ -582,6 +583,7 @@ struct ProjectEditorView: View {
 						}
 					}
 					.accessibilityFocused($surfaceFocused)
+					.directTouchReturnFeedback($returnMessage, ready: playback.ready, focus: $surfaceFocused)
 					.onAppear {
 						playback.primeScrubAudio()
 						surfaceFocused = true
@@ -952,11 +954,13 @@ struct ProjectEditorView: View {
 			catch { board.session.message = error.localizedDescription }
 		}
 		return BoardProjectActions(append: { quick(.append) }, split: { quick(.split) }, overwrite: { quick(.overwrite) },
-			update: board.placement == nil ? nil : { quick(.update) }, placementSheet: { directTouch in
+			update: board.placement == nil ? nil : { quick(.update) }, placementSheet: { directTouch, placed in
 				AnyView(PlacementSheet(tracks: project.tracks.filter { $0.kind == kind }, destination: destination(),
 					offersAudio: kind == .video && board.source.hasAudio, directTouch: directTouch) { track, name, mode, omitAudio in
 					do {
-						try place(board, mode: mode, track: track, newName: name, omitAudio: omitAudio)
+						try place(board, mode: mode, track: track, newName: name, omitAudio: omitAudio, announce: { message in
+							if directTouch { placed(message) } else { UIAccessibility.post(notification: .announcement, argument: message) }
+						})
 						board.session.choosingPlacement = false
 						return nil
 					} catch { return error.localizedDescription }
@@ -964,7 +968,8 @@ struct ProjectEditorView: View {
 			})
 	}
 
-	private func place(_ editing: ProjectBoard, mode: PlacementMode, track: TimelineTrack, newName: String? = nil, omitAudio: Bool = false) throws {
+	private func place(_ editing: ProjectBoard, mode: PlacementMode, track: TimelineTrack, newName: String? = nil, omitAudio: Bool = false,
+		announce: (String) -> Void = { UIAccessibility.post(notification: .announcement, argument: $0) }) throws {
 		let session = editing.session
 		session.releaseAudio()
 		var next = project
@@ -995,7 +1000,7 @@ struct ProjectEditorView: View {
 			if editedPlacement { placementFocus = trigger }
 			board = nil
 		}
-		else { UIAccessibility.post(notification: .announcement, argument: (mode == .append ? "Appended to " : "Added to ") + destination.title) }
+		else { announce((mode == .append ? "Appended to " : "Added to ") + destination.title) }
 	}
 
 	private func commit(_ next: EditingProject, action: String) {
@@ -1070,11 +1075,12 @@ struct ProjectEditorView: View {
 	}
 
 	private func finishVoice() {
+		if directTouch { returnMessage = directTouchReturnMessage() }
 		if placementNeedsRebuild {
 			placementNeedsRebuild = false
 			if !directTouch { placementFocus = "recordVoice" }
 			revision += 1
-		} else if directTouch { surfaceFocused = true } else { focus = "recordVoice" }
+		} else if !directTouch { focus = "recordVoice" }
 	}
 
 	private func descriptionBinding(direct: Bool) -> Binding<DescriptionEntry?> {
@@ -1112,14 +1118,19 @@ struct ProjectEditorView: View {
 	private func finishDescription() {
 		if descriptionNeedsRebuild {
 			descriptionNeedsRebuild = false
-			restoringDescription = true
+			if directTouch { restoreDescriptionFocus() } else { restoringDescription = true }
 			revision += 1
 		} else { restoreDescriptionFocus() }
 	}
 
 	private func restoreDescriptionFocus() {
 		restoringDescription = false
-		if directTouch { surfaceFocused = true } else { focus = descriptionTrigger }
+		if directTouch {
+			returnMessage = directTouchReturnMessage(after: descriptionSaved ? "Description Saved" : nil)
+			descriptionSaved = false
+			return
+		}
+		focus = descriptionTrigger
 		if descriptionSaved {
 			descriptionSaved = false
 			let message = NSAttributedString(string: "Description Saved", attributes: [.accessibilitySpeechQueueAnnouncement: true])
@@ -1165,7 +1176,12 @@ struct ProjectEditorView: View {
 	}
 
 	private func finishCaption(direct: Bool) {
-		if direct { surfaceFocused = true } else { focus = captionTrigger }
+		if direct {
+			returnMessage = directTouchReturnMessage(after: captionCreated ? "Caption Created" : nil)
+			captionCreated = false
+			return
+		}
+		focus = captionTrigger
 		if captionCreated {
 			captionCreated = false
 			let message = NSAttributedString(string: "Caption Created", attributes: [.accessibilitySpeechQueueAnnouncement: true])

@@ -106,7 +106,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Play Take to hear your recording alone, or Play with Primary Audio to hear it at the insertion time. Choose Record again to make another take. Recover Take opens a saved draft.",
 				"Choose Add to Project. The take appears on a Voice Over audio track. Takes that overlap use separate tracks. Project export includes the recording.",
 				"Open the take in the Voice Over timeline. Choose Open Cutting Board, trim the take, then choose Save Changes. Choose Move to Time to change its start.",
-				"Remove from Track removes this placement. Delete from Project removes the recording from Project Media and all its timeline placements. Choose Undo to restore the edit."
+				"Remove from Track removes this placement. Delete from Project removes the recording and all timeline clips that use it. Choose Undo to restore the edit."
 			]), HelpSection("One finger in Voicer Direct Touch", [
 				"Swipe right to step forward one project frame.",
 				"Swipe left to step back one project frame.",
@@ -118,7 +118,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Double-tap to play or pause. With VoiceOver, use Magic Tap.",
 				"Swipe right to play forward. Repeat to increase speed.",
 				"Swipe left to rewind. Repeat to increase speed.",
-				"Swipe down to open Record Voice Over at the playhead. Adding or canceling the take returns to Direct Touch."
+				"Swipe down to open Record Voice Over at the playhead. After Add to Project or Cancel, VoiceOver announces In Direct Touch Editor when the surface is ready."
 			]), HelpSection("Three fingers in Voicer Direct Touch", [
 				"Swipe right to go to the next voice-over edit point or project marker.",
 				"Swipe left to go to the previous voice-over edit point or project marker.",
@@ -132,7 +132,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Play In to Out to repeat the passage. Choose Stop Preview when you are finished.",
 				"For narration, select Audio Description in Timeline Chooser and choose New Description. In Audio Description, you can change Recording Name. Choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
 				"Choose Play Take to hear the original recording. Speed Up to Fit trims silence from the end of the take. Your voice plays at its recorded speed if it fits before Out. Longer narration speeds up and keeps its pitch. Choose Trim at Out to play the original take up to Out. Play with Primary Audio previews the result against the passage.",
-				"Choose Save to add the recording to Audio Description. To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
+				"Choose Save to add the recording to Audio Description. When a description sheet closes back to Direct Touch, VoiceOver announces In Direct Touch Editor. To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
 			]), HelpSection("Review and export", numbered: true, [
 				"Adjust the Timeline Chooser wheel to Descriptive Transcript or Audio Description. The entries under the timeline heading change as you turn the wheel. The playhead and markers stay in place.",
 				"Open an entry's menu or accessibility actions to go to its start, edit, or delete it. Return edits a focused entry with a keyboard. Mark a new range and choose Use Marked Range while editing to change its timing. Undo restores a deleted entry.",
@@ -166,7 +166,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Move to the beginning of the passage and choose Mark In. Move to its end and choose Mark Out.",
 				"Choose New Caption and start typing. Choose Dismiss Keyboard to finish typing and keep the caption open. Play Selection repeats the marked passage while you write. Pause Selection stops playback.",
 				"Use Insert Caption Description to add a music description, sound description, or lyrics. Replace the sample words with your own.",
-				"Choose Save. The caption appears in the Caption Timeline and over the picture during its marked range. From Direct Touch, Save returns to the active surface and announces Caption Created."
+				"Choose Save. The caption appears in the Caption Timeline and over the picture during its marked range. When you create a caption from Direct Touch, VoiceOver announces Caption Created, then In Direct Touch Editor. Cancel returns to the surface and announces In Direct Touch Editor."
 			]), HelpSection("Review and export", numbered: true, [
 				"Open a caption's menu or accessibility actions to go to its start, edit it, or delete it. To change its timing, mark a new range, edit the caption, and choose Use Marked Range.",
 				"Choose Finalize Captions to divide draft passages into captions of up to two lines. Timing uses a reading speed of 160 words per minute, the project frame rate, and the space before the next caption or project end.",
@@ -273,7 +273,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose a track with Timeline Chooser. Open its heading for Track Actions, including Track Effects and the Magnetic setting.",
 				"The primary tracks start with Magnetic on. Removing or trimming a clip shifts later clips on its track. New tracks use absolute placement. Turn Magnetic off to keep neighboring clips at their project times. Turning it on asks for confirmation when clips need to move together.",
 				"Choose Move to Playhead on a clip to place its start at the playhead. On a magnetic track, a move into another clip splits it and preserves the rest. A move beyond the last clip appends it.",
-				"Choose Remove from Track to remove one placement and keep its source in Project Media. To remove the source and every placement made from it, choose Delete from Project in the clip menu or accessibility actions, then confirm. Undo restores the source and its placements together.",
+				"Choose Remove from Track to remove one placement and keep its source in Project Media. To remove the source and every placement made from it, choose Delete from Project in the clip menu or accessibility actions, then confirm. Undo restores the source and its timeline clips together.",
 				"Choose Move to Time, enter Start Time or Start Frame, then choose Move. Absolute placement needs open time for the clip. To leave a gap on a populated magnetic track, turn Magnetic off first.",
 				"Choose Move to New Track, enter Track Name, and choose Move to keep the clip at its current time on a new track. Moving linked audio moves its video with it.",
 				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it. The drag announcement gives the clip name for one clip and the count for a group.",
@@ -375,7 +375,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Double-tap and hold the second tap to scrub. Drag left or right to preview the clip, then lift to leave the playhead there.",
 				"Swipe down to mark In. Repeat at the marker to remove it, or swipe down at a new position to move it.",
 				"Swipe up to mark Out. Repeat at the marker to remove it, or swipe up at a new position to move it.",
-				"Double-tap at a join to open its boundaries. Choose Save or Cancel to return to Direct Touch Editing.",
+				"Double-tap at a join to open its boundaries. Choose Save or Cancel to return. VoiceOver announces In Direct Touch Editor.",
 				"Triple-tap to close the editor and return to the Cutting Board."
 			]), HelpSection("Two fingers", [
 				"Double-tap to play or pause.",
@@ -391,7 +391,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe right to trim the head of the clip to the playhead.",
 				"Swipe left to trim the tail of the clip to the playhead.",
 				"Swipe down in a project Cutting Board to append the marked portion to the timeline.",
-				"Swipe up in a project Cutting Board to choose Append to Track, Add to New Track, Overwrite at Playhead, or Insert and Split at Playhead. Choose Cancel to return to Direct Touch."
+				"Swipe up in a project Cutting Board to choose Append to Track, Add to New Track, Overwrite at Playhead, or Insert and Split at Playhead. After you add the clip or choose Cancel, VoiceOver announces In Direct Touch Editor."
 			]), HelpSection("Direct Touch Scrubbing", [
 				"In Settings, choose Direct Touch Scrubbing under Editing.",
 				"Absolute is the default. The left edge is the start of the edited clip, the center is halfway through, and the right edge is the end. The playhead jumps to your finger as soon as the hold begins.",
