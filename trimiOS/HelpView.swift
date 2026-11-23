@@ -96,7 +96,7 @@ private enum HelpTopic: String, CaseIterable {
 			"Open Project Actions beside the project name and choose Export. Export includes the full timeline and its track volumes.",
 			"To make captions part of the picture, turn on Burn In Open Captions. The movie uses the captions and timing in the Caption Timeline.",
 			"For video, choose Photos to save a new video to the library, or Files to choose a folder. For an audio project, choose Files to save an M4A.",
-			"In Files, keep the project name or enter a filename, then choose Save. A chime confirms the project was exported to Photos or Files. VoiceOver announces Export complete."
+			"In Files, choose a folder and filename for the export."
 		])
 	}
 
@@ -108,20 +108,16 @@ private enum HelpTopic: String, CaseIterable {
 				"On a video track, choose Text, Black, Solid Color, or Gradient. On an audio track, create Silence. Duration in Seconds starts at five seconds, or uses the marked range when valid In and Out points are set.",
 				"For text, choose a preset and enter Text. Title and Subheading adds a second line; Name and Role adds a role below the name. Subtitle creates a text clip that appears over the video.",
 				"Open Typography to change font, bold, Font Size in points, or line spacing. Layout controls text position, safe margin, and width.",
-				"Choose Append, Insert at Playhead, Overwrite at Playhead, or New Track at Playhead. Enter a track name when creating a new track. Choose Preview to play the result in the project, then Close to return and Add to create the clip."
+				"Choose Append, Insert at Playhead, Overwrite at Playhead, or New Track at Playhead. Enter a track name when creating a new track. Choose Preview to play the result in the project before adding it."
 			]), HelpSection("Set generator colors", numbered: true, [
-				"In Appearance, choose Text Color to change the lettering. Turn off Transparent Background to reveal Background Color directly below it. The default background is black.",
-				"Turn on Outline or Shadow to reveal its color button. Turn on Text Panel to reveal Panel Color and Panel Opacity. Panel Color changes the area behind the text independently of the full-frame Background Color.",
-				"Choose a color button to open Color Chooser. Use the Preset Color menu to select a named color, including Teal, Cyan, Mint, Navy, Indigo, Lavender, and Cream.",
-				"Turn on Custom Color to disable the preset menu and reveal Red, Green, and Blue fields. Enter whole numbers from 0 to 255. The color swatch updates as you enter valid values. Dismiss Keyboard closes the keyboard. Done applies the color; Cancel discards the color edit. Both return to the color button.",
-				"For a Solid Color generator, use Color. For a Gradient, use Start Color and End Color, then choose the gradient direction. These buttons use the same color editor."
+				"Choose a preset color, or enable Custom Color and enter Red, Green, and Blue values from 0 to 255."
 			]), HelpSection("Edit a generated clip", numbered: true, [
-				"Open a generated timeline clip's menu or accessibility actions and choose Edit Generator. Change its text or appearance, then Save. Other copies retain their own settings.",
+				"Open a generated timeline clip's menu or accessibility actions and choose Edit Generator. Change its text or appearance. Other copies retain their own settings.",
 				"Edit Generator in Project Media changes the source settings for copies that have not received their own generator edits. Use the Cutting Board to trim a generated clip and Save Changes to update it on the timeline."
 			]), HelpSection("Layer clips", numbered: true, [
 				"Place the title or other visual clip on a video track above the footage. Open the timeline clip in the Cutting Board, then choose Edit Actions and Compositing.",
 				"Opacity controls how much of the clip is visible. Blend Mode combines its colors with the tracks below. Scale changes the clip size; Position and the horizontal and vertical offsets place it within the project frame.",
-				"Choose Preview to play the project with these settings. Close returns to the controls. Save applies the settings to this timeline clip. Reset Compositing restores full opacity, normal blending, original size, and centered position.",
+				"Choose Preview to play the project with these settings. Compositing applies to this timeline clip. Reset Compositing restores full opacity, normal blending, original size, and centered position.",
 				"For transparent titles, enable Transparent Background in Edit Generator. Background colors and text panels remain editable there. Project export includes the generated clips and their compositing settings."
 			])]
 		case .mixer:
@@ -157,7 +153,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Double-tap to play or pause. With VoiceOver, use Magic Tap.",
 				"Swipe right to play forward. Repeat to increase speed.",
 				"Swipe left to rewind. Repeat to increase speed.",
-				"Swipe down to open Record Voice Over at the playhead. After Add to Project or Cancel, VoiceOver announces In Direct Touch Editor when the surface is ready."
+				"Swipe down to open Record Voice Over at the playhead."
 			]), HelpSection("Three fingers in Voicer Direct Touch", [
 				"Tap once to hear the current playhead position.",
 				"Swipe right to go to the next voice-over edit point or project marker.",
@@ -168,16 +164,16 @@ private enum HelpTopic: String, CaseIterable {
 		case .describer:
 			[HelpSection("Describe a passage", numbered: true, [
 				"Open Describer in a project. Mark In at the beginning of the passage and Out at its end.",
-				"For a written entry, select Descriptive Transcript in Timeline Chooser. Choose New Description or press Command-Shift-D. In Written Description, enter Description Text and choose Save.",
-				"Choose Play In to Out to repeat the passage. Choose Stop Preview when you are finished.",
+				"For a written entry, select Descriptive Transcript in Timeline Chooser. Choose New Description or press Command-Shift-D. Enter the passage in Description Text.",
+				"Choose Play In to Out to repeat the passage while writing or preparing a recording.",
 				"For narration, select Audio Description in Timeline Chooser and choose New Description. In Audio Description, you can change Recording Name. Turn off Source Audio Playback to mute the passage during recording. Voicer and Audio Description share this setting. Choose Record. Allow microphone access when prompted. Speak after the rising cue. The project plays to Out. Choose Stop Recording when you finish speaking.",
 				"Choose Play Take to hear the original recording. Speed Up to Fit trims silence from the end of the take. Your voice plays at its recorded speed if it fits before Out. Longer narration speeds up and keeps its pitch. Choose Trim at Out to play the original take up to Out. Play with Primary Audio previews the result against the passage.",
-				"Choose Save to add the recording to Audio Description. When a description sheet closes back to Direct Touch, VoiceOver announces In Direct Touch Editor. To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
+				"To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
 			]), HelpSection("Review and export", numbered: true, [
-				"Adjust the Timeline Chooser wheel to Descriptive Transcript or Audio Description. The entries under the timeline heading change as you turn the wheel. The playhead and markers stay in place.",
+				"Use Timeline Chooser to switch between Descriptive Transcript and Audio Description at the current playhead.",
 				"Open an entry's menu or accessibility actions to go to its start, edit, or delete it. Return edits a focused entry with a keyboard. Mark a new range and choose Use Marked Range while editing to change its timing. Undo restores a deleted entry.",
 				"A transcript spans the marked range. A shorter recording ends when the take ends. Entries on the two timelines can be changed independently.",
-				"On the Audio Description timeline, choose Audio Ducking to lower project audio during descriptions. Set the amount and fade, then choose Save. Project playback and movie export use the same mix.",
+				"On the Audio Description timeline, choose Audio Ducking to lower project audio during descriptions. Set how much to lower the audio and how gradually it fades. Project playback and movie export use the same mix.",
 				"On the Descriptive Transcript timeline, choose Export Description Transcript to share the timed text as a WebVTT file. To export the movie with narration, choose Project Actions, then Export.",
 				"Open Audio in the main Settings sheet to select a microphone or audio output. Same as System follows the current microphone route."
 			]), HelpSection("One finger in Describer Direct Touch", [
@@ -205,13 +201,13 @@ private enum HelpTopic: String, CaseIterable {
 			[HelpSection("Create a caption", numbered: true, [
 				"Open a project and choose the Captioner tab. The playhead stays at the same position when you switch tabs.",
 				"Move to the beginning of the passage and choose Mark In. Move to its end and choose Mark Out.",
-				"Choose New Caption and start typing. Choose Dismiss Keyboard to finish typing and keep the caption open. Play Selection repeats the marked passage while you write. Pause Selection stops playback.",
+				"Choose New Caption and enter the caption text. Play Selection repeats the marked passage while you write.",
 				"Use Insert Caption Description to add a music description, sound description, or lyrics. Replace the sample words with your own.",
-				"Choose Save. The caption appears in the Caption Timeline and over the picture during its marked range. When you create a caption from Direct Touch, VoiceOver announces Caption Created, then In Direct Touch Editor. Cancel returns to the surface and announces In Direct Touch Editor."
+				"The caption appears in the Caption Timeline and over the picture during its marked range."
 			]), HelpSection("Review and export", numbered: true, [
 				"Open a caption's menu or accessibility actions to go to its start, edit it, or delete it. To change its timing, mark a new range, edit the caption, and choose Use Marked Range.",
 				"Choose Finalize Captions to divide draft passages into captions of up to two lines. Timing uses a reading speed of 160 words per minute, the project frame rate, and the space before the next caption or project end.",
-				"If all passages finalize, VoiceOver announces the result. If any need review, the review heading gives the count. Move to each passage to read the reason. Shorten the text or adjust the marked range and finalize again. Undo restores the previous captions.",
+				"If passages need review, read the reason for each one. Shorten the text or adjust the marked range and finalize again. Undo restores the previous captions.",
 				"Choose Export Captions, then SRT or WebVTT for timed captions, or Plain Text Transcript for the words in timeline order. Choose an app in the share sheet or choose Save to Files."
 			]), HelpSection("One finger in Captioner Direct Touch", [
 				"Swipe right to step forward one project frame.",
@@ -224,7 +220,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Double-tap to play or pause.",
 				"Swipe right to play forward. Repeat to increase speed.",
 				"Swipe left to rewind. Repeat to increase rewind speed.",
-				"Swipe down to open New Caption for the marked passage. Cancel returns to the surface without saving."
+				"Swipe down to open New Caption for the marked passage."
 			]), HelpSection("Three fingers in Captioner Direct Touch", [
 				"Tap once to hear the current playhead position.",
 				"Swipe right to move to the next caption start, marker, or project boundary.",
@@ -243,8 +239,7 @@ private enum HelpTopic: String, CaseIterable {
 		case .projectTouch:
 			[HelpSection("Open Direct Touch", numbered: true, [
 				"Open a project with clips on its timeline. In the Editor, choose Direct Touch Editor.",
-				"The surface opens at the project playhead on the selected track. Primary Video is the initial track. With VoiceOver, the surface identifies the current track.",
-				"Use Close to return to the Editor with the same playhead and track."
+				"The surface opens at the project playhead on the selected track. Primary Video is the initial track."
 			]), HelpSection("One finger", [
 				"Swipe right to step forward one project frame.",
 				"Swipe left to step back one project frame.",
@@ -265,10 +260,10 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe down to undo the last project edit.",
 				"Swipe up to redo the last project edit you undid."
 			]), HelpSection("Four fingers", [
-				"Swipe right to open Add Generator for the selected track. Choose the generator and placement, then Add. Add or Cancel returns to Direct Touch; VoiceOver announces In Direct Touch Editor.",
+				"Swipe right to open Add Generator for the selected track. Choose the generator and where to add it.",
 				"Swipe down at an edit point to apply Cross Dissolve on a video track or Cross Fade on an audio track. The first duration is one second. Later uses follow the duration last saved for Cross Dissolve or Cross Fade.",
-				"Swipe up to open Quick Fade. Set Fade In and Fade Out and their durations, preview the result, then choose Save.",
-				"Tap once to open Transitions for the clip or edit point on the selected track. Choose a transition, set its duration, preview it, then choose Save. Cancel returns without applying the changes."
+				"Swipe up to open Quick Fade. Set Fade In and Fade Out and their durations, then preview the result.",
+				"Tap once to open Transitions for the clip or edit point on the selected track. Choose a transition, set its duration, and preview it."
 			]), HelpSection("Track navigation", [
 				"Switching tracks keeps the playhead in place. Playback and scrubbing include the full project mix.",
 				"At a shared cut, the edit point uses the name of the clip beginning there in either direction. Start, End, In, and Out are also stops.",
@@ -279,13 +274,13 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Create Project and enter a name.",
 				"Choose Same as Media to use the size and frame rate of the first video you place on the timeline. To set your own, choose a resolution and enter a frame rate.",
 				"Choose Custom to enter a width and height. With Lock Aspect Ratio on, changing one dimension adjusts the other.",
-				"To set a length to aim for, turn on Use Set Project Duration and enter the Duration in Seconds. Clips can extend beyond that duration. Choose Create."
+				"To set a length to aim for, turn on Use Set Project Duration and enter the Duration in Seconds. Clips can extend beyond that duration."
 			]), HelpSection("Change project settings", numbered: true, [
 				"Open Project Actions beside the project name and choose Project Settings.",
-				"Edit the name, resolution, frame rate, or duration and choose Save. Resolution and frame rate apply to project playback and export."
+				"Edit the name, resolution, frame rate, or duration. Resolution and frame rate apply to project playback and export."
 			]), HelpSection("Arrange clips", numbered: true, [
 				"Expand Project Media. Choose Import Clip, then Photo Library or Files, and select the original.",
-				"In Photo Library, select a video to open Clip Preview. Play or scrub through it, then choose Use Clip to add it to Project Media. Back returns to the picker with the video selected.",
+				"In Photo Library, select a video to open Clip Preview. Play or scrub through it, then choose Use Clip to add it to Project Media.",
 				"Choose Open Cutting Board from the source clip's menu or accessibility actions. Trim the clip or cut a marked range.",
 				"Choose Append to add the marked portion after the last clip on the selected compatible track. With fewer than two markers, Append uses the entire current edit. Keep the Cutting Board open to append another passage.",
 				"Primary Audio Track includes the linked sound from Primary Video. The linked clip follows the video through trims, splits, moves, and removal. Use Track Effects on Primary Audio Track to adjust its volume.",
@@ -297,21 +292,20 @@ private enum HelpTopic: String, CaseIterable {
 				"Set Playback Level to choose how loud the clips should sound. Higher values are louder. Peak Limit sets the highest peak allowed by Match Loudness. A clip with a strong peak may stay quieter.",
 				"Choose Even Out Volume from Effects to soften louder passages within clips. Start Smoothing Above sets the level where smoothing begins. A higher Smoothing Strength reduces louder passages more.",
 				"During playback, turn Bypass Effects on to hear the original levels and off to hear the effects. Adjust Volume to change the level of the whole track.",
-				"Use the Remove button under an effect to take it off the track. Save applies your changes to existing clips and clips added later. Cancel discards your changes. In Editor, choose Undo to reverse a save."
+				"Track effects apply to existing clips and clips added later. In Editor, choose Undo to reverse a saved effect change."
 			]), HelpSection("Add and preview transitions", numbered: true, [
 				"Move the playhead onto a clip or to the cut where two clips meet. Open the Transitions menu beside Add Generator to choose Transitions, Quick Fade, or Cross Dissolve or Cross Fade for the selected track. To work on a specific clip, use its menu or accessibility actions. The track heading also offers these commands.",
 				"At a cut, choose a transition and its Duration in Seconds. Video choices include Cross Dissolve, Fade Out/Fade In through black, Fade Through White, directional wipes, slides, covers and reveals, circles, and Pixel Dissolve. Audio offers Cross Fade and Fade Out/Fade In.",
 				"Use Easing with a wipe, slide, cover, reveal, or circle to change its movement over time. Linear keeps a steady pace. Ease In slows toward the incoming picture, Ease Out accelerates away from the outgoing picture, and Easy Ease smooths both ends.",
 				"Turn on Crossfade Audio to include linked video sound. Choose Linear or Equal Power for the audio curve. Equal Power maintains more volume around the middle of a crossfade.",
 				"Choose Play or use Magic Tap to preview. Playback loops around the transition. Adjust the settings to prepare an updated preview. Use the playhead to choose another position.",
-				"Choose Save to apply the transition, or Cancel to discard the changes. Reopen Transitions at the same cut to adjust it or choose Remove Transition and Save. Undo and Redo restore saved transition changes.",
+				"Reopen Transitions at the same cut to adjust it or choose Remove Transition. Undo and Redo restore saved transition changes.",
 				"Choose Quick Fade to apply Fade In, Fade Out, or both, with separate durations. At a shared cut, Fade Out affects the outgoing clip and Fade In affects the incoming clip. From a selected clip's menu, both apply to that clip.",
 				"Cross transitions use extra source material on both sides of the cut. If there is too little available, shorten the transition or adjust the cut in the Cutting Board. The project duration stays the same.",
 				"Transitions follow their clips. Removing a clip, separating a joined pair, or shortening a clip beyond its transition removes the affected transition. Undo restores it.",
 				"In Editor, press X for a quick crossfade, F for Quick Fade, or Command-Shift-T for Transitions. These commands use the playhead on the selected track. Commands in a clip's own menu apply to that clip."
 			]), HelpSection("Project playback and navigation", [
 				"Choose Direct Touch Editor to use gestures on the project. The Project Direct Touch Editor Help topic lists each gesture.",
-				"Choose Play to preview the timeline. Choose Pause to stop at the current position.",
 				"Choose Rewind or Fast Forward to play in that direction. Repeat to select 1x, 1.5x, 2x, 4x, or 8x. Changing direction starts at 1x.",
 				"Use the Go to Start accessibility action on Rewind or Go to End on Fast Forward to move to that boundary of the project.",
 				"Drag across Playhead to preview the project from start to end. Lift to leave the playhead there.",
@@ -320,23 +314,21 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Jump to Time to enter a time or frame in your selected timecode format.",
 				"Choose Step Back or Step Forward to move one project frame. In the Actions rotor, choose the 10-frame action or the previous or next edit point. Double-tap to use that action again while the button stays focused.",
 				"Previous Edit Point and Next Edit Point move between clip boundaries on the selected track, project markers, Start, and End. VoiceOver identifies the clip at a boundary and reads the position. At a shared cut, it names the incoming clip.",
-				"The edit-point buttons sit beside Step Back and Step Forward when space allows. On narrower layouts they appear underneath, with Previous on the left and Next on the right.",
 				"Choose Mark In or Mark Out to set a marker. Its actions let you go to it or clear it. Pressing the marker button at its marked position also clears it. Opening a project clears its previous In and Out markers."
 			]), HelpSection("Name a project clip", numbered: true, [
 				"Expand Project Media. Open the imported clip's menu or actions and choose Rename Clip.",
-				"Enter a Clip Name and choose Save. The project uses that name for the source and its timeline clips.",
+				"Enter a Clip Name. The project uses that name for the source and its timeline clips.",
 				"Append a second passage from the same source. A clip named Interview becomes Interview A on the timeline, and the new passage is Interview B. Each clip keeps its letter when moved."
 			]), HelpSection("Full Screen Preview", numbered: true, [
 				"Pause or step to the picture you want to inspect. With VoiceOver, focus Video frame to explore the image.",
 				"Choose Full Screen Preview beneath the video preview to open the project at the playhead.",
-				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time.",
-				"Choose Close to return to editing with the playhead at the preview position."
+				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time."
 			]), HelpSection("Add at Playhead", numbered: true, [
 				"Set the project playhead to the destination time before opening the Cutting Board. Mark the source passage and choose Add at Playhead.",
 				"Choose New Track and enter a name, or choose an existing destination track for Overwrite or Split.",
 				"Overwrite replaces the covered time. The original resumes after the added clip. Split inserts the selection and moves later material on that track forward.",
 				"When a named video track first receives a clip with audio included, its linked audio track appears. The sound follows the video through edits. Adjust its volume in Track Effects.",
-				"For a video cutaway, choose New Track. Turn off Include Clip Audio to keep the underlying sound. Choose Add."
+				"For a video cutaway, choose New Track. Turn off Include Clip Audio to keep the underlying sound."
 			]), HelpSection("Track actions and clip movement", numbered: true, [
 				"Choose a track with Timeline Chooser. Open its heading for Track Actions, including Track Effects and the Magnetic setting.",
 				"The primary tracks start with Magnetic on. Removing or trimming a clip shifts later clips on its track. New tracks use absolute placement. Turn Magnetic off to keep neighboring clips at their project times. Turning it on asks for confirmation when clips need to move together.",
@@ -344,8 +336,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Remove from Track to remove one placement and keep its source in Project Media. To remove the source and every placement made from it, choose Delete from Project in the clip menu or accessibility actions, then confirm. Undo restores the source and its timeline clips together.",
 				"Choose Move to Time, enter Start Time or Start Frame, then choose Move. Absolute placement needs open time for the clip. To leave a gap on a populated magnetic track, turn Magnetic off first.",
 				"Choose Move to New Track, enter Track Name, and choose Move to keep the clip at its current time on a new track. Moving linked audio moves its video with it.",
-				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it. The drag announcement gives the clip name for one clip and the count for a group.",
-				"Choose the destination track with Timeline Chooser. On the destination clip, choose Drop Before or Drop After followed by the destination clip name. The confirmation identifies where the clip or group landed. On an empty compatible track, choose Drop on Track. Cancel Drag abandons the move. After a drop, choose Undo or shake the device to restore the previous order. A group move takes one undo.",
+				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it.",
+				"Choose the destination track with Timeline Chooser. On the destination clip, choose Drop Before or Drop After followed by the destination clip name. On an empty compatible track, choose Drop on Track. After a drop, choose Undo or shake the device to restore the previous order. A group move takes one undo.",
 				"You can also drag a clip onto the leading or trailing half of another clip to place it before or after that clip."
 			]), Self.projectExport, HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
@@ -356,7 +348,7 @@ private enum HelpTopic: String, CaseIterable {
 				"S marks or unmarks a clip. With a clip focused, Shift-S starts a drag or adds the clip to the current drag. Use Left or Right Arrow to choose a destination and Command-Option-V to drop. Escape cancels. Without a selected destination, Command-Option-V drops after the focused clip.",
 				"Command-Option-Left and Command-Option-Right move a clip or marked group earlier or later. Delete removes the selected clips. Command-Z undoes and Command-Shift-Z redoes."
 			]), HelpSection("Reopen and reconnect", numbered: true, [
-				"Choose Close, then My Projects and the project name. Choose Cancel during timeline preparation to return to the main screen. Trimatillo saves each project change as you work.",
+				"Choose My Projects on the main screen, then the project name. Trimatillo saves each project change as you work.",
 				"If a saved project cannot be read, restore its project file from backup. Choose another project in My Projects to keep editing.",
 				"If a source is unavailable, open Project Media, choose the source, and reconnect it from Files or Photos. Choose the original to restore access for every placement.",
 				"When moving to a new device, restore Trimatillo's project data from your device backup and make the original media available through Files or Photos."
@@ -385,20 +377,19 @@ private enum HelpTopic: String, CaseIterable {
 		case .open:
 			[HelpSection("From the welcome screen", [
 				"Trim a Clip opens the source menu. Choose Photo Library for a video or Files for an audio or video clip.",
-				"Use the picker's search field to find a clip. In Photo Library, select a video to open Clip Preview. When the preview is ready, use Play, Magic Tap, or the playback slider to check the video. VoiceOver announces \"Clip preview ready\" when playback becomes available.",
-				"Choose Use Clip to open the Cutting Board, or Back to return to the picker with that video selected. Choose Cancel in the picker to return to Trim a Clip.",
+				"Use the picker's search field to find a clip. In Photo Library, select a video to open Clip Preview. When the preview is ready, use Play, Magic Tap, or the playback slider to check the video.",
+				"Choose Use Clip to open the video in the Cutting Board.",
 				"Choose Clip Info at the top of the board to read the clip's filename, duration, and available media details."
 			]), HelpSection("From Photos", numbered: true, [
 				"Select one video in Photos and choose Share.",
 				"Choose Trimatillo from the apps row. Choose More to see the full list.",
-				"Edit the shared video on the Video Cutting Board. Choose Export to save a copy. Choose Close to return to Photos."
+				"Edit the shared video on the Video Cutting Board. Choose Export to save a copy."
 			])]
 		case .playback:
 			[HelpSection("Move through a clip", [
-				"The clip preview is followed by the Playhead slider and playback controls. With VoiceOver, focus Clip preview to use image description tools.",
+				"With VoiceOver, focus Clip preview to use image description tools.",
 				"Drag the Playhead slider to scrub through the edited clip. Lift your finger to leave the playhead at that position.",
 				"With VoiceOver, swipe up or down on Playhead to move five seconds forward or back. For clips shorter than 50 seconds, each swipe moves one tenth of the clip. Double-tap and hold, then drag to scrub. Magic Tap plays or pauses while Playhead is focused.",
-				"Play starts at the playhead. Pause holds the current position.",
 				"Fast Forward plays forward. Rewind plays backward. Repeat either control to advance through 1x, 1.5x, 2x, 4x, and 8x. Switching direction starts at 1x.",
 				"Use the Go to Start accessibility action on Rewind or Go to End on Fast Forward to move to that boundary of the edited clip.",
 				"Step Back and Step Forward move to the previous or next frame in a video. In a clip with a variable frame rate, the time between steps can change as you move through it.",
@@ -408,12 +399,11 @@ private enum HelpTopic: String, CaseIterable {
 				"For frame entry, choose Frames under Timecode in Settings before opening the clip. On the Cutting Board, choose Jump to Time, enter a frame number, and choose Jump. Counting starts at zero."
 			]), HelpSection("Full Screen Preview", numbered: true, [
 				"Choose Full Screen Preview beside the playback controls to open the edited clip at the playhead.",
-				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time.",
-				"Choose Close to return to editing with the playhead at the preview position."
+				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time."
 			])]
 		case .cuts:
 			[HelpSection("Select a range", [
-				"Mark In sets the start of a selection at the playhead. Mark Out sets its end. Place Out after In. A bar along the bottom of the preview shows the range with a tick at each end.",
+				"Mark In sets the start of a selection at the playhead. Mark Out sets its end. Place Out after In.",
 				"Move the playhead and set the same marker again to change its position.",
 				"Edit Actions includes commands to clear each marker, play the marked range, and delete the selected passage."
 			]), HelpSection("Trim and review", [
@@ -421,15 +411,15 @@ private enum HelpTopic: String, CaseIterable {
 				"Previous Edit Point and Next Edit Point move among joins, markers, and the start and end of the clip.",
 				"At a join, choose Adjust Edit Point in Edit Actions. Outgoing Out Point sets where the outgoing clip ends. Incoming In Point sets where the incoming clip begins.",
 				"With VoiceOver focused on either point, swipe up to advance one source frame or down to go back one. In an audio clip, each swipe moves one thirtieth of a second. The Out Point previews sound before the cut and the In Point previews sound after it.",
-				"Activate either point to type a source time or frame number. Choose Done to update the point or Cancel to keep its previous value. On the Edit Point sheet, choose Save to apply the join or Cancel to discard your adjustments.",
+				"Activate either point to type a source time or frame number.",
 				"Choose Undo to reverse a marker change, trim, deletion, or saved join adjustment. Repeat to undo earlier edits. To reapply an edit, choose Redo in Edit Actions.",
 				"To undo by shaking your device, turn on Shake to Undo in Trimatillo Settings and in the device's Accessibility settings under Touch."
 			]), HelpSection("Trim silences", numbered: true, [
 				"Open Edit Actions and choose Trim Silences. With In and Out set, leave Only Between In and Out on to search that passage.",
 				"Adjust the Silence threshold slider. A higher value includes louder sounds. Minimum silence sets the shortest pause to find. Retained silence sets how much of each pause to keep, divided between its two ends.",
-				"Choose Find Pauses. If No Pauses Found appears, choose OK to return to Find Pauses. Adjust the settings to search again.",
-				"For each pause, choose its numbered preview button to play that pause with up to half a second of the original clip on either side. Close the preview to return to that button. Move the pause's Start or End slider to change the cut, or turn off Remove Pause to keep that passage.",
-				"Time to remove shows the total duration of the selected cuts. Choose Preview Trimmed Clip to open Trimmed Silence Preview and play those cuts together. Choose Close to return to Preview Trimmed Clip.",
+				"Choose Find Pauses. If no pauses are found, adjust the detection settings and search again.",
+				"For each pause, choose its numbered preview button to play that pause with up to half a second of the original clip on either side. Move the pause's Start or End slider to change the cut, or turn off Remove Pause to keep that passage.",
+				"Time to remove shows the total duration of the selected cuts. Choose Preview Trimmed Clip to hear those cuts together.",
 				"Choose Apply Cuts. Undo restores all the pauses from this operation in one step."
 			])]
 		case .actions:
@@ -441,14 +431,14 @@ private enum HelpTopic: String, CaseIterable {
 				"Use Magic Tap, a two-finger double-tap, to play or pause the clip."
 			])]
 		case .touch:
-			[HelpSection("Open the editor", ["Choose Direct Touch Editor on the Cutting Board. Perform gestures on the editing surface below the heading and Close button."]),
+			[HelpSection("Open the editor", ["Choose Direct Touch Editor on the Cutting Board to use the following gestures."]),
 			HelpSection("One finger", [
 				"Swipe right to step forward.",
 				"Swipe left to step back.",
 				"Double-tap and hold the second tap to scrub. Drag left or right to preview the clip, then lift to leave the playhead there.",
 				"Swipe down to mark In. Repeat at the marker to remove it, or swipe down at a new position to move it.",
 				"Swipe up to mark Out. Repeat at the marker to remove it, or swipe up at a new position to move it.",
-				"Double-tap at a join to open its boundaries. Choose Save or Cancel to return. VoiceOver announces In Direct Touch Editor.",
+				"Double-tap at a join to adjust its boundaries.",
 				"Triple-tap to close the editor and return to the Cutting Board."
 			]), HelpSection("Two fingers", [
 				"Double-tap to play or pause.",
@@ -465,7 +455,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe right to trim the head of the clip to the playhead.",
 				"Swipe left to trim the tail of the clip to the playhead.",
 				"Swipe down in a project Cutting Board to append the marked portion to the timeline.",
-				"Swipe up in a project Cutting Board to choose Append to Track, Add to New Track, Overwrite at Playhead, or Insert and Split at Playhead. After you add the clip or choose Cancel, VoiceOver announces In Direct Touch Editor."
+				"Swipe up in a project Cutting Board to choose Append to Track, Add to New Track, Overwrite at Playhead, or Insert and Split at Playhead."
 			]), HelpSection("Direct Touch Scrubbing", [
 				"In Settings, choose Direct Touch Scrubbing under Editing.",
 				"Absolute is the default. The left edge is the start of the edited clip, the center is halfway through, and the right edge is the end. The playhead jumps to your finger as soon as the hold begins.",
@@ -497,9 +487,9 @@ private enum HelpTopic: String, CaseIterable {
 			[Self.projectExport, HelpSection("Export from the Cutting Board", [
 				"Save Changes to Original updates the selected Photos video or replaces a writable MOV, MP4, or M4A original in Files.",
 				"Save as New Clip creates a separate clip. For video, choose Photos or Files. For audio, use the Files picker.",
-				"In Files, select the folder, change the suggested filename if desired, and choose Save.",
+				"In Files, choose a folder and filename for the edited clip.",
 				"When editing from the Photos Share sheet, choose Export, then Photos or Files under Save as New Clip.",
-				"In Trim a Clip, choose Close, then Close Clip to finish. Choose Cancel to continue editing. Export edits you want to keep before closing."
+				"Export edits you want to keep before closing a clip in Trim a Clip."
 			])]
 		}
 	}

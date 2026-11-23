@@ -384,22 +384,21 @@ private struct GeneratorColorEditor: View {
 	var body: some View {
 		NavigationStack {
 			Form {
-				Picker("Preset Color", selection: $choice) {
-					ForEach(GeneratorNamedColor.allCases.filter { $0 != .custom }, id: \.self) { preset in
-						Label {
-							Text(preset.rawValue)
-						} icon: {
-							let image = swatch(preset.color ?? .black)
-							if let pixels = image.cgImage {
-								Image(decorative: pixels, scale: image.scale).renderingMode(.original)
-							}
-						}.tag(preset)
+				HStack {
+					Picker("Preset Color", selection: $choice) {
+						ForEach(GeneratorNamedColor.allCases.filter { $0 != .custom }, id: \.self) { preset in
+							Text(preset.rawValue).tag(preset)
+						}
 					}
+					.pickerStyle(.menu)
+					.disabled(custom)
+					RoundedRectangle(cornerRadius: 3)
+						.fill(Color(cgColor: (choice.color ?? .black).cg))
+						.frame(width: 24, height: 24)
+						.overlay { RoundedRectangle(cornerRadius: 3).stroke(choice == .white ? Color.black : Color.secondary) }
+						.opacity(custom ? 0.5 : 1)
+						.accessibilityHidden(true)
 				}
-				.pickerStyle(.menu)
-				.accessibilityLabel("Preset Color")
-				.accessibilityValue(choice.rawValue)
-				.disabled(custom)
 				Toggle("Custom Color", isOn: $custom)
 				if custom {
 					channel("Red", text: $red)
@@ -450,13 +449,4 @@ private struct GeneratorColorEditor: View {
 			.editorFieldLabel(title)
 	}
 
-	private func swatch(_ color: GeneratorColor) -> UIImage {
-		UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24)).image { context in
-			let rect = CGRect(x: 1, y: 1, width: 22, height: 22)
-			context.cgContext.setFillColor(color.cg)
-			context.cgContext.fill(rect)
-			context.cgContext.setStrokeColor(UIColor.secondaryLabel.cgColor)
-			context.cgContext.stroke(rect)
-		}
-	}
 }
