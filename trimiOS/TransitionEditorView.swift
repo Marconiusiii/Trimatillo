@@ -36,6 +36,9 @@ struct TransitionEditorView: View {
 	@State private var removing = false
 	@State private var loaded = false
 	@State private var resume = false
+	@State private var preparation: Task<Void, Never>?
+	@State private var deadline: Task<Void, Never>?
+	@State private var preparationID = UUID()
 	@FocusState private var typing: Bool
 
 	init(project: EditingProject, request: ProjectTransitionRequest, format: TimecodeFormat,
@@ -65,6 +68,7 @@ struct TransitionEditorView: View {
 		return value.isFinite && value > 0 ? value : 1
 	}
 	private var title: String { request.quickFade ? "Quick Fade" : "Transitions" }
+	private var loadingTitle: LocalizedStringKey { request.quickFade ? "Preparing Quick Fade Preview" : "Preparing Transition Preview" }
 	private var edits: [ProjectTransition] {
 		if removing { return [] }
 		func effect(_ edge: ProjectTransition.Edge, seconds: Double) -> ProjectTransition {
@@ -110,67 +114,74 @@ struct TransitionEditorView: View {
 
 	var body: some View {
 		NavigationStack {
-			Form {
-				Section {
-					if request.track.kind == .video {
-						ProjectPreview(player: preview.player)
-							.aspectRatio(CGFloat(project.picture?.width ?? 16) / CGFloat(project.picture?.height ?? 9), contentMode: .fit)
-					}
-					ProjectTimelineSlider(playhead: preview.playhead, playback: preview, duration: project.duration,
-						points: project.editPoints(on: request.track), frame: project.frame, format: format, formatTime: formatTime)
-						.disabled(!preview.ready || preparing)
-					Button { preview.toggle() } label: {
-						Label(preview.transport.playing ? "Pause" : "Play", systemImage: preview.transport.playing ? "pause.fill" : "play.fill")
-							.labelStyle(.iconOnly).editorTouchRow()
-					}.disabled(!preview.ready || preparing)
-					if preparing { ProgressView("Preparing Transition Preview") }
-				}
-				if request.quickFade {
-					Toggle("Fade In", isOn: $fadeIn)
-					if fadeIn { duration("Fade In Duration in Seconds", value: $inSeconds) }
-					Toggle("Fade Out", isOn: $fadeOut)
-					if fadeOut { duration("Fade Out Duration in Seconds", value: $outSeconds) }
+			Group {
+				if preparing && !loaded {
+					LoadingStatusView(loadingTitle)
 				} else {
-					if !request.between {
-						Picker("Position", selection: $edge) {
-							Text("Fade In").tag(ProjectTransition.Edge.intro)
-							Text("Fade Out").tag(ProjectTransition.Edge.outro)
-						}
-					} else {
-						Picker("Transition", selection: $style) {
-							ForEach(TransitionStyle.allCases.filter { $0 != .fade && (request.track.kind == .video || [.crossDissolve, .fadeOutIn].contains($0)) }) { style in
-								Text(style == .crossDissolve && request.track.kind == .audio ? "Cross Fade" : style.title).tag(style)
+					Form {
+						if let error {
+							Section {
+								Text(error)
+								Button("Retry Preview", action: startPreparation)
 							}
 						}
-						if style.supportsEase {
-							Picker("Easing", selection: $ease) {
-								ForEach(TransitionEase.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+						Section {
+							if request.track.kind == .video {
+								ProjectPreview(player: preview.player)
+									.aspectRatio(CGFloat(project.picture?.width ?? 16) / CGFloat(project.picture?.height ?? 9), contentMode: .fit)
+							}
+							ProjectTimelineSlider(playhead: preview.playhead, playback: preview, duration: project.duration,
+								points: project.editPoints(on: request.track), frame: project.frame, format: format, formatTime: formatTime)
+								.disabled(!preview.ready || preparing)
+							Button { preview.toggle() } label: {
+								Label(preview.transport.playing ? "Pause" : "Play", systemImage: preview.transport.playing ? "pause.fill" : "play.fill")
+									.labelStyle(.iconOnly).editorTouchRow()
+							}.disabled(!preview.ready || preparing)
+							if preparing { ProgressView(loadingTitle) }
+						}
+						if request.quickFade {
+							Toggle("Fade In", isOn: $fadeIn)
+							if fadeIn { duration("Fade In Duration in Seconds", value: $inSeconds) }
+							Toggle("Fade Out", isOn: $fadeOut)
+							if fadeOut { duration("Fade Out Duration in Seconds", value: $outSeconds) }
+						} else {
+							if !request.between {
+								Picker("Position", selection: $edge) {
+									Text("Fade In").tag(ProjectTransition.Edge.intro)
+									Text("Fade Out").tag(ProjectTransition.Edge.outro)
+								}
+							} else {
+								Picker("Transition", selection: $style) {
+									ForEach(TransitionStyle.allCases.filter { $0 != .fade && (request.track.kind == .video || [.crossDissolve, .fadeOutIn].contains($0)) }) { style in
+										Text(style == .crossDissolve && request.track.kind == .audio ? "Cross Fade" : style.title).tag(style)
+									}
+								}
+								if style.supportsEase {
+									Picker("Easing", selection: $ease) {
+										ForEach(TransitionEase.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+									}
+								}
+							}
+							duration("Duration in Seconds", value: $seconds)
+						}
+						if request.track.kind == .video { Toggle(request.quickFade ? "Fade Audio" : "Crossfade Audio", isOn: $includeAudio) }
+						if request.track.kind == .audio || includeAudio {
+							Picker("Audio Curve", selection: $equalPower) {
+								Text("Linear").tag(false)
+								Text("Equal Power").tag(true)
 							}
 						}
+						if (project.transitions ?? []).contains(where: manages) {
+							Button("Remove Transition", role: .destructive) { removing = true }
+								.disabled(removing)
+						}
 					}
-					duration("Duration in Seconds", value: $seconds)
+					.editorListMargins()
 				}
-				if request.track.kind == .video { Toggle(request.quickFade ? "Fade Audio" : "Crossfade Audio", isOn: $includeAudio) }
-				if request.track.kind == .audio || includeAudio {
-					Picker("Audio Curve", selection: $equalPower) {
-						Text("Linear").tag(false)
-						Text("Equal Power").tag(true)
-					}
-				}
-				if (project.transitions ?? []).contains(where: manages) {
-					Button("Remove Transition", role: .destructive) { removing = true }
-						.disabled(removing)
-				}
-				if let error { Text(error) }
-			}
-			.editorListMargins()
-			.accessibilityHidden(preparing && !loaded)
-			.overlay {
-				if preparing && !loaded { LoadingStatusView("Preparing Transition Preview", cancel: { dismiss() }) }
 			}
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
-				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { stopPreparation(); dismiss() } }
 				ToolbarItem(placement: .principal) { Text(title).accessibilityAddTraits(.isHeader) }
 				ToolbarItem(placement: .confirmationAction) {
 					Button("Save", action: commit).disabled(preparing || error != nil || !preview.ready)
@@ -180,9 +191,15 @@ struct TransitionEditorView: View {
 		}
 		.editorAppearance()
 		.accessibilityAction(.magicTap) { if !preparing { preview.toggle() } }
-		.task(id: settingsKey) { await prepare() }
+		.task(id: settingsKey) { startPreparation() }
 		.onChange(of: preview.ready) {
-			if preview.ready { loaded = true; preparing = false; if resume { preview.toggle(); resume = false } }
+			if preview.ready {
+				deadline?.cancel()
+				deadline = nil
+				loaded = true
+				preparing = false
+				if resume { preview.toggle(); resume = false }
+			}
 		}
 		.onChange(of: parameterKey) { removing = false }
 		.onChange(of: style) { _, style in
@@ -190,16 +207,49 @@ struct TransitionEditorView: View {
 			let saved = (project.transitions ?? []).first { manages($0) && $0.style == style }
 			seconds = saved?.seconds ?? Self.lastDuration(audio: request.track.kind == .audio, style: style)
 		}
-		.onChange(of: preview.failure) { if let failure = preview.failure { error = failure; preparing = false } }
+		.onChange(of: preview.failure) {
+			if let failure = preview.failure {
+				stopPreparation()
+				error = failure
+				preparing = false
+			}
+		}
 		.onChange(of: phase) { if phase != .active { preview.pause(); resume = false } }
-		.onDisappear { preview.cancelPreparation(); preview.pause() }
+		.onDisappear { stopPreparation() }
 	}
 	private func duration(_ label: String, value: Binding<Double>) -> some View {
 		TextField("", value: value, format: .number)
 			.keyboardType(.decimalPad).focused($typing).editorFieldLabel(label)
 	}
-	private func prepare() async {
+	private func stopPreparation() {
+		preparationID = UUID()
+		preparation?.cancel()
+		preparation = nil
+		deadline?.cancel()
+		deadline = nil
+		resume = false
+		preview.cancelPreparation()
+		preview.pause()
+	}
+	private func startPreparation() {
 		let wasPlaying = preview.transport.playing
+		stopPreparation()
+		let id = preparationID
+		preparing = true
+		error = nil
+		preparation = Task { await prepare(id: id, wasPlaying: wasPlaying) }
+		deadline = Task { @MainActor in
+			do { try await Task.sleep(for: .seconds(30)) }
+			catch { return }
+			guard preparationID == id, preparing else { return }
+			stopPreparation()
+			let failure = ProjectFailure("Could not prepare the preview in time. Choose Retry Preview, or close this screen and reopen the project.")
+			preview.failPreparation(failure)
+			error = failure.localizedDescription
+			preparing = false
+		}
+	}
+	private func prepare(id: UUID, wasPlaying: Bool) async {
 		let ranges = edits.compactMap { $0.range(in: project) }
 		let first = ranges.map(\.start).min() ?? request.returnTime
 		let last = ranges.map(\.end).max() ?? request.returnTime
@@ -217,9 +267,13 @@ struct TransitionEditorView: View {
 			preview.playhead.position = position
 			await preview.prepare(candidate, audition: request.track)
 			try Task.checkCancellation()
+			guard preparationID == id else { return }
 			if end > start { preview.setMixerLoop(CMTimeRange(start: start, end: end)) }
 		} catch {
-			guard !Task.isCancelled else { return }
+			guard !Task.isCancelled, preparationID == id else { return }
+			deadline?.cancel()
+			deadline = nil
+			resume = false
 			self.error = error.localizedDescription
 			preparing = false
 		}

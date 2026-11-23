@@ -319,6 +319,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Use Easing with a wipe, slide, cover, reveal, or circle to change its movement over time. Linear keeps a steady pace. Ease In slows toward the incoming picture, Ease Out accelerates away from the outgoing picture, and Easy Ease smooths both ends.",
 				"Turn on Crossfade Audio to include linked video sound. Choose Linear or Equal Power for the audio curve. Equal Power maintains more volume around the middle of a crossfade.",
 				"Use Magic Tap or Play to preview. Playback loops around the transition. Adjust the settings to prepare an updated preview. Use the playhead to choose another position.",
+				"If preview preparation fails, choose Retry Preview. If it fails again, close the transition screen and reopen the project.",
 				"Reopen Transitions at the same cut to adjust it or choose Remove Transition. Undo and Redo restore saved transition changes.",
 				"Choose Quick Fade to apply Fade In, Fade Out, or both, with separate durations. At a shared cut, Fade Out affects the outgoing clip and Fade In affects the incoming clip. From a selected clip's menu, both apply to that clip.",
 				"Cross transitions use extra source material on both sides of the cut. If there is too little available, shorten the transition or adjust the cut in the Cutting Board. The project duration stays the same.",

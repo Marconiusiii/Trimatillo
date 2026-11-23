@@ -931,6 +931,7 @@ private struct ScrubAudioWindow {
 		let request = generation
 		pause()
 		window = nil
+		failure = nil
 		ready = false
 		ended = nil
 		playbackFailed = nil
