@@ -88,6 +88,7 @@ struct BoardProjectActions {
 	let overwrite: () -> Void
 	let update: (() -> Void)?
 	let placementSheet: (_ directTouch: Bool, _ placed: @escaping (String) -> Void) -> AnyView
+	var compositingSheet: (() -> AnyView)? = nil
 }
 
 struct CuttingBoardView: View {
@@ -96,6 +97,7 @@ struct CuttingBoardView: View {
 	@ObservedObject var session: CuttingBoardSession
 	var closeDirectTouchEditor: (() -> Void)?
 	@State private var showingDirectTouchEditor = false
+	@State private var showingCompositing = false
 	@AccessibilityFocusState(for: .voiceOver) private var launcherFocused: Bool
 	@AccessibilityFocusState(for: .voiceOver) private var surfaceFocused: Bool
 	@State private var preview: PreviewPlayback?
@@ -252,6 +254,7 @@ struct CuttingBoardView: View {
 				let actions = editCommands(fromMenu: true)
 				Menu { EditorMenuAction.buttons(actions) } label: { Text("Edit Actions") }
 					.editorMenuActions("Edit Actions", actions)
+					.sheet(isPresented: $showingCompositing, onDismiss: { editActionsFocused = true }) { projectActions?.compositingSheet?() }
 					.accessibilityFocused($editActionsFocused)
 					.sheet(item: sheetBinding(forMenu: true), onDismiss: {
 						#if DEBUG
@@ -347,6 +350,7 @@ struct CuttingBoardView: View {
 
 	private func editCommands(fromMenu: Bool) -> [EditorMenuAction] {
 		var actions: [EditorMenuAction] = []
+		if projectActions?.compositingSheet != nil { actions.append(EditorMenuAction("Compositing") { session.releaseAudio(); showingCompositing = true }) }
 		if session.canRedo { actions.append(EditorMenuAction("Redo") { session.redo() }) }
 		actions.append(EditorMenuAction("Mark In Here") { session.mark(true) })
 		actions.append(EditorMenuAction("Mark Out Here") { session.mark(false) })

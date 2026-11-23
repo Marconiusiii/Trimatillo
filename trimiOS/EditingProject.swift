@@ -57,6 +57,8 @@ nonisolated struct ProjectPlacement: Identifiable, Codable, Equatable {
 	var additionalTrack: String?
 	var omitAudio: Bool?
 	var loudnessGain: Float?
+	var generatorOverride: GeneratorDefinition?
+	var compositing: ClipCompositing?
 	var trackID: String { additionalTrack ?? track.rawValue }
 	var start: ProjectTime
 	var ranges: [ProjectRange]
@@ -82,7 +84,7 @@ nonisolated struct ProjectPicture: Codable, Equatable {
 
 nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 	var id = UUID()
-	var version = 11
+	var version = 12
 	var name: String
 	var picture: ProjectPicture?
 	var matchesMedia: Bool?
@@ -294,6 +296,7 @@ nonisolated struct EditingProject: Identifiable, Codable, Equatable {
 			labelIndex: previous?.labelIndex, track: track.kind,
 			additionalTrack: track.id == track.kind.rawValue ? nil : track.id, omitAudio: omitAudio,
 			loudnessGain: previous?.sourceID == source.id ? previous?.loudnessGain : nil,
+			generatorOverride: previous?.generatorOverride, compositing: previous?.compositing,
 			start: ProjectTime(start), ranges: ranges.map(ProjectRange.init))
 		if mode == .update || mode == .append {
 			let existing = clips(on: track)
@@ -468,7 +471,7 @@ nonisolated enum ProjectLibrary {
 	static func load(_ url: URL) throws -> EditingProject {
 		var project = try JSONDecoder().decode(EditingProject.self, from: data(at: manifest(url)))
 		if let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent), id != project.id { throw CocoaError(.fileReadCorruptFile) }
-		guard (1...11).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
+		guard (1...12).contains(project.version) else { throw ProjectFailure("Update Trimatillo to open this project.") }
 		try validate(project)
 		try project.validateTransitions()
 		if project.version < 3 { project.restoreAudioPartners() }
@@ -496,6 +499,9 @@ nonisolated enum ProjectLibrary {
 		var sources = [UUID: ProjectMediaSource]()
 		for source in project.sources {
 			if case .recording(let owner, _) = source.reference, owner != project.id { throw corrupt }
+			if let generator = source.generator {
+				guard generator.isValid, source.duration == generator.source.duration, source.picture == generator.source.picture, source.hasAudio == generator.source.hasAudio else { throw corrupt }
+			}
 			guard sources.updateValue(source, forKey: source.id) == nil, validTime(source.duration),
 				source.duration.value > 0, source.picture.map(validPicture) ?? source.hasAudio else { throw corrupt }
 		}
@@ -527,6 +533,10 @@ nonisolated enum ProjectLibrary {
 			guard ids.insert(clip.id).inserted, let source = sources[clip.sourceID],
 				tracks[clip.trackID] == clip.track, clip.track == (source.picture == nil ? .audio : .video),
 				(0...1001).contains(clip.loudnessGain ?? 1), validTime(clip.start), !clip.ranges.isEmpty else { throw corrupt }
+			if let settings = clip.compositing, !settings.isValid || clip.track != .video { throw corrupt }
+			if let generator = clip.generatorOverride {
+				guard let original = source.generator, generator.isValid, generator.kind == original.kind, generator.seconds == original.seconds, generator.picture == original.picture else { throw corrupt }
+			}
 			for range in clip.ranges {
 				guard validTime(range.start), validTime(range.length), range.length.value > 0,
 					range.range.end.isNumeric, range.range.end <= source.duration.time else { throw corrupt }

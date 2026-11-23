@@ -7,6 +7,8 @@ nonisolated struct TransitionVideoLayer {
 	let trackID: String
 	let range: CMTimeRange
 	let transform: CGAffineTransform
+	var generatedImage: CIImage? = nil
+	var compositing: ClipCompositing = ClipCompositing()
 }
 
 nonisolated final class TransitionInstruction: NSObject, AVVideoCompositionInstructionProtocol, @unchecked Sendable {
@@ -76,25 +78,29 @@ nonisolated final class TransitionCompositor: NSObject, AVVideoCompositing, @unc
 				let rect = CGRect(origin: .zero, size: instruction.size)
 				let black = CIImage(color: .black).cropped(to: rect)
 				func image(_ layer: TransitionVideoLayer?) -> CIImage {
-					guard let layer, let frame = request.sourceFrame(byTrackID: layer.id) else { return black }
+					guard let layer else { return CIImage.empty() }
+					if let generated = layer.generatedImage { return layer.compositing.apply(generated, rect: rect) }
+					guard let frame = request.sourceFrame(byTrackID: layer.id) else { return CIImage.empty() }
 					let source = CIImage(cvPixelBuffer: frame)
 					let flipSource = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: source.extent.height)
 					let flipOutput = CGAffineTransform(a: 1, b: 0, c: 0, d: -1, tx: 0, ty: rect.height)
-					return source.transformed(by: flipSource.concatenating(layer.transform).concatenating(flipOutput))
-						.composited(over: black).cropped(to: rect)
+					return layer.compositing.apply(source.transformed(by: flipSource.concatenating(layer.transform).concatenating(flipOutput)).cropped(to: rect), rect: rect)
 				}
 				let time = request.compositionTime
 				var result = black
 				for track in instruction.trackOrder.reversed() {
 					let active = instruction.layers.filter { $0.trackID == track && $0.range.containsTime(time) }
 					guard !active.isEmpty else { continue }
+					let foreground: CIImage
 					if let (effect, range) = instruction.effects.first(where: { $0.0.trackID == track && $0.1.containsTime(time) }) {
 						let raw = min(1, max(0, (time - range.start).seconds / range.duration.seconds))
 						let progress = effect.style.supportsEase ? effect.ease.progress(raw) : raw
 						let outgoing = active.first { $0.clipID == effect.outgoing }
 						let incoming = active.first { $0.clipID == effect.incoming }
-						result = render(effect, outgoing: image(outgoing), incoming: image(incoming), progress: progress, rect: rect)
-					} else { result = image(active.first) }
+						foreground = render(effect, outgoing: image(outgoing), incoming: image(incoming), progress: progress, rect: rect)
+					} else { foreground = image(active.first) }
+					let mode = active.last?.compositing.blend ?? .normal
+					result = foreground.applyingFilter(mode.filter, parameters: [kCIInputBackgroundImageKey: result]).cropped(to: rect)
 				}
 				if let data = instruction.panels?.image(at: time), let panel = panels.object(forKey: data as NSData) ?? CIImage(data: data) {
 					panels.countLimit = 3
@@ -111,7 +117,7 @@ nonisolated final class TransitionCompositor: NSObject, AVVideoCompositing, @unc
 
 	private func render(_ effect: ProjectTransition, outgoing: CIImage, incoming: CIImage, progress: Double, rect: CGRect) -> CIImage {
 		let p = CGFloat(progress)
-		let black = CIImage(color: .black).cropped(to: rect)
+		let black = CIImage(color: .clear).cropped(to: rect)
 		func blend(_ a: CIImage, _ b: CIImage, _ t: Double) -> CIImage {
 			a.applyingFilter("CIDissolveTransition", parameters: [kCIInputTargetImageKey: b, kCIInputTimeKey: t]).cropped(to: rect)
 		}

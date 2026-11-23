@@ -92,6 +92,7 @@ struct ProjectEditorView: View {
 	@State private var dropAnchor: UUID?
 	@State private var dropAfter = false
 	@State private var dragging: Set<UUID> = []
+	@State private var generatorRequest: GeneratorRequest?
 	@State private var effects: TimelineTrack?
 	@State private var transitionRequest: ProjectTransitionRequest?
 	@State private var transitionChanged = false
@@ -162,7 +163,7 @@ struct ProjectEditorView: View {
 	}
 
 	private var workspacePage: some View {
-		ProjectEditorKeyboard(playback: playback, enabled: deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && transitionRequest == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(playback: playback, enabled: generatorRequest == nil && deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && transitionRequest == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
 			tool: tool, undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
@@ -273,6 +274,12 @@ struct ProjectEditorView: View {
 			}
 			.fullScreenCover(item: $board, onDismiss: { focus = trigger }) { editing in
 				CuttingBoardKeyboard(session: editing.session, projectActions: boardActions(editing)) { board = nil }
+			}
+			.sheet(item: $generatorRequest, onDismiss: { focus = trigger }) { request in
+				GeneratorEditorView(project: project, request: request) { next, action in
+					if next != project { placementFocus = trigger }
+					try save(next, action: action)
+				}
 			}
 			.sheet(item: $movingToTime, onDismiss: restoreClipFocus) { clip in
 				ProjectJumpSheet(format: format, frame: project.frame, moving: true, initial: time(clip.start.time).replacingOccurrences(of: "Frame ", with: "")) { time in
@@ -427,16 +434,15 @@ struct ProjectEditorView: View {
 
 	@ViewBuilder private var projectRows: some View {
 		transport
+		Button("Add Generator") { openGenerator() }.accessibilityFocused($focus, equals: "generator")
 		DisclosureGroup("Project Media", isExpanded: $expanded) {
 			sourcePicker("Import Clip", source: nil)
 			ForEach(project.sources) { source in
-				let actions = [
+				let actions = (source.generator == nil ? [] : [EditorMenuAction("Edit Generator") { openGenerator(source: source, rowID: source.id.uuidString) }]) + [
 					EditorMenuAction("Open Cutting Board") { openBoard(source, placement: nil) },
 					EditorMenuAction("Rename Clip") { beginRename(source) },
-					EditorMenuAction("Reconnect from Files") { pick(source.id, files: true) },
-					EditorMenuAction("Reconnect from Photos") { pick(source.id, files: false) },
 					deleteAction(source, rowID: source.id.uuidString)
-				]
+				] + (source.generator == nil ? [EditorMenuAction("Reconnect from Files") { pick(source.id, files: true) }, EditorMenuAction("Reconnect from Photos") { pick(source.id, files: false) }] : [])
 				Menu { EditorMenuAction.buttons(actions) } label: {
 					Text(source.displayName)
 						.frame(maxWidth: .infinity, alignment: .leading)
@@ -829,6 +835,7 @@ struct ProjectEditorView: View {
 
 	private func trackActions(_ track: TimelineTrack) -> [EditorMenuAction] {
 		var actions = [
+			EditorMenuAction("Add Generator") { openGenerator(track: track, rowID: track.id) },
 			EditorMenuAction(project.isMagnetic(track) ? "Turn Magnetic Off" : "Turn Magnetic On") {
 				let enabled = !project.isMagnetic(track)
 				if enabled && project.needsPacking(track) { confirmPacking = track }
@@ -943,6 +950,7 @@ struct ProjectEditorView: View {
 			EditorMenuAction("Move to New Track") { playback.pause(); trigger = rowID; newTrackName = ""; trackForMove = clip },
 			EditorMenuAction(marked.contains(clip.id) ? "Unmark for Editing" : "Mark for Editing") { toggleMark(clip.id) }
 		]
+		if source.generator != nil { actions.append(EditorMenuAction("Edit Generator") { openGenerator(source: source, clip: clip, rowID: rowID) }) }
 		if dragging.isEmpty {
 			actions.append(EditorMenuAction("Start Drag") { startDrag(clip) })
 		} else {
@@ -1031,15 +1039,23 @@ struct ProjectEditorView: View {
 		}
 	}
 
+	private func openGenerator(track: TimelineTrack? = nil, source: ProjectMediaSource? = nil, clip: ProjectPlacement? = nil, rowID: String = "generator") {
+		playback.releaseAudio()
+		trigger = rowID
+		generatorRequest = GeneratorRequest(track: track ?? selectedTrack, time: playback.position, source: source, clip: clip)
+	}
+
 	private func openBoard(_ source: ProjectMediaSource, placement: ProjectPlacement?, rowID: String? = nil) {
 		playback.releaseAudio()
 		trigger = rowID ?? (placement?.id ?? source.id).uuidString
 		clipTask = Task {
 			defer { if !Task.isCancelled { clipTask = nil } }
 			do {
-				let access = try await source.open()
+				var effective = source
+				if let definition = placement?.generatorOverride { effective.reference = .generated(definition) }
+				let access = try await effective.open()
 				try Task.checkCancellation()
-				let session = try await CuttingBoardSession.openReferenced(asset: access.asset, title: placement?.displayName(for: source) ?? source.displayName, access: access, ranges: placement?.ranges.map(\.range))
+				let session = try await CuttingBoardSession.openReferenced(asset: access.asset, title: placement?.displayName(for: source) ?? source.displayName, access: access, ranges: placement?.ranges.map(\.range), generatedFrame: source.generator == nil ? nil : source.picture?.frame.time)
 				try await session.waitForOpeningPlayback()
 				try Task.checkCancellation()
 				board = ProjectBoard(source: source, placement: placement, session: session)
@@ -1069,6 +1085,9 @@ struct ProjectEditorView: View {
 						return nil
 					} catch { return error.localizedDescription }
 				})
+			}, compositingSheet: board.placement == nil || kind != .video ? nil : {
+				guard let clip = project.placements.first(where: { $0.id == board.placement?.id }) else { return AnyView(EmptyView()) }
+				return AnyView(ClipCompositingSheet(project: project, clip: clip, save: save))
 			})
 	}
 
@@ -1118,7 +1137,7 @@ struct ProjectEditorView: View {
 		if let point = next.markOut, point.time > next.duration { next.markOut = nil }
 		next.cleanTransitions()
 		try next.validateTransitions()
-		next.version = 11
+		next.version = 12
 		try saves.enqueue(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
@@ -1328,6 +1347,7 @@ struct ProjectEditorView: View {
 	private func projectKey(_ key: String, flags: UIKeyModifierFlags) {
 		// Transport and markers must not wait for clip sorting or focus resolution.
 		switch key {
+		case "g" where flags.isEmpty && tool == .editor: openGenerator(); return
 		case " ", "k": playback.toggle(); return
 		case "j", "l": playback.shuttle(forward: key == "l"); return
 		case "i", "o":

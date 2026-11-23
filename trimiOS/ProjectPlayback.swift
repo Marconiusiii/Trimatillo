@@ -946,7 +946,8 @@ private struct ScrubAudioWindow {
 		var sources: [UUID: ProjectMediaAccess] = [:]
 		var layers: [(CMTimeRange, AVMutableVideoCompositionLayerInstruction)] = []
 		var transitionLayers: [TransitionVideoLayer] = []
-		let usesTransitions = project.transitions?.isEmpty == false
+		let generatedVideoIDs = Set(project.sources.filter { $0.generator != nil && $0.picture != nil }.map(\.id))
+		let usesTransitions = project.transitions?.isEmpty == false || project.placements.contains { $0.compositing != nil || generatedVideoIDs.contains($0.sourceID) }
 		let preparedMedia = StereoMedia()
 		var builtOutputs: [MixOutput] = []
 		var currentName = ""
@@ -1013,10 +1014,16 @@ private struct ScrubAudioWindow {
 							layer.setTransform(transform.concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
 								.concatenating(CGAffineTransform(scaleX: scale, y: scale)).concatenating(offset), at: clip.start.time)
 							layers.append((CMTimeRange(start: clip.start.time, end: clip.end), layer))
+							let generatedImage: CIImage?
+							if let definition = clip.generatorOverride ?? source.generator {
+								generatedImage = try await GeneratorRenderer.preparedImage(definition, size: CGSize(width: picture.width, height: picture.height))
+							} else { generatedImage = nil }
 							transitionLayers.append(TransitionVideoLayer(id: output.trackID, clipID: clip.id, trackID: track.id,
 								range: CMTimeRange(start: transitionMedia.start, end: cursor),
 								transform: transform.concatenating(CGAffineTransform(translationX: -rect.minX, y: -rect.minY))
-									.concatenating(CGAffineTransform(scaleX: scale, y: scale)).concatenating(offset)))
+									.concatenating(CGAffineTransform(scaleX: scale, y: scale)).concatenating(offset),
+								generatedImage: generatedImage,
+								compositing: clip.compositing ?? ClipCompositing()))
 						}
 					}
 				}

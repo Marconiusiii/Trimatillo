@@ -68,10 +68,12 @@ private enum HelpTopic: String, CaseIterable {
 	case describer = "Describer"
 	case voicer = "Voicer"
 	case mixer = "Mixer"
+	case generators = "Generators and compositing"
 	case projectTouch = "Project Direct Touch Editor"
 
 	var introduction: String {
 		switch self {
+		case .generators: "Create text, backgrounds, and silence, then arrange visual layers over your video."
 		case .mixer: "Adjust the volume and stereo position of each track while listening to the project."
 		case .voicer: "Record a voice-over take and place it at a chosen time in your project."
 		case .describer: "Describe what happens in a passage with a timed transcript, a spoken recording, or both."
@@ -100,6 +102,22 @@ private enum HelpTopic: String, CaseIterable {
 
 	var sections: [HelpSection] {
 		switch self {
+		case .generators:
+			[HelpSection("Create a clip", numbered: true, [
+				"In Editor, choose the destination track with Timeline Chooser. Choose Add Generator, use the track's Add Generator action, or press G.",
+				"On a video track, choose Text, Black, Solid Color, or Gradient. On an audio track, create Silence. Set Duration in Seconds; a marked In and Out range supplies the initial duration.",
+				"For text, choose a preset and enter Text. Title and Subheading adds a second line; Name and Role adds a role below the name. Subtitle creates a text clip that appears over the video.",
+				"Open Typography to change font, bold, text size, or line spacing. Appearance controls text and background colors, transparency, outline, shadow, and the text panel. Layout controls text position, safe margin, and width.",
+				"Choose Append, Insert at Playhead, Overwrite at Playhead, or New Track at Playhead. Enter a track name when creating a new track. Choose Preview to play the result in the project, then Close to return and Add to create the clip."
+			]), HelpSection("Edit a generated clip", numbered: true, [
+				"Open a generated timeline clip's menu or accessibility actions and choose Edit Generator. Change its text or appearance, then Save. Other copies retain their own settings.",
+				"Edit Generator in Project Media changes the source settings for copies that have not received their own generator edits. Use the Cutting Board to trim a generated clip and Save Changes to update it on the timeline."
+			]), HelpSection("Layer clips", numbered: true, [
+				"Place the title or other visual clip on a video track above the footage. Open the timeline clip in the Cutting Board, then choose Edit Actions and Compositing.",
+				"Opacity controls how much of the clip is visible. Blend Mode combines its colors with the tracks below. Scale changes the clip size; Position and the horizontal and vertical offsets place it within the project frame.",
+				"Choose Preview to play the project with these settings. Close returns to the controls. Save applies the settings to this timeline clip. Reset Compositing restores full opacity, normal blending, original size, and centered position.",
+				"For transparent titles, enable Transparent Background in Edit Generator. Background colors and text panels remain editable there. Project export includes the generated clips and their compositing settings."
+			])]
 		case .mixer:
 			[HelpSection("Mix voice and project audio", numbered: true, [
 				"Open Mixer or press Command-Shift-M. Set In and Out around a passage with voice and background sound. Turn on Loop and press Play to repeat it.",

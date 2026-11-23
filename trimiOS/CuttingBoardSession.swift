@@ -278,9 +278,12 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	static func openReferenced(asset: AVAsset, title: String, access: AnyObject, ranges: [CMTimeRange]?) async throws -> CuttingBoardSession {
+	private var generatedFrame: CMTime?
+
+	static func openReferenced(asset: AVAsset, title: String, access: AnyObject, ranges: [CMTimeRange]?, generatedFrame: CMTime? = nil) async throws -> CuttingBoardSession {
 		let session = try await load(asset: asset, title: title)
 		session.projectAccess = access
+		session.generatedFrame = generatedFrame
 		if let ranges {
 			guard ranges.allSatisfy({ $0.start >= .zero && $0.end <= session.originalDuration }) else { throw CocoaError(.fileReadCorruptFile) }
 			let timeline = ClipEditTimeline(sourceRanges: ranges)
@@ -497,6 +500,10 @@ final class CuttingBoardSession: ObservableObject {
 	private var audioStep: CMTime { CMTime(value: 1, timescale: 30) }
 
 	func stepped(from time: CMTime, by count: Int, sourceTime: Bool = false) -> CMTime {
+		if let generatedFrame {
+			let index = (time.seconds / generatedFrame.seconds).rounded(count > 0 ? .down : .up) + Double(count)
+			return min(sourceTime ? originalDuration : duration, max(.zero, CMTimeMultiplyByFloat64(generatedFrame, multiplier: index)))
+		}
 		let times = sourceTime ? sourceFrames : frames
 		if !hasVideo { return time + CMTimeMultiply(audioStep, multiplier: Int32(count)) }
 		let end = sourceTime ? originalDuration : duration
@@ -889,6 +896,10 @@ final class CuttingBoardSession: ObservableObject {
 	}
 
 	func frameNumber(at time: CMTime, sourceTime: Bool = false) -> Int64 {
+		if let generatedFrame {
+			let atEnd = time >= (sourceTime ? originalDuration : duration)
+			return Int64((time.seconds / generatedFrame.seconds).rounded(atEnd ? .up : .down))
+		}
 		let timestamps = sourceTime ? sourceFrames : frames
 		let atEnd = time >= (sourceTime ? originalDuration : duration)
 		if !hasVideo {
@@ -905,6 +916,7 @@ final class CuttingBoardSession: ObservableObject {
 		let count = frameNumber(at: end, sourceTime: sourceTime)
 		guard index >= 0, index <= count else { return nil }
 		if index == count { return end }
+		if let generatedFrame { return CMTimeMultiplyByFloat64(generatedFrame, multiplier: Double(index)) }
 		let timestamps = sourceTime ? sourceFrames : frames
 		return hasVideo ? timestamps[Int(index)] : CMTime(value: index, timescale: audioStep.timescale)
 	}

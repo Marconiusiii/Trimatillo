@@ -1,13 +1,15 @@
 import AVFoundation
 import Photos
 
-final class ProjectMediaAccess {
+nonisolated final class ProjectMediaAccess: @unchecked Sendable {
 	let asset: AVAsset
 	private let scoped: URL?
+	private let generatedFile: ExportFile?
 
-	init(asset: AVAsset, scoped: URL? = nil) {
+	init(asset: AVAsset, scoped: URL? = nil, generatedFile: ExportFile? = nil) {
 		self.asset = asset
 		self.scoped = scoped
+		self.generatedFile = generatedFile
 	}
 
 	deinit { scoped?.stopAccessingSecurityScopedResource() }
@@ -16,6 +18,7 @@ final class ProjectMediaAccess {
 nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 	enum Reference: Codable, Equatable {
 		case file(Data)
+		case generated(GeneratorDefinition)
 		case recording(project: UUID, id: UUID)
 		case photos(local: String, cloud: String?)
 	}
@@ -104,8 +107,14 @@ nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 		}
 	}
 
+	var generator: GeneratorDefinition? {
+		if case .generated(let definition) = reference { return definition }
+		return nil
+	}
+
 	@MainActor func open() async throws -> ProjectMediaAccess {
 		switch reference {
+		case .generated(let definition): return try await GeneratorRenderer.access(definition)
 		case .recording(let project, let id):
 			return ProjectMediaAccess(asset: AVURLAsset(url: try ProjectStorage.recording(id, project: project)))
 		case .file(let data):

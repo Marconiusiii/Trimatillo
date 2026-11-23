@@ -37,7 +37,7 @@ struct CuttingBoardKeyboard: UIViewControllerRepresentable {
 			update: projectActions.update == nil ? nil : { self.projectActions?.update?() },
 			placementSheet: { directTouch, placed in
 				self.projectActions?.placementSheet(directTouch, placed) ?? AnyView(EmptyView())
-			})
+			}, compositingSheet: projectActions.compositingSheet == nil ? nil : { self.projectActions?.compositingSheet?() ?? AnyView(EmptyView()) })
 	}
 }
 
