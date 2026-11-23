@@ -107,8 +107,13 @@ private enum HelpTopic: String, CaseIterable {
 				"In Editor, choose the destination track with Timeline Chooser. Choose Add Generator, use the track's Add Generator action, or press G.",
 				"On a video track, choose Text, Black, Solid Color, or Gradient. On an audio track, create Silence. Set Duration in Seconds; a marked In and Out range supplies the initial duration.",
 				"For text, choose a preset and enter Text. Title and Subheading adds a second line; Name and Role adds a role below the name. Subtitle creates a text clip that appears over the video.",
-				"Open Typography to change font, bold, text size, or line spacing. Appearance controls text and background colors, transparency, outline, shadow, and the text panel. Layout controls text position, safe margin, and width.",
+				"Open Typography to change font, bold, Font Size in points, or line spacing. Layout controls text position, safe margin, and width.",
 				"Choose Append, Insert at Playhead, Overwrite at Playhead, or New Track at Playhead. Enter a track name when creating a new track. Choose Preview to play the result in the project, then Close to return and Add to create the clip."
+			]), HelpSection("Set generator colors", numbered: true, [
+				"In Appearance, choose Text Color to change the lettering. Turn off Transparent Background to reveal Background Color directly below it. The default background is black.",
+				"Turn on Outline or Shadow to reveal its color button. Turn on Text Panel to reveal Panel Color and Panel Opacity. Panel Color changes the area behind the text independently of the full-frame Background Color.",
+				"Choose a color button to open its color editor. Select a named color, or choose Custom and adjust the Red, Green, and Blue sliders from 0 to 255. Done applies the color; Cancel discards that color edit. Both return to the color button.",
+				"For a Solid Color generator, use Color. For a Gradient, use Start Color and End Color, then choose the gradient direction. These buttons use the same color editor."
 			]), HelpSection("Edit a generated clip", numbered: true, [
 				"Open a generated timeline clip's menu or accessibility actions and choose Edit Generator. Change its text or appearance, then Save. Other copies retain their own settings.",
 				"Edit Generator in Project Media changes the source settings for copies that have not received their own generator edits. Use the Cutting Board to trim a generated clip and Save Changes to update it on the timeline."

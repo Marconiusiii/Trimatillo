@@ -36,9 +36,12 @@ struct GeneratorEditorView: View {
 		var definition = request.clip?.generatorOverride ?? request.source?.generator ?? GeneratorDefinition()
 		if request.source == nil {
 			definition.picture = project.picture ?? definition.picture
+			definition.fontPoints = definition.effectiveFontPoints.rounded()
 			definition.kind = request.track.kind == .audio ? .silence : .text
 			if let start = project.markIn?.time, let end = project.markOut?.time, end > start { definition.seconds = (end - start).seconds }
 		}
+		// Separate legacy panel/background colors without changing their appearance.
+		definition.panelColor = definition.panelColor ?? definition.background
 		_definition = State(initialValue: definition)
 	}
 
@@ -49,11 +52,12 @@ struct GeneratorEditorView: View {
 					Picker("Generator", selection: $definition.kind) {
 						ForEach(GeneratorDefinition.Kind.allCases.filter { request.track.kind == .audio ? $0 == .silence : $0 != .silence }, id: \.self) { Text($0.rawValue).tag($0) }
 					}
-					TextField("", value: $definition.seconds, format: .number).keyboardType(.decimalPad).focused($typing).editorFieldLabel("Duration in Seconds")
+					TextField("", value: Binding(get: { definition.seconds }, set: { definition.seconds = ($0 * 100).rounded() / 100 }), format: .number.precision(.fractionLength(0...2))).keyboardType(.decimalPad).focused($typing).editorFieldLabel("Duration in Seconds")
 				}
 				if definition.kind == .text { textControls }
-				if definition.kind == .color || definition.kind == .gradient { color("Color", $definition.background) }
+				if definition.kind == .color { color("Color", $definition.background) }
 				if definition.kind == .gradient {
+					color("Start Color", $definition.background)
 					color("End Color", $definition.secondColor)
 					Picker("Direction", selection: $definition.verticalGradient) { Text("Top to Bottom").tag(true); Text("Left to Right").tag(false) }
 				}
@@ -109,17 +113,22 @@ struct GeneratorEditorView: View {
 		DisclosureGroup("Typography") {
 			Picker("Font", selection: $definition.font) { ForEach(GeneratorDefinition.Font.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
 			Toggle("Bold", isOn: $definition.bold)
-			GeneratorSlider("Text Size", value: $definition.fontSize, range: 1...30, unit: "%")
+			GeneratorSlider("Font Size", value: Binding(get: { definition.effectiveFontPoints.rounded() }, set: { definition.fontPoints = $0.rounded() }), range: 1...max(512, (Double(definition.picture.height) * 0.3).rounded(.up)), unit: " points", step: 1)
 			GeneratorSlider("Line Spacing", value: $definition.lineSpacing, range: 0.5...3, unit: "x", fraction: 1)
 		}
 		DisclosureGroup("Appearance") {
 			color("Text Color", $definition.foreground)
 			Toggle("Transparent Background", isOn: $definition.transparent)
+			if !definition.transparent { color("Background Color", $definition.background) }
 			Toggle("Outline", isOn: $definition.outline)
+			if definition.outline { color("Outline Color", Binding(get: { definition.outlineColor ?? .black }, set: { definition.outlineColor = $0 })) }
 			Toggle("Shadow", isOn: $definition.shadow)
+			if definition.shadow { color("Shadow Color", Binding(get: { definition.shadowColor ?? .black }, set: { definition.shadowColor = $0 })) }
 			Toggle("Text Panel", isOn: $definition.panel)
-			if !definition.transparent || definition.panel { color("Background Color", $definition.background) }
-			if definition.panel { GeneratorSlider("Panel Opacity", value: $definition.panelOpacity, range: 0...100, unit: "%") }
+			if definition.panel {
+				color("Panel Color", Binding(get: { definition.panelColor ?? .black }, set: { definition.panelColor = $0 }))
+				GeneratorSlider("Panel Opacity", value: $definition.panelOpacity, range: 0...100, unit: "%")
+			}
 		}
 		DisclosureGroup("Layout") {
 			Picker("Text Position", selection: $definition.position) { ForEach(GeneratorDefinition.Position.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
@@ -129,10 +138,7 @@ struct GeneratorEditorView: View {
 	}
 
 	private func color(_ title: String, _ value: Binding<GeneratorColor>) -> some View {
-		ColorPicker(title, selection: Binding(get: { Color(cgColor: value.wrappedValue.cg) }, set: { color in
-			var r: CGFloat = 0, g: CGFloat = 0, b: CGFloat = 0, a: CGFloat = 0
-			if UIColor(color).getRed(&r, green: &g, blue: &b, alpha: &a) { value.wrappedValue = GeneratorColor(red: r, green: g, blue: b) }
-		}), supportsOpacity: false)
+		GeneratorColorButton(title: title, color: value)
 	}
 
 	private func draft() throws -> (EditingProject, CMTime) {
@@ -164,16 +170,21 @@ struct GeneratorSlider: View {
 	let range: ClosedRange<Double>
 	let unit: String
 	var fraction = 0
-	init(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String, fraction: Int = 0) {
-		self.title = title; _value = value; self.range = range; self.unit = unit; self.fraction = fraction
+	var step: Double? = nil
+	init(_ title: String, value: Binding<Double>, range: ClosedRange<Double>, unit: String, fraction: Int = 0, step: Double? = nil) {
+		self.title = title; _value = value; self.range = range; self.unit = unit; self.fraction = fraction; self.step = step
 	}
 	var body: some View {
 		VStack(alignment: .leading) {
 			Text(title).accessibilityHidden(true)
-			Slider(value: $value, in: range) { Text(title) }
+			control
 				.accessibilityValue(value.formatted(.number.precision(.fractionLength(fraction))) + unit)
 			Text(value.formatted(.number.precision(.fractionLength(fraction))) + unit).accessibilityHidden(true)
 		}
+	}
+	@ViewBuilder private var control: some View {
+		if let step { Slider(value: $value, in: range, step: step) { Text(title) } }
+		else { Slider(value: $value, in: range) { Text(title) } }
 	}
 }
 
@@ -261,5 +272,104 @@ struct ClipCompositingSheet: View {
 			.alert("Could Not Save Compositing", isPresented: Binding(get: { error != nil }, set: { if !$0 { error = nil } })) { Button("OK") { error = nil } } message: { Text(error ?? "") }
 		}
 		.editorAppearance()
+	}
+}
+
+private enum GeneratorNamedColor: String, CaseIterable {
+	case black = "Black", white = "White", gray = "Gray", red = "Red", orange = "Orange", yellow = "Yellow", green = "Green", blue = "Blue", purple = "Purple", pink = "Pink", brown = "Brown", custom = "Custom"
+	var color: GeneratorColor? {
+		switch self {
+		case .black: .black
+		case .white: .white
+		case .gray: GeneratorColor(red: 0.5, green: 0.5, blue: 0.5)
+		case .red: GeneratorColor(red: 1, green: 0, blue: 0)
+		case .orange: GeneratorColor(red: 1, green: 0.5, blue: 0)
+		case .yellow: GeneratorColor(red: 1, green: 1, blue: 0)
+		case .green: GeneratorColor(red: 0, green: 0.5, blue: 0)
+		case .blue: .blue
+		case .purple: GeneratorColor(red: 0.5, green: 0, blue: 0.5)
+		case .pink: GeneratorColor(red: 1, green: 0.5, blue: 0.75)
+		case .brown: GeneratorColor(red: 0.6, green: 0.3, blue: 0.1)
+		case .custom: nil
+		}
+	}
+	static func selection(for color: GeneratorColor) -> Self {
+		allCases.first { $0.color == color } ?? .custom
+	}
+	static func value(for color: GeneratorColor) -> String {
+		let choice = selection(for: color)
+		if choice != .custom { return choice.rawValue }
+		return "Custom, Red \(Int((color.red * 255).rounded())), Green \(Int((color.green * 255).rounded())), Blue \(Int((color.blue * 255).rounded()))"
+	}
+}
+
+private struct GeneratorColorButton: View {
+	let title: String
+	@Binding var color: GeneratorColor
+	@State private var editing = false
+	@AccessibilityFocusState private var focused: Bool
+	var body: some View {
+		Button { editing = true } label: {
+			HStack {
+				Text(title)
+				Spacer()
+				Text(GeneratorNamedColor.selection(for: color).rawValue).foregroundStyle(.secondary).accessibilityHidden(true)
+				RoundedRectangle(cornerRadius: 3).fill(Color(cgColor: color.cg))
+					.frame(width: 24, height: 24).overlay { RoundedRectangle(cornerRadius: 3).stroke(.secondary) }
+					.accessibilityHidden(true)
+			}
+			.frame(maxWidth: .infinity, minHeight: 44)
+			.contentShape(Rectangle())
+		}
+		.accessibilityValue(GeneratorNamedColor.value(for: color))
+		.accessibilityFocused($focused)
+		.fullScreenCover(isPresented: $editing, onDismiss: { focused = true }) {
+			GeneratorColorEditor(title: title, initial: color) { color = $0 }
+		}
+	}
+}
+
+private struct GeneratorColorEditor: View {
+	let title: String
+	let save: (GeneratorColor) -> Void
+	@Environment(\.dismiss) private var dismiss
+	@State private var draft: GeneratorColor
+	@State private var choice: GeneratorNamedColor
+
+	init(title: String, initial: GeneratorColor, save: @escaping (GeneratorColor) -> Void) {
+		self.title = title
+		self.save = save
+		_draft = State(initialValue: initial)
+		_choice = State(initialValue: GeneratorNamedColor.selection(for: initial))
+	}
+
+	var body: some View {
+		NavigationStack {
+			Form {
+				Picker("Color", selection: $choice) {
+					ForEach(GeneratorNamedColor.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+				}
+				.pickerStyle(.inline)
+				if choice == .custom {
+					GeneratorSlider("Red", value: channel(\.red), range: 0...255, unit: "", step: 1)
+					GeneratorSlider("Green", value: channel(\.green), range: 0...255, unit: "", step: 1)
+					GeneratorSlider("Blue", value: channel(\.blue), range: 0...255, unit: "", step: 1)
+				}
+			}
+			.navigationBarTitleDisplayMode(.inline)
+			.toolbar {
+				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
+				ToolbarItem(placement: .principal) { Text(title).font(.headline).accessibilityAddTraits(.isHeader) }
+				ToolbarItem(placement: .confirmationAction) { Button("Done") { save(draft); dismiss() } }
+			}
+			.onChange(of: choice) { _, choice in
+				if let color = choice.color { draft = color }
+			}
+		}
+		.editorAppearance()
+	}
+
+	private func channel(_ key: WritableKeyPath<GeneratorColor, Double>) -> Binding<Double> {
+		Binding(get: { draft[keyPath: key] * 255 }, set: { draft[keyPath: key] = $0.rounded() / 255 })
 	}
 }

@@ -27,7 +27,13 @@ nonisolated struct GeneratorDefinition: Codable, Equatable {
 	var verticalGradient = true
 	var font = Font.sans
 	var bold = true
+	// Keep the legacy proportion when opening existing generators.
 	var fontSize = 8.0
+	var fontPoints: Double?
+	var outlineColor: GeneratorColor?
+	var shadowColor: GeneratorColor?
+	var panelColor: GeneratorColor?
+	var effectiveFontPoints: Double { fontPoints ?? Double(picture.height) * fontSize / 100 }
 	var position = Position.center
 	var margin = 5.0
 	var width = 90.0
@@ -41,11 +47,14 @@ nonisolated struct GeneratorDefinition: Codable, Equatable {
 			&& picture.frame.time.isNumeric && picture.frame.time > .zero && picture.frame.time.seconds >= 1 / 1000
 			&& text.utf8.count <= 20000 && subheading.utf8.count <= 20000 && foreground.isValid && background.isValid && secondColor.isValid
 			&& (1...30).contains(fontSize) && (0...25).contains(margin) && (10...100).contains(width)
+			&& (fontPoints.map { (1...8192).contains($0) } ?? true)
+			&& [outlineColor, shadowColor, panelColor].compactMap { $0 }.allSatisfy(\.isValid)
 			&& (0.5...3).contains(lineSpacing) && (0...100).contains(panelOpacity)
 	}
 	mutating func apply(_ preset: Preset) {
 		self.preset = preset
 		fontSize = preset == .title || preset == .subtitle ? 8 : 4.5
+		fontPoints = (Double(picture.height) * fontSize / 100).rounded()
 		position = preset == .lowerLeft || preset == .name ? .bottomLeft : preset == .lowerRight ? .bottomRight : preset == .lowerCenter || preset == .subtitles ? .bottom : .center
 		transparent = true
 		bold = preset != .subtitles
@@ -125,12 +134,12 @@ nonisolated enum GeneratorRenderer {
 		case .serif: definition.bold ? "Georgia-Bold" : "Georgia"
 		case .mono: definition.bold ? "Courier-Bold" : "Courier"
 		}
-		let fontSize = size.height * definition.fontSize / 100
+		let fontSize = definition.effectiveFontPoints * size.height / Double(definition.picture.height)
 		let paragraph = NSMutableParagraphStyle()
 		paragraph.alignment = definition.position.x < 0 ? .left : definition.position.x > 0 ? .right : .center
 		paragraph.lineHeightMultiple = definition.lineSpacing
 		var attributes: [NSAttributedString.Key: Any] = [.font: CTFontCreateWithName(fontName as CFString, fontSize, nil), .foregroundColor: definition.foreground.cg, .paragraphStyle: paragraph]
-		if definition.outline { attributes[.strokeColor] = GeneratorColor.black.cg; attributes[.strokeWidth] = -3 }
+		if definition.outline { attributes[.strokeColor] = (definition.outlineColor ?? .black).cg; attributes[.strokeWidth] = -3 }
 		let text = NSMutableAttributedString(string: definition.text, attributes: attributes)
 		if [.subtitle, .name].contains(definition.preset), !definition.subheading.isEmpty {
 			attributes[.font] = CTFontCreateWithName(fontName as CFString, fontSize * 0.6, nil)
@@ -144,8 +153,8 @@ nonisolated enum GeneratorRenderer {
 		let x = inset + (size.width - inset * 2 - width) * (definition.position.x + 1) / 2
 		let y = inset + (size.height - inset * 2 - height) * (definition.position.y + 1) / 2
 		let textRect = CGRect(x: x, y: y, width: width, height: height)
-		if definition.panel { context.setFillColor(definition.background.cg.copy(alpha: definition.panelOpacity / 100)!); context.fill(textRect.insetBy(dx: -fontSize * 0.2, dy: -fontSize * 0.1)) }
-		if definition.shadow { context.setShadow(offset: CGSize(width: fontSize * 0.05, height: -fontSize * 0.05), blur: fontSize * 0.1, color: GeneratorColor.black.cg) }
+		if definition.panel { context.setFillColor((definition.panelColor ?? definition.background).cg.copy(alpha: definition.panelOpacity / 100)!); context.fill(textRect.insetBy(dx: -fontSize * 0.2, dy: -fontSize * 0.1)) }
+		if definition.shadow { context.setShadow(offset: CGSize(width: fontSize * 0.05, height: -fontSize * 0.05), blur: fontSize * 0.1, color: (definition.shadowColor ?? .black).cg) }
 		CTFrameDraw(CTFramesetterCreateFrame(setter, CFRange(), CGPath(rect: textRect, transform: nil), nil), context)
 		guard let output = context.makeImage() else { throw CocoaError(.fileWriteUnknown) }
 		return CIImage(cgImage: output)
