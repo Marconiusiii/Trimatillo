@@ -85,8 +85,8 @@ private enum HelpTopic: String, CaseIterable {
 		case .playback: "The playhead is your current position in the clip. Move it to find the moment you want to edit."
 		case .cuts: "A trim shortens one end of a clip. Cutting a passage from the middle creates a join where the two remaining sections meet."
 		case .actions: "Use the VoiceOver Actions rotor on Cutting Board controls to move the playhead, set markers, and make cuts."
-		case .touch: "Use gestures on the Direct Touch editing surface to move through a clip and edit it."
-		case .keys: "Use a connected keyboard on the primary Cutting Board to control playback, set markers, and edit."
+		case .touch: "Use Direct Touch gestures in the Cutting Board to move through a clip and edit it. For project gestures, including generators and transitions, see Project Direct Touch Editor in Help."
+		case .keys: "Use a connected keyboard to control playback, edit clips, and add generators and transitions in Editor."
 		case .save: "Save an edited clip from the Cutting Board or export a project timeline from Project Actions."
 		}
 	}
@@ -267,8 +267,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe up to redo the last project edit you undid."
 			]), HelpSection("Four fingers", [
 				"Swipe right to open Add Generator for the selected track. Choose the generator and where to add it.",
-				"Swipe down at an edit point to apply Cross Dissolve on a video track or Cross Fade on an audio track. The first duration is one second. Later uses follow the duration last saved for Cross Dissolve or Cross Fade.",
-				"Swipe up to open Quick Fade. Set Fade In and Fade Out and their durations, then preview the result.",
+				"Swipe down at an edit point on the selected track to apply Cross Dissolve on a video track or Cross Fade on an audio track. The first duration is one second. Later uses follow the duration last saved for Cross Dissolve or Cross Fade.",
+				"Swipe up to open Quick Fade at the playhead on the selected track. Set Fade In and Fade Out and their durations, then preview the result.",
 				"Tap once to open Transitions for the clip or edit point on the selected track. Choose a transition, set its duration, and preview it."
 			]), HelpSection("Track navigation", [
 				"Switching tracks keeps the playhead in place. Playback and scrubbing include the full project mix.",
@@ -277,11 +277,14 @@ private enum HelpTopic: String, CaseIterable {
 			])]
 		case .projects:
 			[HelpSection("Direct Touch and VoiceOver", [
-				"In Editor, choose Direct Touch Editor for playback, markers, track navigation, and transitions. Project Direct Touch Editor in Help lists each gesture.",
+				"In Editor, choose Direct Touch Editor for playback, markers, track navigation, generators, and transitions. Project Direct Touch Editor in Help lists each gesture.",
 				"Use a clip's accessibility actions to open its Cutting Board, move it, or remove it. Use track headings to reach Track Actions."
 			]), HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
-				"In Editor, X applies a quick crossfade, F opens Quick Fade, and Command-T or Command-Shift-T opens Transitions.",
+				"In Editor, G opens Add Generator for the selected track.",
+				"X applies Cross Dissolve on a video track or Cross Fade on an audio track at the edit point.",
+				"F opens Quick Fade at the playhead on the selected track.",
+				"Command-T or Command-Shift-T opens Transitions at the playhead on the selected track.",
 				"On the project timeline, Space or K plays or pauses, including when a clip is focused. K also stops rewind or fast forward. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
 				"I and O mark In and Out at the current playhead without stopping playback. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
 				"Command-Option-Up and Command-Option-Down select a track. C opens its clip at or after the playhead. Return opens the focused clip. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",
@@ -491,6 +494,12 @@ private enum HelpTopic: String, CaseIterable {
 				"Command-Right Bracket trims the tail to the playhead.",
 				"Return at a join opens Adjust Edit Point.",
 				"Command-Z undoes the last edit. Command-Shift-Z redoes it."
+			]), HelpSection("Generators and transitions in Editor", [
+				"Choose a track with Timeline Chooser and move the playhead to where you want to work. These commands use the selected track and playhead.",
+				"G opens Add Generator.",
+				"X applies Cross Dissolve on a video track or Cross Fade on an audio track at an edit point.",
+				"F opens Quick Fade.",
+				"Command-T or Command-Shift-T opens Transitions."
 			])]
 		case .save:
 			[Self.projectExport, HelpSection("Export from the Cutting Board", [
