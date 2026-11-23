@@ -116,7 +116,7 @@ struct TransitionEditorView: View {
 		NavigationStack {
 			Group {
 				if preparing && !loaded {
-					LoadingStatusView(loadingTitle)
+					LoadingStatusView(loadingTitle, cancel: { stopPreparation(); dismiss() })
 				} else {
 					Form {
 						if let error {
@@ -181,10 +181,14 @@ struct TransitionEditorView: View {
 			}
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
-				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { stopPreparation(); dismiss() } }
+				if !preparing || loaded {
+					ToolbarItem(placement: .cancellationAction) { Button("Cancel") { stopPreparation(); dismiss() } }
+				}
 				ToolbarItem(placement: .principal) { Text(title).accessibilityAddTraits(.isHeader) }
-				ToolbarItem(placement: .confirmationAction) {
-					Button("Save", action: commit).disabled(preparing || error != nil || !preview.ready)
+				if !preparing || loaded {
+					ToolbarItem(placement: .confirmationAction) {
+						Button("Save", action: commit).disabled(preparing || error != nil || !preview.ready)
+					}
 				}
 			}
 			.dismissKeyboardToolbar(while: typing) { typing = false }

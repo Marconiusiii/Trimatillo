@@ -768,17 +768,17 @@ private struct ScrubAudioWindow {
 			let gain = level(output, project: project, solo: solo)
 			let smoothing = project.trackEffects?[output.channel]?.smoothing
 			let base: Float = smoothing == nil && live && !previewingChanges ? min(1, gain) : 1
-			parameters.setVolume(base, at: .zero)
 			if !live || previewingChanges || gain > 1 || stereo != .neutral || smoothing != nil {
 				let processor = TrackMixProcessor(matrix: stereo.matrix(gain: base > 0 ? Double(gain / base) : 1), media: stereoMedia, smoothing: smoothing, inputGain: Double(output.gain(in: project)))
 				parameters.audioTapProcessor = try processor.makeTap()
 				processors[output.id] = processor
 			}
 			if output.channel == EditingProject.descriptionMixID {
+				parameters.setVolume(base, at: .zero)
 				parameters.audioTimePitchAlgorithm = .timeDomain
 			} else {
-				project.descriptionDucking?.apply(to: parameters, volume: base, takes: project.audioDescriptions ?? [], duration: duration)
-				parameters.applyTransitions(output.envelopes, base: base)
+				let ducking = project.descriptionDucking?.volumeRamps(takes: project.audioDescriptions ?? [], duration: duration) ?? []
+				parameters.applyTransitions(output.envelopes, base: base, ducking: ducking, duration: duration)
 			}
 			return parameters
 		}
@@ -883,8 +883,8 @@ private struct ScrubAudioWindow {
 			if let volume = primaryLevels[track.trackID] {
 				let mix = AVMutableAudioMixInputParameters(track: track)
 				try setLevel(volume, stereo: primaryStereo, on: mix, output: mixOutputs.first { $0.id == track.trackID })
-				if duck, let take { descriptionDucking?.apply(to: mix, volume: 1, takes: [take], duration: range.end) }
-				mix.applyTransitions(mixOutputs.first { $0.id == track.trackID }?.envelopes ?? [], base: 1)
+				let ducking = duck ? descriptionDucking?.volumeRamps(takes: take.map { [$0] } ?? [], duration: range.end) ?? [] : []
+				mix.applyTransitions(mixOutputs.first { $0.id == track.trackID }?.envelopes ?? [], base: 1, ducking: ducking, duration: duration)
 				levels.append(mix)
 			} else { composition.removeTrack(track) }
 		}

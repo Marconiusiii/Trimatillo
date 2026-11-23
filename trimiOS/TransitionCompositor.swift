@@ -187,28 +187,70 @@ extension EditingProject {
 	}
 }
 
-extension AVMutableAudioMixInputParameters {
-	func applyTransitions(_ envelopes: [TransitionAudioEnvelope], base: Float) {
-		guard !envelopes.isEmpty, let original = copy() as? AVAudioMixInputParameters else { return }
-		func volume(at time: CMTime) -> Float {
-			var start: Float = base
-			var end: Float = base
-			var range = CMTimeRange.invalid
-			if original.getVolumeRamp(for: time, startVolume: &start, endVolume: &end, timeRange: &range),
-				range.duration > .zero, range.duration.isNumeric {
-				let p = Float(min(1, max(0, (time - range.start).seconds / range.duration.seconds)))
-				return start + (end - start) * p
-			}
-			return start
+// Build a single volume schedule before installing any AVFoundation ramps.
+nonisolated struct AudioVolumeRamp {
+	let range: CMTimeRange
+	let start: Float
+	let end: Float
+
+	func value(at time: CMTime) -> Float {
+		guard range.duration > .zero else { return end }
+		let progress = Float(min(1, max(0, (time - range.start).seconds / range.duration.seconds)))
+		return start + (end - start) * progress
+	}
+}
+
+nonisolated enum TransitionAudioSchedule {
+	static func ramps(_ envelopes: [TransitionAudioEnvelope], base: Float,
+		ducking: [AudioVolumeRamp], duration: CMTime) -> [AudioVolumeRamp] {
+		guard duration.isNumeric, duration > .zero else { return [] }
+		// Binary ticks also remain exact when AVFoundation converts times to seconds.
+		// Reuse each boundary for both adjacent ramps rather than rounding their ends independently.
+		let scale: CMTimeScale = 1_048_576
+		func ticks(_ time: CMTime) -> Int64 {
+			CMTimeConvertScale(time, timescale: scale, method: .roundHalfAwayFromZero).value
 		}
-		for envelope in envelopes {
-			let steps = max(2, Int(min(512, ceil(envelope.range.duration.seconds * 60))))
-			for step in 0..<steps {
-				let start = envelope.range.start + CMTimeMultiplyByRatio(envelope.range.duration, multiplier: Int32(step), divisor: Int32(steps))
-				let end = envelope.range.start + CMTimeMultiplyByRatio(envelope.range.duration, multiplier: Int32(step + 1), divisor: Int32(steps))
-				setVolumeRamp(fromStartVolume: volume(at: start) * envelope.value(at: start),
-					toEndVolume: volume(at: end) * envelope.value(at: end), timeRange: CMTimeRange(start: start, end: end))
+		let end = ticks(duration)
+		guard end > 0 else { return [] }
+		let fades = envelopes.filter { $0.range.start.isNumeric && $0.range.duration.isNumeric && $0.range.duration > .zero }
+		let ducks = ducking.filter { $0.range.start.isNumeric && $0.range.duration.isNumeric && $0.range.duration >= .zero }
+			.sorted { $0.range.start < $1.range.start }
+		var boundaries: Set<Int64> = [0, end]
+		for range in fades.map(\.range) + ducks.map(\.range) {
+			let first = max(0, min(end, ticks(range.start)))
+			let last = max(first, min(end, ticks(range.end)))
+			boundaries.insert(first)
+			boundaries.insert(last)
+			let steps = max(1, Int(min(512, ceil(Double(last - first) / Double(scale) * 60))))
+			for step in 1..<steps {
+				boundaries.insert(first + (last - first) * Int64(step) / Int64(steps))
 			}
+		}
+		let ordered = boundaries.sorted()
+		return zip(ordered, ordered.dropFirst()).map { first, last in
+			let start = CMTime(value: first, timescale: scale)
+			let stop = CMTime(value: last, timescale: scale)
+			let middle = CMTime(value: first + last, timescale: scale * 2)
+			let active = fades.filter { $0.range.containsTime(middle) }
+			let duck = ducks.last { $0.range.start <= middle }
+			func volume(_ time: CMTime) -> Float {
+				let value = active.reduce(base * (duck?.value(at: time) ?? 1)) { $0 * $1.value(at: time) }
+				return value.isFinite ? min(1, max(0, value)) : 0
+			}
+			return AudioVolumeRamp(range: CMTimeRange(start: start, duration: CMTime(value: last - first, timescale: scale)),
+				start: volume(start), end: volume(stop))
+		}
+	}
+}
+
+extension AVMutableAudioMixInputParameters {
+	// Call on fresh parameters; volume, ducking, and transitions are installed together.
+	func applyTransitions(_ envelopes: [TransitionAudioEnvelope], base: Float,
+		ducking: [AudioVolumeRamp] = [], duration: CMTime) {
+		let ramps = TransitionAudioSchedule.ramps(envelopes, base: base, ducking: ducking, duration: duration)
+		if ramps.isEmpty { setVolume(base, at: .zero); return }
+		for ramp in ramps {
+			setVolumeRamp(fromStartVolume: ramp.start, toEndVolume: ramp.end, timeRange: ramp.range)
 		}
 	}
 }

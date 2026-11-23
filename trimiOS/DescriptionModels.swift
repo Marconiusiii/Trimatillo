@@ -57,16 +57,17 @@ nonisolated struct DescriptionDucking: Codable, Equatable {
 	var decibels = -5.0
 	var fade = 0.25
 
-	func apply(to mix: AVMutableAudioMixInputParameters, volume: Float, takes: [DescriptionTake], duration: CMTime) {
-		guard enabled, !takes.isEmpty else { return }
-		let reduced = volume * Float(pow(10, decibels / 20))
+	func volumeRamps(takes: [DescriptionTake], duration: CMTime) -> [AudioVolumeRamp] {
+		guard enabled, !takes.isEmpty else { return [] }
+		var ramps: [AudioVolumeRamp] = []
+		let reduced = Float(pow(10, decibels / 20))
 		var end = -Double.infinity
 		func time(_ seconds: Double) -> CMTime { CMTime(seconds: seconds, preferredTimescale: 600000) }
 		func release(_ start: Double, until: Double) {
 			let stop = min(start + fade, until)
 			if stop > start {
-				mix.setVolumeRamp(fromStartVolume: reduced, toEndVolume: volume, timeRange: CMTimeRange(start: time(start), end: time(stop)))
-			} else { mix.setVolume(volume, at: time(start)) }
+				ramps.append(AudioVolumeRamp(range: CMTimeRange(start: time(start), end: time(stop)), start: reduced, end: 1))
+			} else { ramps.append(AudioVolumeRamp(range: CMTimeRange(start: time(start), duration: .zero), start: 1, end: 1)) }
 		}
 		for take in takes.sorted(by: { $0.start.time < $1.start.time }) {
 			let start = take.start.seconds
@@ -76,12 +77,13 @@ nonisolated struct DescriptionDucking: Codable, Equatable {
 				if end.isFinite { release(end, until: transition) }
 				let begin = max(transition, start - fade)
 				if begin < start {
-					mix.setVolumeRamp(fromStartVolume: volume, toEndVolume: reduced, timeRange: CMTimeRange(start: time(begin), end: take.start.time))
-				} else { mix.setVolume(reduced, at: take.start.time) }
+					ramps.append(AudioVolumeRamp(range: CMTimeRange(start: time(begin), end: take.start.time), start: 1, end: reduced))
+				} else { ramps.append(AudioVolumeRamp(range: CMTimeRange(start: take.start.time, duration: .zero), start: reduced, end: reduced)) }
 			}
 			end = max(end, take.end.seconds)
 		}
 		if end.isFinite && end < duration.seconds { release(end, until: duration.seconds) }
+		return ramps
 	}
 }
 
