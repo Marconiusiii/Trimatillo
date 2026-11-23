@@ -16,25 +16,66 @@ struct CuttingBoardKeyboard: UIViewControllerRepresentable {
 	}
 
 	func updateUIViewController(_ controller: BoardController, context: Context) {
-		controller.rootView = PrimaryCuttingBoard(session: session, projectActions: projectActions, close: close)
+		controller.routing.projectActions = projectActions
+		controller.routing.close = close
+	}
+}
+
+@MainActor final class BoardKeyboardRouting {
+	var projectActions: BoardProjectActions?
+	var close: () -> Void
+
+	init(projectActions: BoardProjectActions?, close: @escaping () -> Void) {
+		self.projectActions = projectActions
+		self.close = close
+	}
+
+	var forwardedActions: BoardProjectActions? {
+		guard let projectActions else { return nil }
+		return BoardProjectActions(append: { self.projectActions?.append() },
+			split: { self.projectActions?.split() }, overwrite: { self.projectActions?.overwrite() },
+			update: projectActions.update == nil ? nil : { self.projectActions?.update?() },
+			placementSheet: { directTouch, placed in
+				self.projectActions?.placementSheet(directTouch, placed) ?? AnyView(EmptyView())
+			})
 	}
 }
 
 final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	let session: CuttingBoardSession
+	let routing: BoardKeyboardRouting
 	#if DEBUG
 	private let keyboardTrace = EditorKeyboardTrace("Cutting Board")
 	#endif
 	private var commandCache: [Int: [UIKeyCommand]] = [:]
 	init(_ session: CuttingBoardSession, projectActions: BoardProjectActions? = nil, close: @escaping () -> Void) {
 		self.session = session
-		super.init(rootView: PrimaryCuttingBoard(session: session, projectActions: projectActions, close: close))
+		let routing = BoardKeyboardRouting(projectActions: projectActions, close: close)
+		self.routing = routing
+		super.init(rootView: PrimaryCuttingBoard(session: session, projectActions: routing.forwardedActions, close: { routing.close() }))
 	}
 
 	@available(*, unavailable)
 	required init?(coder: NSCoder) { fatalError() }
 
 	override var canBecomeFirstResponder: Bool { true }
+
+	#if DEBUG
+	override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+		if commandsEnabled { keyboardTrace.presses(presses, phase: "began") }
+		super.pressesBegan(presses, with: event)
+	}
+
+	override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+		if commandsEnabled { keyboardTrace.presses(presses, phase: "ended") }
+		super.pressesEnded(presses, with: event)
+	}
+
+	override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+		if commandsEnabled { keyboardTrace.presses(presses, phase: "cancelled") }
+		super.pressesCancelled(presses, with: event)
+	}
+	#endif
 
 	override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
 		guard motion == .motionShake, presentedViewController == nil, session.sheet == nil,
@@ -57,15 +98,15 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 		keyboardTrace.availability(commandsEnabled, typing: EditorKeyMap.isTyping(in: view.window), presented: presentedViewController != nil)
 		#endif
 		guard commandsEnabled else { return [] }
-		let kind = rootView.projectActions == nil ? 0 : (rootView.projectActions?.update == nil ? 1 : 2)
+		let kind = routing.projectActions == nil ? 0 : (routing.projectActions?.update == nil ? 1 : 2)
 		if let cached = commandCache[kind] { return cached }
 		var bindings = EditorKeyMap.bindings
-		if let actions = rootView.projectActions {
+		if let actions = routing.projectActions {
 			bindings += [("e", [], "Append"), ("w", [], "Split at Playhead"), ("d", [], "Overwrite at Playhead"),
 				("w", .alternate, "Add at Playhead")]
 			if actions.update != nil { bindings.append(("u", .command, "Save Changes")) }
 		}
-		let commands = EditorKeyMap.commands(bindings, action: #selector(performCommand(_:)))
+		let commands = EditorKeyMap.commands(bindings, action: #selector(trimatilloBoardCommand(_:)))
 		commandCache[kind] = commands
 		return commands
 	}
@@ -74,10 +115,13 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 		presentedViewController == nil && session.sheet == nil && !session.choosingPlacement && session.message == nil && !EditorKeyMap.isTyping(in: view.window)
 	}
 
-	@objc private func performCommand(_ command: UIKeyCommand) {
+	@objc private func trimatilloBoardCommand(_ command: UIKeyCommand) {
 		#if DEBUG
-		let began = keyboardTrace.command(command, enabled: commandsEnabled)
-		defer { keyboardTrace.finished(began, state: "rate=\(session.rate), player=\(session.player.rate)") }
+		let began = keyboardTrace.command(command, enabled: commandsEnabled, controller: self)
+		defer {
+			keyboardTrace.finished(began, state: session.keyboardPlaybackState)
+			keyboardTrace.sample(after: began) { [weak session] in session?.keyboardPlaybackState ?? "closed" }
+		}
 		#endif
 		guard commandsEnabled else { return }
 		let flags = command.modifierFlags
@@ -98,12 +142,12 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 		case "[", "]": session.trim(head: command.input == "[")
 		case "\u{8}", UIKeyCommand.inputDelete: session.delete(session.selection)
 		case "z": if flags.contains(.shift) { session.redo() } else { session.undo() }
-		case "e": rootView.projectActions?.append()
+		case "e": routing.projectActions?.append()
 		case "w":
 			if flags.contains(.alternate) { session.stop(); session.choosingPlacement = true }
-			else { rootView.projectActions?.split() }
-		case "d": rootView.projectActions?.overwrite()
-		case "u": rootView.projectActions?.update?()
+			else { routing.projectActions?.split() }
+		case "d": routing.projectActions?.overwrite()
+		case "u": routing.projectActions?.update?()
 		case "t":
 			let format = EditorPreferences.shared.string(forKey: "timecodeFormat").flatMap(TimecodeFormat.init(rawValue:)) ?? .milliseconds
 			UIAccessibility.post(notification: .announcement, argument: session.timecode(session.currentPosition, format: format))
@@ -120,6 +164,11 @@ enum EditorKeyMap {
 			command.discoverabilityTitle = title
 			command.wantsPriorityOverSystemBehavior = true
 			command.allowsAutomaticMirroring = false
+			if #available(iOS 26.0, *) {
+				let stepping = [UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow].contains(input)
+					&& (flags.isEmpty || flags == .shift)
+				command.repeatBehavior = stepping ? .repeatable : .nonRepeatable
+			}
 			return command
 		}
 	}
@@ -176,15 +225,30 @@ final class EditorKeyboardTrace: NSObject {
 		logger.notice("\(self.screen, privacy: .public): commands \(state, privacy: .public)")
 	}
 
-	func command(_ command: UIKeyCommand, enabled: Bool) -> TimeInterval {
+	func command(_ command: UIKeyCommand, enabled: Bool, controller: UIViewController) -> TimeInterval {
 		latestCommand = ProcessInfo.processInfo.systemUptime
-		logger.notice("\(self.screen, privacy: .public): received \(command.discoverabilityTitle ?? "command", privacy: .public), enabled=\(enabled)")
+		logger.notice("\(self.screen, privacy: .public): received \(command.discoverabilityTitle ?? "command", privacy: .public), enabled=\(enabled), controller=\(String(describing: ObjectIdentifier(controller)), privacy: .public), firstResponder=\(controller.isFirstResponder), uptime=\(self.latestCommand)")
 		return latestCommand
 	}
 
 	func finished(_ start: TimeInterval, state: String) {
 		let milliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1000
 		logger.notice("\(self.screen, privacy: .public): handled in \(milliseconds) ms, \(state, privacy: .public)")
+	}
+
+	func sample(after command: TimeInterval, state: @escaping @MainActor () -> String) {
+		Task { @MainActor [weak self] in
+			try? await Task.sleep(for: .milliseconds(150))
+			guard let self, latestCommand == command else { return }
+			logger.notice("\(self.screen, privacy: .public): after 150 ms: \(state(), privacy: .public)")
+		}
+	}
+
+	func presses(_ presses: Set<UIPress>, phase: String) {
+		// Record physical codes, never typed characters or field contents.
+		for press in presses where press.key != nil {
+			logger.notice("\(self.screen, privacy: .public): press \(phase, privacy: .public), code=\(press.key!.keyCode.rawValue), timestamp=\(press.timestamp)")
+		}
 	}
 
 	@objc private func focusChanged(_ notification: Notification) {

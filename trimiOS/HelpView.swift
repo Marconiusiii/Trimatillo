@@ -324,7 +324,7 @@ private enum HelpTopic: String, CaseIterable {
 			]), Self.projectExport, HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
 				"In Editor, X applies a quick crossfade, F opens Quick Fade, and Command-Shift-T opens Transitions.",
-				"On the project timeline, Space or K plays or pauses, including when a clip is focused. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
+				"On the project timeline, Space or K plays or pauses, including when a clip is focused. K also stops rewind or fast forward. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
 				"I and O mark In and Out at the current playhead without stopping playback. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
 				"Command-Option-Up and Command-Option-Down select a track. C opens its clip at or after the playhead. Return opens the focused clip. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",
 				"S marks or unmarks a clip. With a clip focused, Shift-S starts a drag or adds the clip to the current drag. Use Left or Right Arrow to choose a destination and Command-Option-V to drop. Escape cancels. Without a selected destination, Command-Option-V drops after the focused clip.",
@@ -445,9 +445,10 @@ private enum HelpTopic: String, CaseIterable {
 			])]
 		case .keys:
 			[HelpSection("On the primary Cutting Board", [
-				"Space or K plays or pauses. K also stops rewind or fast forward.",
-				"J rewinds. Repeat J to increase the speed.",
-				"L plays forward. Repeat L to increase the speed.",
+				"Space or K plays or pauses. Press K during rewind or fast forward to stop at the current playhead.",
+				"Use these commands anywhere on the primary Cutting Board. When a text field is active, type into the field; dismiss the keyboard to resume editing commands.",
+				"Press J to rewind. Press it again to increase the speed.",
+				"Press L to play forward. Press it again to increase the speed.",
 				"Left Arrow or Right Arrow steps back or forward. Hold Shift to move ten steps.",
 				"T announces the current time."
 			]), HelpSection("Navigate and edit", [

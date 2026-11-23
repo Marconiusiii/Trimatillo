@@ -162,7 +162,7 @@ struct ProjectEditorView: View {
 	}
 
 	private var workspacePage: some View {
-		ProjectEditorKeyboard(enabled: deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && transitionRequest == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(playback: playback, enabled: deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && transitionRequest == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
 			tool: tool, undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
@@ -396,7 +396,7 @@ struct ProjectEditorView: View {
 	}
 
 	private var projectActions: [EditorMenuAction] {
-		var actions = [EditorMenuAction("Project Settings") { playback.pause(); projectSheet = .settings }]
+		var actions = [EditorMenuAction("Project Settings") { playback.releaseAudio(); projectSheet = .settings }]
 		if !project.placements.isEmpty {
 			actions.append(EditorMenuAction("Export") {
 				guard preparedRevision == revision, let timeline = playback.exportTimeline(named: project.name, captions: project.captions ?? [], project: project) else {
@@ -831,7 +831,7 @@ struct ProjectEditorView: View {
 			EditorMenuAction("Transitions") { trigger = track.id; openTransition(quick: false, track: track) },
 			EditorMenuAction("Quick Fade") { trigger = track.id; openTransition(quick: true, track: track) },
 			EditorMenuAction(track.kind == .audio ? "Cross Fade" : "Cross Dissolve") { trigger = track.id; quickCross(track: track) },
-			EditorMenuAction("Track Effects") { trigger = track.id; playback.pause(); effects = track }
+			EditorMenuAction("Track Effects") { trigger = track.id; playback.releaseAudio(); effects = track }
 		]
 		if !dragging.isEmpty && project.displayedClips(on: track).isEmpty && project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == track.kind }) {
 			actions.append(EditorMenuAction("Drop on Track") { move(dragging, on: track, beside: nil, after: false) })
@@ -992,7 +992,7 @@ struct ProjectEditorView: View {
 	}
 
 	private func pick(_ id: UUID?, files: Bool) {
-		playback.pause()
+		playback.releaseAudio()
 		reconnect = id
 		trigger = id?.uuidString ?? "import"
 		if files { pickingFile = true } else { pickingPhoto = true }
@@ -1026,7 +1026,7 @@ struct ProjectEditorView: View {
 	}
 
 	private func openBoard(_ source: ProjectMediaSource, placement: ProjectPlacement?, rowID: String? = nil) {
-		playback.pause()
+		playback.releaseAudio()
 		trigger = rowID ?? (placement?.id ?? source.id).uuidString
 		clipTask = Task {
 			defer { if !Task.isCancelled { clipTask = nil } }
@@ -1191,7 +1191,7 @@ struct ProjectEditorView: View {
 	}
 
 	private func openVoice() {
-		playback.pause()
+		playback.releaseAudio()
 		voiceInsertion = VoiceInsertion(time: playback.position)
 	}
 
@@ -1232,7 +1232,7 @@ struct ProjectEditorView: View {
 		else if let take { range = CMTimeRange(start: take.start.time, end: take.limit.time) }
 		else if let marked = project.captionRange { range = marked }
 		else { error = "Mark In and Out around the passage, then choose New Description."; return }
-		playback.pause()
+		playback.releaseAudio()
 		descriptionTrigger = id?.uuidString ?? "newDescription"
 		descriptionSaved = false
 		descriptionEntry = DescriptionEntry(timeline: descriptionTimeline, transcript: transcript, take: take, range: range)
@@ -1284,7 +1284,7 @@ struct ProjectEditorView: View {
 			error = "Mark In and Out around the passage, then choose New Caption."
 			return
 		}
-		playback.pause()
+		playback.releaseAudio()
 		captionTrigger = existing?.id.uuidString ?? "newCaption"
 		captionCreated = false
 		captionEntry = CaptionEntry(cue: cue, editing: existing != nil, returnTime: playback.position)

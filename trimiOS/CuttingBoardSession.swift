@@ -217,9 +217,10 @@ final class CuttingBoardSession: ObservableObject {
 	private let engine = AVAudioEngine()
 	private let node = AVAudioPlayerNode()
 	private let audioFormat = AVAudioFormat(standardFormatWithSampleRate: 48000, channels: 2)!
-	private var audioActive = false
+	private let audioSession = EditorPlaybackAudioSession()
 	private var holdingBoundaryAudio = false
 	private var seekGeneration = 0
+	private var startingForward = false
 	let playhead = CuttingBoardPlayhead()
 	private(set) var state: Snapshot {
 		willSet {
@@ -339,7 +340,7 @@ final class CuttingBoardSession: ObservableObject {
 		installItem(asset)
 		playbackObservation = player.addPeriodicTimeObserver(forInterval: CMTime(value: 1, timescale: 30), queue: .main) { [weak self] _ in
 			MainActor.assumeIsolated {
-				guard let self, self.rate > 0, let item = self.player.currentItem else { return }
+				guard let self, self.rate > 0, !self.startingForward, let item = self.player.currentItem else { return }
 				let now = self.player.currentTime()
 				guard now.isNumeric else { return }
 				let end = item.forwardPlaybackEndTime.isNumeric ? item.forwardPlaybackEndTime : self.duration
@@ -358,7 +359,7 @@ final class CuttingBoardSession: ObservableObject {
 		endObservation = NotificationCenter.default.addObserver(forName: AVPlayerItem.didPlayToEndTimeNotification,
 			object: item, queue: .main) { [weak self] _ in
 			MainActor.assumeIsolated {
-				guard let self, self.player.currentItem === item, self.rate > 0 else { return }
+				guard let self, self.player.currentItem === item, self.rate > 0, !self.startingForward else { return }
 				let end = item.forwardPlaybackEndTime.isNumeric ? item.forwardPlaybackEndTime : self.duration
 				guard self.player.currentTime() >= end else { return }
 				self.seek(end)
@@ -391,6 +392,7 @@ final class CuttingBoardSession: ObservableObject {
 
 	func stop() {
 		seekGeneration += 1
+		startingForward = false
 		player.currentItem?.cancelPendingSeeks()
 		if rate > 0, player.rate > 0, player.currentTime().isNumeric {
 			state.position = min(duration, max(.zero, player.currentTime()))
@@ -409,7 +411,7 @@ final class CuttingBoardSession: ObservableObject {
 		pendingScrubTime = nil
 		previewSequence += 1
 		node.stop()
-		scheduleIdleAudioRelease()
+		scheduleIdleEngineStop()
 	}
 
 	func releaseAudio() {
@@ -422,47 +424,31 @@ final class CuttingBoardSession: ObservableObject {
 		idleAudioTask?.cancel()
 		idleAudioTask = nil
 		engine.stop()
-		if audioActive {
-			#if DEBUG
-			editPointTrace.event("Audio release requested")
-			do {
-				try AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-				editPointTrace.event("Audio released")
-			} catch { editPointTrace.event("Audio release failed") }
-			#else
-			try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-			#endif
-			audioActive = false
-		}
+		audioSession.release()
 	}
 
-	private func scheduleIdleAudioRelease() {
+	private func scheduleIdleEngineStop() {
 		guard !holdingBoundaryAudio else { return }
-		guard audioActive || engine.isRunning else { return }
+		guard engine.isRunning else { return }
 		idleAudioTask?.cancel()
 		idleAudioTask = Task { [weak self] in
 			do { try await Task.sleep(for: .milliseconds(300)) } catch { return }
 			guard let self, rate == 0, !holdingBoundaryAudio else { return }
-			deactivateAudio()
+			engine.stop()
 		}
 	}
 
-	private func activateAudio() throws {
+	private func activateAudio() async throws {
 		idleAudioTask?.cancel()
 		idleAudioTask = nil
-		if !audioActive {
-			let session = AVAudioSession.sharedInstance()
-			#if DEBUG
-			editPointTrace.event("Audio activation requested")
-			#endif
-			try session.setCategory(.playback, mode: .default)
-			try session.setActive(true)
-			audioActive = true
-			#if DEBUG
-			editPointTrace.event("Audio activated")
-			#endif
-		}
+		try await audioSession.activate()
 	}
+
+	#if DEBUG
+	var keyboardPlaybackState: String {
+		"rate=\(rate), player=\(player.rate), status=\(player.timeControlStatus.rawValue), generation=\(seekGeneration), starting=\(startingForward), reverse=\(reverseTask != nil), engine=\(engine.isRunning), node=\(node.isPlaying)"
+	}
+	#endif
 
 	func seek(_ time: CMTime, audible: Bool = false) {
 		stop()
@@ -617,7 +603,7 @@ final class CuttingBoardSession: ObservableObject {
 	func prepareBoundaryAudio() {
 		guard hasAudio else { return }
 		do {
-			try activateAudio()
+			try audioSession.prepareBoundary()
 			if !engine.isRunning { try engine.start() }
 			holdingBoundaryAudio = true
 			#if DEBUG
@@ -634,7 +620,7 @@ final class CuttingBoardSession: ObservableObject {
 	func previewBoundary(at time: CMTime, preceding: Bool) {
 		guard hasAudio, case .join = sheet else { return }
 		#if DEBUG
-		editPointTrace.event("Boundary preview requested, audio active = \(audioActive), engine running = \(engine.isRunning)")
+		editPointTrace.event("Boundary preview requested, engine running = \(engine.isRunning)")
 		#endif
 		holdingBoundaryAudio = true
 		idleAudioTask?.cancel()
@@ -808,13 +794,14 @@ final class CuttingBoardSession: ObservableObject {
 			if rate == speed { announce(shuttleLabel) }
 			return
 		}
-		do { try activateAudio() } catch { message = "Could not start audio. Check the audio output and try Play again."; return }
 		rate = -speed
 		announce(shuttleLabel)
 		state.position = start
 		reverseTask = Task { [weak self] in
 			guard let self else { return }
 			do {
+				try await self.activateAudio()
+				try Task.checkCancellation()
 				try await self.playReverse(from: start, speed: speed)
 				try Task.checkCancellation()
 				self.seek(.zero)
@@ -845,7 +832,7 @@ final class CuttingBoardSession: ObservableObject {
 		stop()
 		state.position = start
 		if engine.isRunning { engine.stop() }
-		do { try activateAudio() } catch { message = "Could not start audio. Check the audio output and try Play again."; return }
+		do { try audioSession.configure() } catch { message = "Could not start audio. Check the audio output and try Play again."; return }
 		player.currentItem?.forwardPlaybackEndTime = end
 		let generation = seekGeneration
 		rate = speed
@@ -853,9 +840,12 @@ final class CuttingBoardSession: ObservableObject {
 			player.playImmediately(atRate: Float(speed))
 			return
 		}
+		startingForward = true
 		player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
 			Task { @MainActor [weak self] in
-				guard finished, let self, generation == self.seekGeneration else { return }
+				guard let self, generation == self.seekGeneration, self.rate == speed else { return }
+				self.startingForward = false
+				guard finished else { self.stop(); return }
 				self.player.playImmediately(atRate: Float(speed))
 			}
 		}
@@ -866,7 +856,7 @@ final class CuttingBoardSession: ObservableObject {
 			let samples = try await FrameAudioSamples.read(asset: asset ?? editAsset, mix: nil, at: time, length: length)
 			try Task.checkCancellation()
 			guard !samples.isEmpty else { return }
-			try activateAudio()
+			try await activateAudio()
 			guard let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: audioFormat) else { return }
 			node.stop()
 			if !engine.isRunning { try engine.start() }
@@ -883,7 +873,7 @@ final class CuttingBoardSession: ObservableObject {
 		node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack) { @Sendable [weak self] _ in
 			Task { @MainActor [weak self] in
 				guard let self, previewSequence == sequence else { return }
-				scheduleIdleAudioRelease()
+				scheduleIdleEngineStop()
 			}
 		}
 		node.play()
@@ -1257,6 +1247,82 @@ extension CuttingBoardSession {
 		try await exporter.export(to: output.url, as: type)
 		try Task.checkCancellation()
 		return output
+	}
+}
+
+/// Serializes explicit engine activation off the main thread. Forward AVPlayer
+/// playback activates the configured session itself. Pause keeps the session;
+/// leaving the editor releases it after any queued activation has finished.
+@MainActor final class EditorPlaybackAudioSession {
+	nonisolated private static let queue = DispatchQueue(label: "com.marconius.trimato-ios.editor-audio")
+	private static var owner: UUID?
+	private let id = UUID()
+	private var generation = 0
+	private var active = false
+	private var requested = false
+	#if DEBUG
+	private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Trimatillo", category: "EditorAudio")
+	private func trace(_ event: String) {
+		logger.notice("Audio \(self.id.uuidString, privacy: .public): \(event, privacy: .public), generation=\(self.generation), uptime=\(ProcessInfo.processInfo.systemUptime)")
+	}
+	#endif
+
+	func configure() throws {
+		let session = AVAudioSession.sharedInstance()
+		if session.category != .playback || session.mode != .default || session.categoryOptions != [.mixWithOthers] {
+			try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
+			active = false
+		}
+		if Self.owner != id { active = false }
+		Self.owner = id
+		requested = true
+	}
+
+	func activate() async throws {
+		try Task.checkCancellation()
+		try configure()
+		if active { return }
+		let request = generation
+		#if DEBUG
+		trace("activation queued")
+		#endif
+		try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+			Self.queue.async {
+				do {
+					try AVAudioSession.sharedInstance().setActive(true)
+					continuation.resume()
+				} catch { continuation.resume(throwing: error) }
+			}
+		}
+		guard request == generation, Self.owner == id else { throw CancellationError() }
+		active = true
+		#if DEBUG
+		trace("activation completed")
+		#endif
+		try Task.checkCancellation()
+	}
+
+	// Edit-point presentation already prepares its audio before opening the sheet.
+	func prepareBoundary() throws {
+		try configure()
+		guard !active else { return }
+		try Self.queue.sync { try AVAudioSession.sharedInstance().setActive(true) }
+		active = true
+	}
+
+	func release() {
+		generation += 1
+		defer { active = false; requested = false }
+		guard requested, Self.owner == id else { return }
+		#if DEBUG
+		trace("release requested")
+		#endif
+		// This boundary must finish before a recording or another player takes over.
+		Self.queue.sync { try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation) }
+		Self.owner = nil
+		#if DEBUG
+		trace("release completed")
+		#endif
 	}
 }
 

@@ -2,6 +2,7 @@ import SwiftUI
 import UIKit
 
 struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
+	let playback: ProjectPlayback
 	let enabled: Bool
 	var tool = ProjectTool.editor
 	let undoShake: () -> Bool
@@ -9,7 +10,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 	@ViewBuilder let content: () -> Content
 
 	func makeUIViewController(context: Context) -> Controller {
-		Controller(rootView: content())
+		Controller(rootView: content(), playback: playback)
 	}
 
 	func updateUIViewController(_ controller: Controller, context: Context) {
@@ -23,11 +24,39 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 		#if DEBUG
 		private let keyboardTrace = EditorKeyboardTrace("Project")
 		#endif
+		private let playback: ProjectPlayback
+
+		init(rootView: Content, playback: ProjectPlayback) {
+			self.playback = playback
+			super.init(rootView: rootView)
+		}
+
+		@available(*, unavailable)
+		required init?(coder: NSCoder) { fatalError() }
+
 		private var commandCache: [ProjectTool: [UIKeyCommand]] = [:]
 		var tool = ProjectTool.editor
 		var undoShake: (() -> Bool)?
 		var performKey: ((String, UIKeyModifierFlags) -> Void)?
 		override var canBecomeFirstResponder: Bool { true }
+
+		#if DEBUG
+		override func pressesBegan(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+			if commandsEnabled { keyboardTrace.presses(presses, phase: "began") }
+			super.pressesBegan(presses, with: event)
+		}
+
+		override func pressesEnded(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+			if commandsEnabled { keyboardTrace.presses(presses, phase: "ended") }
+			super.pressesEnded(presses, with: event)
+		}
+
+		override func pressesCancelled(_ presses: Set<UIPress>, with event: UIPressesEvent?) {
+			if commandsEnabled { keyboardTrace.presses(presses, phase: "cancelled") }
+			super.pressesCancelled(presses, with: event)
+		}
+		#endif
+
 
 		override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
 			guard motion == .motionShake, presentedViewController == nil,
@@ -70,7 +99,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 			}
 			bindings.append(("m", [.command, .shift], "Open Mixer"))
 			bindings.append(("v", [.command, .shift], "Record Voice Over"))
-			let commands = EditorKeyMap.commands(bindings, action: #selector(handle(_:)))
+			let commands = EditorKeyMap.commands(bindings, action: #selector(trimatilloProjectCommand(_:)))
 			commandCache[tool] = commands
 			return commands
 		}
@@ -79,10 +108,13 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 			performKey != nil && presentedViewController == nil && !EditorKeyMap.isTyping(in: view.window)
 		}
 
-		@objc private func handle(_ key: UIKeyCommand) {
+		@objc private func trimatilloProjectCommand(_ key: UIKeyCommand) {
 			#if DEBUG
-			let began = keyboardTrace.command(key, enabled: commandsEnabled)
-			defer { keyboardTrace.finished(began, state: tool.rawValue) }
+			let began = keyboardTrace.command(key, enabled: commandsEnabled, controller: self)
+			defer {
+				keyboardTrace.finished(began, state: playback.keyboardPlaybackState)
+				keyboardTrace.sample(after: began) { [weak playback] in playback?.keyboardPlaybackState ?? "closed" }
+			}
 			#endif
 			guard commandsEnabled, let input = key.input else { return }
 			performKey?(input, key.modifierFlags)

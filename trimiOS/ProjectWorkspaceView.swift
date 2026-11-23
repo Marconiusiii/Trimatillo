@@ -36,16 +36,16 @@ struct ProjectWorkspaceView: View {
 				if !Task.isCancelled { preparedRevision = preparing }
 			}
 			.onChange(of: phase) { _, phase in
-				if phase != .active { playback.pause() }
+				if phase != .active { playback.releaseAudio() }
 			}
-			.onDisappear { playback.pause() }
+			.onDisappear { playback.releaseAudio() }
 			.onChange(of: saves.failure) { _, failure in savingError = failure }
 			.alert("Could Not Save Project", isPresented: Binding(get: { savingError != nil }, set: { if !$0 { savingError = nil } })) {
 				Button("Retry") { saves.retry() }
 				Button("Close Without Saving", role: .destructive) {
 					saves.discardFailedSaves()
 					playback.cancelPreparation()
-					playback.pause()
+					playback.releaseAudio()
 					close()
 				}
 				Button("Cancel", role: .cancel) { }
@@ -78,7 +78,7 @@ struct ProjectWorkspaceView: View {
 
 	private func closeProject() {
 		playback.cancelPreparation()
-		playback.pause()
+		playback.releaseAudio()
 		guard !closing else { return }
 		if !saves.hasPendingSaves { close(); return }
 		closing = true

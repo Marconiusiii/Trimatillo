@@ -334,7 +334,7 @@ private struct ScrubAudioWindow {
 	private var observer: Any?
 	private var status: AnyCancellable?
 	private var startup: Task<Void, Never>?
-	private var audioActive = false
+	private let audioSession = EditorPlaybackAudioSession()
 	private var generation = 0
 	private var reverse: Task<Void, Never>?
 	private(set) var scrubbing = false
@@ -372,9 +372,15 @@ private struct ScrubAudioWindow {
 
 	deinit { if let observer { player.removeTimeObserver(observer) } }
 
+	#if DEBUG
+	var keyboardPlaybackState: String {
+		"playing=\(playing), speed=\(speed), player=\(player.rate), status=\(player.timeControlStatus.rawValue), loopGeneration=\(loopGeneration), reverse=\(reverse != nil), engine=\(engine.isRunning), node=\(node.isPlaying)"
+	}
+	#endif
+
 	func exportTimeline(named name: String, captions: [CaptionCue], project: EditingProject) -> ProjectExport? {
 		guard ready, let item = player.currentItem else { return nil }
-		pause()
+		releaseAudio()
 		let snapshot = AVPlayerItem(asset: item.asset)
 		snapshot.videoComposition = item.videoComposition
 		do { snapshot.audioMix = try audioMix(project, solo: []) }
@@ -385,7 +391,7 @@ private struct ScrubAudioWindow {
 	func makePreview() -> PreviewPlayback? {
 		guard let item = player.currentItem else { return nil }
 		let forwardRate = max(0, speed)
-		pause()
+		releaseAudio()
 		let snapshot = AVPlayerItem(asset: item.asset)
 		snapshot.videoComposition = item.videoComposition
 		do { snapshot.audioMix = try independentMix(item) }
@@ -424,12 +430,13 @@ private struct ScrubAudioWindow {
 	}
 
 	func pause() {
-		stop(keepingAudio: false)
+		stop(keepingAudio: true)
 		do { try installPendingMix() }
 		catch { failure = error.localizedDescription }
 	}
 
 	private func stop(keepingAudio: Bool) {
+		if playing || playbackRange != nil { player.currentItem?.cancelPendingSeeks() }
 		if playbackRange != nil {
 			loopGeneration += 1
 			playbackRange = nil
@@ -458,10 +465,12 @@ private struct ScrubAudioWindow {
 		player.pause()
 		if !wasRewinding, playing, player.currentTime().isNumeric { playhead.position = min(duration, player.currentTime()) }
 		if playing { transport.playing = false }
-		if audioActive && !keepingAudio {
-			try? AVAudioSession.sharedInstance().setActive(false, options: .notifyOthersOnDeactivation)
-			audioActive = false
-		}
+		if !keepingAudio { audioSession.release() }
+	}
+
+	func releaseAudio() {
+		pause()
+		audioSession.release()
 	}
 
 	func toggle() {
@@ -478,17 +487,11 @@ private struct ScrubAudioWindow {
 	}
 
 	private func configureAudioSession() throws {
-		let session = AVAudioSession.sharedInstance()
-		if session.category != .playback || session.mode != .default || !session.categoryOptions.contains(.mixWithOthers) {
-			try session.setCategory(.playback, mode: .default, options: [.mixWithOthers])
-		}
+		try audioSession.configure()
 	}
 
-	private func activateAudio() throws {
-		guard !audioActive else { return }
-		try configureAudioSession()
-		try AVAudioSession.sharedInstance().setActive(true)
-		audioActive = true
+	private func activateAudio() async throws {
+		try await audioSession.activate()
 	}
 
 	private func playForward(_ rate: Double) {
@@ -530,13 +533,12 @@ private struct ScrubAudioWindow {
 	private func playReverse(_ rate: Double, item: AVPlayerItem) {
 		if position <= .zero { seek(duration) }
 		let start = position
-		do {
-			try activateAudio()
-		} catch { failure = "Could not rewind. Check the audio output and try again."; return }
 		transport.playing = true
 		speed = -rate
 		reverse = Task {
 			do {
+				try await activateAudio()
+				try Task.checkCancellation()
 				let hasAudio = try await !item.asset.loadTracks(withMediaType: .audio).isEmpty
 				try await ReverseAudioPlayback.run(from: start, speed: rate, asset: item.asset, mix: independentMix(item),
 					hasAudio: hasAudio, engine: engine, node: node, format: format) { time in
@@ -566,7 +568,7 @@ private struct ScrubAudioWindow {
 					at: start, length: min(frame, duration - start).seconds)
 				try Task.checkCancellation()
 				if let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: format) {
-					try activateAudio()
+					try await activateAudio()
 					if !engine.isRunning { try engine.start() }
 					node.play()
 					await node.scheduleBuffer(buffer, completionCallbackType: .dataPlayedBack)
@@ -653,7 +655,7 @@ private struct ScrubAudioWindow {
 						samples = decoded.grain(at: point)
 					}
 					guard let samples, let buffer = ReverseAudioPlayback.pcmBuffer(samples, format: format) else { continue }
-					try activateAudio()
+					try await activateAudio()
 					if !engine.isRunning { try engine.start() }
 					node.scheduleBuffer(buffer, at: nil, options: .interrupts, completionCallbackType: .dataPlayedBack) { _ in }
 					if !node.isPlaying { node.play() }
@@ -678,6 +680,7 @@ private struct ScrubAudioWindow {
 	}
 
 	func cancelPreparation() {
+		releaseAudio()
 		generation += 1
 		status = nil
 		startup?.cancel()
