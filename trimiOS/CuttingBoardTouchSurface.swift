@@ -1,4 +1,5 @@
 import SwiftUI
+import Combine
 import AVFoundation
 import UIKit
 
@@ -102,6 +103,7 @@ extension TimelineGestureHandling where Self: UIView {
 
 final class TimelineSurface: UIView, TimelineGestureHandling {
 	let session: CuttingBoardSession
+	private var positionObservation: AnyCancellable?
 	private let video = AVPlayerLayer()
 	private let rangeTrack = CALayer()
 	private let selection = CALayer()
@@ -141,6 +143,9 @@ final class TimelineSurface: UIView, TimelineGestureHandling {
 			view.applyColors()
 		}
 
+		positionObservation = session.playhead.$position.removeDuplicates().sink { [weak self] time in
+			self?.updatePosition(at: time)
+		}
 		guard onClose != nil else { return }
 		installTimelineGestures(projectTimeline: false, placement: projectActions != nil, join: #selector(openJoin))
 	}
@@ -185,12 +190,12 @@ final class TimelineSurface: UIView, TimelineGestureHandling {
 		updatePosition()
 	}
 
-	func updatePosition() {
+	func updatePosition(at time: CMTime? = nil) {
 		CATransaction.begin()
 		CATransaction.setDisableActions(true)
 		video.frame = bounds
 		func x(_ time: CMTime) -> CGFloat { bounds.width * CGFloat(time.seconds / session.duration.seconds) }
-		cursor.frame = CGRect(x: min(max(0, bounds.width - 3), x(session.position)), y: 0, width: 3, height: bounds.height)
+		cursor.frame = CGRect(x: min(max(0, bounds.width - 3), x(time ?? session.position)), y: 0, width: 3, height: bounds.height)
 		if let range = session.selection {
 			rangeTrack.frame = CGRect(x: 0, y: bounds.height - 14, width: bounds.width, height: 14)
 			let left = x(range.start)

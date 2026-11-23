@@ -403,6 +403,8 @@ private struct ScrubAudioWindow {
 	private func startLoop(_ range: CMTimeRange, at start: CMTime, rate: Double) {
 		stop(keepingAudio: true)
 		loopRate = rate
+		speed = rate
+		transport.playing = true
 		playbackRange = range
 		player.currentItem?.forwardPlaybackEndTime = range.end
 		restartLoop(at: start)

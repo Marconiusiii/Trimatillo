@@ -20,16 +20,14 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 	}
 
 	final class Controller: UIHostingController<Content> {
+		#if DEBUG
+		private let keyboardTrace = EditorKeyboardTrace("Project")
+		#endif
 		private var commandCache: [ProjectTool: [UIKeyCommand]] = [:]
 		var tool = ProjectTool.editor
 		var undoShake: (() -> Bool)?
 		var performKey: ((String, UIKeyModifierFlags) -> Void)?
 		override var canBecomeFirstResponder: Bool { true }
-
-		override func viewDidAppear(_ animated: Bool) {
-			super.viewDidAppear(animated)
-			if !EditorKeyMap.isTyping(in: view.window) { becomeFirstResponder() }
-		}
 
 		override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
 			guard motion == .motionShake, presentedViewController == nil,
@@ -40,6 +38,9 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 		}
 
 		override var keyCommands: [UIKeyCommand]? {
+			#if DEBUG
+			keyboardTrace.availability(commandsEnabled, typing: EditorKeyMap.isTyping(in: view.window), presented: presentedViewController != nil)
+			#endif
 			guard commandsEnabled else { return [] }
 			if let cached = commandCache[tool] { return cached }
 			var bindings = EditorKeyMap.bindings.map { input, flags, title in
@@ -79,6 +80,10 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 		}
 
 		@objc private func handle(_ key: UIKeyCommand) {
+			#if DEBUG
+			let began = keyboardTrace.command(key, enabled: commandsEnabled)
+			defer { keyboardTrace.finished(began, state: tool.rawValue) }
+			#endif
 			guard commandsEnabled, let input = key.input else { return }
 			performKey?(input, key.modifierFlags)
 		}

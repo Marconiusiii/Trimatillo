@@ -1,6 +1,10 @@
+import AVFoundation
 import CoreMedia
 import SwiftUI
 import UIKit
+#if DEBUG
+import OSLog
+#endif
 
 struct CuttingBoardKeyboard: UIViewControllerRepresentable {
 	let session: CuttingBoardSession
@@ -18,6 +22,9 @@ struct CuttingBoardKeyboard: UIViewControllerRepresentable {
 
 final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	let session: CuttingBoardSession
+	#if DEBUG
+	private let keyboardTrace = EditorKeyboardTrace("Cutting Board")
+	#endif
 	private var commandCache: [Int: [UIKeyCommand]] = [:]
 	init(_ session: CuttingBoardSession, projectActions: BoardProjectActions? = nil, close: @escaping () -> Void) {
 		self.session = session
@@ -28,11 +35,6 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	required init?(coder: NSCoder) { fatalError() }
 
 	override var canBecomeFirstResponder: Bool { true }
-
-	override func viewDidAppear(_ animated: Bool) {
-		super.viewDidAppear(animated)
-		if !EditorKeyMap.isTyping(in: view.window) { becomeFirstResponder() }
-	}
 
 	override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
 		guard motion == .motionShake, presentedViewController == nil, session.sheet == nil,
@@ -51,6 +53,9 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	}
 
 	override var keyCommands: [UIKeyCommand]? {
+		#if DEBUG
+		keyboardTrace.availability(commandsEnabled, typing: EditorKeyMap.isTyping(in: view.window), presented: presentedViewController != nil)
+		#endif
 		guard commandsEnabled else { return [] }
 		let kind = rootView.projectActions == nil ? 0 : (rootView.projectActions?.update == nil ? 1 : 2)
 		if let cached = commandCache[kind] { return cached }
@@ -70,6 +75,10 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	}
 
 	@objc private func performCommand(_ command: UIKeyCommand) {
+		#if DEBUG
+		let began = keyboardTrace.command(command, enabled: commandsEnabled)
+		defer { keyboardTrace.finished(began, state: "rate=\(session.rate), player=\(session.player.rate)") }
+		#endif
 		guard commandsEnabled else { return }
 		let flags = command.modifierFlags
 		switch command.input {
@@ -117,7 +126,10 @@ enum EditorKeyMap {
 
 	static func isTyping(in view: UIView?) -> Bool {
 		guard let view else { return false }
-		if view.isFirstResponder, view is any UITextInput { return true }
+		// VoiceOver and SwiftUI can use text-input responders for navigation.
+		// Suppress editor shortcuts only while a real editable field is active.
+		if let field = view as? UITextField, field.isFirstResponder, field.isEditing { return true }
+		if let text = view as? UITextView, text.isFirstResponder, text.isEditable { return true }
 		return view.subviews.contains { isTyping(in: $0) }
 	}
 
@@ -140,3 +152,47 @@ enum EditorKeyMap {
 		("z", .command, "Undo"), ("z", [.command, .shift], "Redo"), ("t", [], "Current Time"), ("\r", [], "Adjust Edit Point")
 	]
 }
+
+#if DEBUG
+/// Logs native command delivery and subsequent focus changes without recording field contents.
+final class EditorKeyboardTrace: NSObject {
+	private let logger = Logger(subsystem: Bundle.main.bundleIdentifier ?? "Trimatillo", category: "EditorKeyboard")
+	private let screen: String
+	private var previousAvailability: String?
+	private var latestCommand: TimeInterval = 0
+
+	init(_ screen: String) {
+		self.screen = screen
+		super.init()
+		NotificationCenter.default.addObserver(self, selector: #selector(focusChanged(_:)), name: UIAccessibility.elementFocusedNotification, object: nil)
+	}
+
+	deinit { NotificationCenter.default.removeObserver(self) }
+
+	func availability(_ enabled: Bool, typing: Bool, presented: Bool) {
+		let state = "enabled=\(enabled), editingText=\(typing), presented=\(presented)"
+		guard state != previousAvailability else { return }
+		previousAvailability = state
+		logger.notice("\(self.screen, privacy: .public): commands \(state, privacy: .public)")
+	}
+
+	func command(_ command: UIKeyCommand, enabled: Bool) -> TimeInterval {
+		latestCommand = ProcessInfo.processInfo.systemUptime
+		logger.notice("\(self.screen, privacy: .public): received \(command.discoverabilityTitle ?? "command", privacy: .public), enabled=\(enabled)")
+		return latestCommand
+	}
+
+	func finished(_ start: TimeInterval, state: String) {
+		let milliseconds = (ProcessInfo.processInfo.systemUptime - start) * 1000
+		logger.notice("\(self.screen, privacy: .public): handled in \(milliseconds) ms, \(state, privacy: .public)")
+	}
+
+	@objc private func focusChanged(_ notification: Notification) {
+		guard ProcessInfo.processInfo.systemUptime - latestCommand < 2,
+			let element = notification.userInfo?[UIAccessibility.focusedElementUserInfoKey] as? NSObject else { return }
+		let known = ["Close", "Play", "Pause", "Rewind", "Fast Forward", "Clip Info", "Direct Touch Editor"]
+		let label = element.accessibilityLabel.flatMap { known.contains($0) ? $0 : nil } ?? "other control"
+		logger.notice("\(self.screen, privacy: .public): focus after command: \(label, privacy: .public), type=\(String(describing: type(of: element)), privacy: .public)")
+	}
+}
+#endif

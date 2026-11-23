@@ -165,26 +165,16 @@ struct CuttingBoardView: View {
 		GeometryReader { geometry in
 			let wide = geometry.size.width > geometry.size.height && geometry.size.width > 550
 			let portraitVideo = (session.videoAspect ?? 1) < 1
-			if wide {
-				HStack(spacing: 0) {
-					timeline
-					ViewThatFits(in: .vertical) {
-						controls
-						ScrollView { controls }
-					}
-					.frame(width: geometry.size.width * (portraitVideo ? 0.60 : 0.49))
+			let previewFraction = portraitVideo ? 0.55 : 0.45
+			let layout = wide ? AnyLayout(HStackLayout(spacing: 0)) : AnyLayout(VStackLayout(spacing: 0))
+			layout {
+				timeline
+					.frame(height: wide ? nil : geometry.size.height * previewFraction)
+				ScrollView {
+					controls.frame(minHeight: wide ? geometry.size.height : geometry.size.height * (1 - previewFraction))
 				}
-			} else {
-				ViewThatFits(in: .vertical) {
-					VStack(spacing: 0) {
-						timeline.frame(minHeight: portraitVideo ? max(180, geometry.size.height * 0.45) : 180)
-						controls.fixedSize(horizontal: false, vertical: true)
-					}
-					VStack(spacing: 0) {
-						timeline.frame(height: geometry.size.height * (portraitVideo ? 0.55 : 0.45))
-						ScrollView { controls }
-					}
-				}
+				.scrollBounceBehavior(.basedOnSize)
+				.frame(width: wide ? geometry.size.width * (portraitVideo ? 0.60 : 0.49) : nil)
 			}
 		}
 	}
@@ -231,7 +221,7 @@ struct CuttingBoardView: View {
 				.labelStyle(.iconOnly)
 				.accessibilityValue(symbol == "pause.fill" ? session.shuttleLabel : "")
 		}
-		.buttonStyle(EditorButtonStyle(square: true, badge: showsSpeed ? session.speedLabel : nil))
+		.buttonStyle(EditorButtonStyle(square: true, badge: showsSpeed ? session.speedLabel : nil, reservesBadgeSpace: true))
 	}
 
 	private var controls: some View {
@@ -241,7 +231,7 @@ struct CuttingBoardView: View {
 				session.stop()
 				session.sheet = .jump
 			} label: {
-				Text("Playhead, " + session.positionLabel(format: format))
+				CuttingBoardPositionLabel(session: session, playhead: session.playhead, format: format)
 			}
 			.accessibilityActions { EditorMenuAction.buttons(editCommands(fromMenu: false)) }
 			.accessibilityFocused($playheadFocused)
@@ -871,6 +861,17 @@ struct ClipInfoView: View {
 	}
 }
 
+private struct CuttingBoardPositionLabel: View {
+	let session: CuttingBoardSession
+	@ObservedObject var playhead: CuttingBoardPlayhead
+	let format: TimecodeFormat
+
+	var body: some View {
+		Text("Playhead, " + session.positionLabel(format: format))
+			.monospacedDigit()
+	}
+}
+
 struct PrimaryCuttingBoard: View {
 	let session: CuttingBoardSession
 	var projectActions: BoardProjectActions?
@@ -884,12 +885,16 @@ struct PrimaryCuttingBoard: View {
 			HStack(spacing: 0) {
 				Button {
 					session.stop()
-					if session.hasTimelineEdits { confirmClose = true } else { close() }
+					if projectActions == nil || session.hasTimelineEdits { confirmClose = true } else { close() }
 				} label: { Text("Close").padding(.horizontal).frame(minHeight: 48).contentShape(Rectangle()) }
 				.accessibilityIdentifier("sharedBoardClose")
-				.alert("Close this clip and discard unsaved edits?", isPresented: $confirmClose) {
+				.alert("Close this clip?", isPresented: $confirmClose) {
 					Button("Close Clip", role: .destructive, action: close)
-					Button("Keep Editing", role: .cancel) {}
+					Button("Cancel", role: .cancel) {}
+				} message: {
+					if session.hasTimelineEdits || session.state.markIn != nil || session.state.markOut != nil {
+						Text("Unexported edits and In and Out markers will be discarded.")
+					}
 				}
 				Text(session.hasVideo ? "Video Cutting Board" : "Audio Cutting Board")
 					.font(.headline)

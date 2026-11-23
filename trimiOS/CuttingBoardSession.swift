@@ -168,6 +168,10 @@ nonisolated final class ImportedMovie: Transferable, Sendable {
 
 }
 
+@MainActor final class CuttingBoardPlayhead: ObservableObject {
+	@Published var position = CMTime.zero
+}
+
 @MainActor
 final class CuttingBoardSession: ObservableObject {
 	#if DEBUG
@@ -216,7 +220,17 @@ final class CuttingBoardSession: ObservableObject {
 	private var audioActive = false
 	private var holdingBoundaryAudio = false
 	private var seekGeneration = 0
-	@Published private(set) var state: Snapshot
+	let playhead = CuttingBoardPlayhead()
+	private(set) var state: Snapshot {
+		willSet {
+			if state.timeline != newValue.timeline || state.markIn != newValue.markIn || state.markOut != newValue.markOut {
+				objectWillChange.send()
+			}
+		}
+		didSet {
+			if playhead.position != state.position { playhead.position = state.position }
+		}
+	}
 	@Published private(set) var rate = 0.0
 	var speedLabel: String { abs(rate).formatted() + "x" }
 	var shuttleLabel: String { (rate < 0 ? "Rewind " : "Forward ") + speedLabel }
@@ -377,6 +391,7 @@ final class CuttingBoardSession: ObservableObject {
 
 	func stop() {
 		seekGeneration += 1
+		player.currentItem?.cancelPendingSeeks()
 		if rate > 0, player.rate > 0, player.currentTime().isNumeric {
 			state.position = min(duration, max(.zero, player.currentTime()))
 		}

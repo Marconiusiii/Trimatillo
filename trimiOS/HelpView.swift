@@ -445,7 +445,7 @@ private enum HelpTopic: String, CaseIterable {
 			])]
 		case .keys:
 			[HelpSection("On the primary Cutting Board", [
-				"Space or K plays or pauses.",
+				"Space or K plays or pauses. K also stops rewind or fast forward.",
 				"J rewinds. Repeat J to increase the speed.",
 				"L plays forward. Repeat L to increase the speed.",
 				"Left Arrow or Right Arrow steps back or forward. Hold Shift to move ten steps.",
@@ -468,7 +468,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Save Changes to Original updates the selected Photos video or replaces a writable MOV, MP4, or M4A original in Files.",
 				"Save as New Clip creates a separate clip. For video, choose Photos or Files. For audio, use the Files picker.",
 				"In Files, select the folder, change the suggested filename if desired, and choose Save.",
-				"When editing from the Photos Share sheet, choose Export, then Photos or Files under Save as New Clip."
+				"When editing from the Photos Share sheet, choose Export, then Photos or Files under Save as New Clip.",
+				"In Trim a Clip, choose Close, then Close Clip to finish. Choose Cancel to continue editing. Export edits you want to keep before closing."
 			])]
 		}
 	}
