@@ -103,7 +103,7 @@ struct CuttingBoardView: View {
 	@State private var exporting = false
 	@AccessibilityFocusState(for: .voiceOver) private var exportFocused: Bool
 	@AccessibilityFocusState private var placementFocused: Bool
-	@AccessibilityFocusState private var playheadFocused: Bool
+	@AccessibilityFocusState private var jumpFocused: Bool
 	@AccessibilityFocusState private var editActionsFocused: Bool
 	@State private var sheetFromMenu = false
 	@State private var returnMessage: String?
@@ -181,18 +181,13 @@ struct CuttingBoardView: View {
 
 	private var timeline: some View {
 		VStack(spacing: 0) {
-			Button { showingDirectTouchEditor = true } label: {
-				Text("Direct Touch Editor")
-					.frame(maxWidth: .infinity, minHeight: 48)
-					.contentShape(Rectangle())
-			}
-			.accessibilityFocused($launcherFocused)
 			if showingDirectTouchEditor {
 				EditorTheme.surface
 			} else {
 				CuttingBoardTouchSurface(session: session, onClose: nil)
 					.frame(maxWidth: .infinity, maxHeight: .infinity)
 			}
+			CuttingBoardTimelineSlider(session: session, playhead: session.playhead, format: format)
 			transport
 		}
 	}
@@ -230,18 +225,21 @@ struct CuttingBoardView: View {
 				sheetFromMenu = false
 				session.stop()
 				session.sheet = .jump
-			} label: {
-				CuttingBoardPositionLabel(session: session, playhead: session.playhead, format: format)
-			}
-			.accessibilityActions { EditorMenuAction.buttons(editCommands(fromMenu: false)) }
-			.accessibilityFocused($playheadFocused)
+			} label: { Text("Jump to Time") }
+			.accessibilityFocused($jumpFocused)
 			.sheet(item: sheetBinding(forMenu: false), onDismiss: {
 				#if DEBUG
-				session.editPointTrace.event("Board sheet dismissed, requesting Playhead focus")
+				session.editPointTrace.event("Board sheet dismissed, requesting Jump to Time focus")
 				if session.sheet == nil { session.editPointTrace.end() }
 				#endif
-				playheadFocused = true
+				jumpFocused = true
 			}) { editorSheet($0) }
+			Button { showingDirectTouchEditor = true } label: {
+				Text("Direct Touch Editor")
+					.frame(maxWidth: .infinity, minHeight: 48)
+					.contentShape(Rectangle())
+			}
+			.accessibilityFocused($launcherFocused)
 			EditorCommandRow {
 				stepButton(forward: false)
 				stepButton(forward: true)
@@ -861,14 +859,116 @@ struct ClipInfoView: View {
 	}
 }
 
-private struct CuttingBoardPositionLabel: View {
+private struct CuttingBoardTimelineSlider: View {
 	let session: CuttingBoardSession
 	@ObservedObject var playhead: CuttingBoardPlayhead
 	let format: TimecodeFormat
+	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 
 	var body: some View {
-		Text("Playhead, " + session.positionLabel(format: format))
-			.monospacedDigit()
+		VStack(spacing: 0) {
+			Text("Playhead, " + session.positionLabel(format: format))
+				.monospacedDigit()
+				.accessibilityHidden(true)
+			CuttingBoardSliderControl(session: session, position: playhead.position, format: format, color: color)
+				.frame(minHeight: 48)
+		}
+		.background(EditorTheme.surface)
+	}
+}
+
+private struct CuttingBoardSliderControl: UIViewRepresentable {
+	let session: CuttingBoardSession
+	let position: CMTime
+	let format: TimecodeFormat
+	let color: ControlColor
+
+	func makeUIView(context: Context) -> PlayheadSlider {
+		PlayheadSlider(session: session)
+	}
+
+	func updateUIView(_ slider: PlayheadSlider, context: Context) {
+		slider.format = format
+		slider.tintColor = UIColor(color.accent)
+		slider.isEnabled = context.environment.isEnabled && session.duration > .zero
+		slider.display(position)
+	}
+
+	static func dismantleUIView(_ slider: PlayheadSlider, coordinator: ()) {
+		slider.finishScrub()
+	}
+
+	final class PlayheadSlider: UISlider {
+		let session: CuttingBoardSession
+		var format = TimecodeFormat.milliseconds
+		private var scrubGeneration: Int?
+
+		init(session: CuttingBoardSession) {
+			self.session = session
+			super.init(frame: .zero)
+			accessibilityLabel = "Playhead"
+			semanticContentAttribute = .playback
+			isContinuous = true
+			addTarget(self, action: #selector(startScrub), for: .touchDown)
+			addTarget(self, action: #selector(valueChanged), for: .valueChanged)
+			addTarget(self, action: #selector(finishScrub), for: [.touchUpInside, .touchUpOutside, .touchCancel])
+		}
+
+		@available(*, unavailable)
+		required init?(coder: NSCoder) { fatalError() }
+
+		func display(_ position: CMTime) {
+			if !isTracking {
+				value = session.duration > .zero ? Float(position.seconds / session.duration.seconds) : 0
+			}
+			accessibilityValue = session.positionLabel(format: format)
+		}
+
+		@objc private func startScrub() {
+			guard isEnabled else { return }
+			scrubGeneration = session.beginScrub()
+		}
+
+		@objc private func valueChanged() {
+			guard isEnabled else { return }
+			let target = CMTimeMultiplyByFloat64(session.duration, multiplier: Double(value))
+			if let scrubGeneration {
+				session.scrub(to: target, generation: scrubGeneration)
+			} else {
+				session.seek(target)
+			}
+			display(session.position)
+		}
+
+		@objc func finishScrub() {
+			guard let generation = scrubGeneration else { return }
+			scrubGeneration = nil
+			session.endScrub(at: session.position, generation: generation)
+			display(session.position)
+		}
+
+		override func accessibilityIncrement() { adjust(forward: true) }
+		override func accessibilityDecrement() { adjust(forward: false) }
+
+		private func adjust(forward: Bool) {
+			guard isEnabled else { return }
+			finishScrub()
+			let interval = CMTime(seconds: min(5, session.duration.seconds / 10), preferredTimescale: 600000)
+			session.seek(session.currentPosition + (forward ? interval : .zero - interval))
+			display(session.position)
+		}
+
+		override func accessibilityPerformMagicTap() -> Bool {
+			guard isEnabled else { return false }
+			finishScrub()
+			session.toggle()
+			return true
+		}
+
+		override func accessibilityElementDidLoseFocus() {
+			super.accessibilityElementDidLoseFocus()
+			finishScrub()
+		}
 	}
 }
 

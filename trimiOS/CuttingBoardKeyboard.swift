@@ -115,6 +115,11 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 		presentedViewController == nil && session.sheet == nil && !session.choosingPlacement && session.message == nil && !EditorKeyMap.isTyping(in: view.window)
 	}
 
+	override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+		if action == #selector(trimatilloBoardCommand(_:)) { return commandsEnabled }
+		return super.canPerformAction(action, withSender: sender)
+	}
+
 	@objc private func trimatilloBoardCommand(_ command: UIKeyCommand) {
 		#if DEBUG
 		let began = keyboardTrace.command(command, enabled: commandsEnabled, controller: self)
@@ -123,24 +128,24 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 			keyboardTrace.sample(after: began) { [weak session] in session?.keyboardPlaybackState ?? "closed" }
 		}
 		#endif
-		guard commandsEnabled else { return }
+		guard commandsEnabled, let input = EditorKeyMap.normalizedInput(command.input) else { return }
 		let flags = command.modifierFlags
-		switch command.input {
+		switch input {
 		case " ", "k": session.toggle()
 		case "j": session.shuttle(-1)
 		case "l": session.shuttle(1)
 		case "i", "o":
-			let isIn = command.input == "i"
-			if flags.contains(.alternate) { session.clear(isIn) } else { session.mark(isIn) }
+			let isIn = input == "i"
+			if flags.contains(.alternate) { session.clear(isIn, spoken: true) } else { session.mark(isIn, spoken: true) }
 		case UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow:
-			let forward = command.input == UIKeyCommand.inputRightArrow
-			if flags.contains(.command) { session.navigate(forward) }
+			let forward = input == UIKeyCommand.inputRightArrow
+			if flags.contains(.command) { session.navigate(forward, spoken: true) }
 			else { session.step((forward ? 1 : -1) * (flags.contains(.shift) ? 10 : 1)) }
-		case ";", "'": session.navigate(command.input == "'")
-		case UIKeyCommand.inputHome, UIKeyCommand.inputUpArrow: session.seek(.zero)
-		case UIKeyCommand.inputEnd, UIKeyCommand.inputDownArrow: session.seek(session.duration)
-		case "[", "]": session.trim(head: command.input == "[")
-		case "\u{8}", UIKeyCommand.inputDelete: session.delete(session.selection)
+		case ";", "'": session.navigate(input == "'", spoken: true)
+		case UIKeyCommand.inputHome, UIKeyCommand.inputUpArrow: session.goToBoundary(end: false)
+		case UIKeyCommand.inputEnd, UIKeyCommand.inputDownArrow: session.goToBoundary(end: true)
+		case "[", "]": session.trim(head: input == "[", spoken: true)
+		case "\u{8}", UIKeyCommand.inputDelete: session.delete(session.selection, spoken: true)
 		case "z": if flags.contains(.shift) { session.redo() } else { session.undo() }
 		case "e": routing.projectActions?.append()
 		case "w":
@@ -158,6 +163,11 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 }
 
 enum EditorKeyMap {
+	static func normalizedInput(_ input: String?) -> String? {
+		guard let input, input.count == 1, input.first?.isLetter == true else { return input }
+		return input.lowercased()
+	}
+
 	static func commands(_ bindings: [(String, UIKeyModifierFlags, String)], action: Selector) -> [UIKeyCommand] {
 		bindings.map { input, flags, title in
 			let command = UIKeyCommand(input: input, modifierFlags: flags, action: action)

@@ -323,7 +323,7 @@ private enum HelpTopic: String, CaseIterable {
 				"You can also drag a clip onto the leading or trailing half of another clip to place it before or after that clip."
 			]), Self.projectExport, HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
-				"In Editor, X applies a quick crossfade, F opens Quick Fade, and Command-Shift-T opens Transitions.",
+				"In Editor, X applies a quick crossfade, F opens Quick Fade, and Command-T or Command-Shift-T opens Transitions.",
 				"On the project timeline, Space or K plays or pauses, including when a clip is focused. K also stops rewind or fast forward. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
 				"I and O mark In and Out at the current playhead without stopping playback. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
 				"Command-Option-Up and Command-Option-Down select a track. C opens its clip at or after the playhead. Return opens the focused clip. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",
@@ -369,14 +369,17 @@ private enum HelpTopic: String, CaseIterable {
 			])]
 		case .playback:
 			[HelpSection("Move through a clip", [
+				"The clip preview is followed by the Playhead slider and playback controls. With VoiceOver, focus Clip preview to use image description tools.",
+				"Drag the Playhead slider to scrub through the edited clip. Lift your finger to leave the playhead at that position.",
+				"With VoiceOver, swipe up or down on Playhead to move five seconds forward or back. For clips shorter than 50 seconds, each swipe moves one tenth of the clip. Double-tap and hold, then drag to scrub. Magic Tap plays or pauses while Playhead is focused.",
 				"Play starts at the playhead. Pause holds the current position.",
 				"Fast Forward plays forward. Rewind plays backward. Repeat either control to advance through 1x, 1.5x, 2x, 4x, and 8x. Switching direction starts at 1x.",
 				"Use the Go to Start accessibility action on Rewind or Go to End on Fast Forward to move to that boundary of the edited clip.",
 				"Step Back and Step Forward move to the previous or next frame in a video. In a clip with a variable frame rate, the time between steps can change as you move through it.",
 				"At 24 frames per second, one frame lasts about 41.7 milliseconds. At 60 it lasts about 16.7 milliseconds, and at 120 it lasts about 8.3 milliseconds.",
 				"In an audio-only clip, one step moves one thirtieth of a second. Ten steps move one third of a second.",
-				"Choose Playhead, enter seconds or a time separated by colons, then choose Jump.",
-				"For frame entry, choose Frames under Timecode in Settings before opening the clip. On the Cutting Board, choose Playhead, enter a frame number, and choose Jump. Counting starts at zero."
+				"Choose Jump to Time, enter seconds or a time separated by colons, then choose Jump.",
+				"For frame entry, choose Frames under Timecode in Settings before opening the clip. On the Cutting Board, choose Jump to Time, enter a frame number, and choose Jump. Counting starts at zero."
 			]), HelpSection("Full Screen Preview", numbered: true, [
 				"Choose Full Screen Preview beside the playback controls to open the edited clip at the playhead.",
 				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time.",
@@ -462,7 +465,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Command-Left Bracket trims the head to the playhead.",
 				"Command-Right Bracket trims the tail to the playhead.",
 				"Return at a join opens Adjust Edit Point.",
-				"Command-Z undoes the last edit."
+				"Command-Z undoes the last edit. Command-Shift-Z redoes it."
 			])]
 		case .save:
 			[Self.projectExport, HelpSection("Export from the Cutting Board", [

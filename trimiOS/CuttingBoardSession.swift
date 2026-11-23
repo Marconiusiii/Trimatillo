@@ -446,7 +446,7 @@ final class CuttingBoardSession: ObservableObject {
 
 	#if DEBUG
 	var keyboardPlaybackState: String {
-		"rate=\(rate), player=\(player.rate), status=\(player.timeControlStatus.rawValue), generation=\(seekGeneration), starting=\(startingForward), reverse=\(reverseTask != nil), engine=\(engine.isRunning), node=\(node.isPlaying)"
+		"position=\(position.seconds), in=\(state.markIn?.seconds.description ?? "none"), out=\(state.markOut?.seconds.description ?? "none"), undo=\(historyIndex), joins=\(state.timeline.editPoints.count), rate=\(rate), player=\(player.rate), status=\(player.timeControlStatus.rawValue), generation=\(seekGeneration), starting=\(startingForward), reverse=\(reverseTask != nil), engine=\(engine.isRunning), node=\(node.isPlaying)"
 	}
 	#endif
 
@@ -543,7 +543,12 @@ final class CuttingBoardSession: ObservableObject {
 		}
 	}
 
-	func mark(_ isIn: Bool, toggleAtPlayhead: Bool = false) {
+	func goToBoundary(end: Bool) {
+		seek(end ? duration : .zero)
+		announce(end ? "End" : "Start")
+	}
+
+	func mark(_ isIn: Bool, toggleAtPlayhead: Bool = false, spoken: Bool = false) {
 		let time = currentPosition
 		if toggleAtPlayhead, (isIn ? state.markIn : state.markOut) == time {
 			clear(isIn)
@@ -551,19 +556,23 @@ final class CuttingBoardSession: ObservableObject {
 			return
 		}
 		let previous = isIn ? state.markIn : state.markOut
-		guard previous != time else { return }
+		guard previous != time else {
+			if spoken { announce(isIn ? "Marked In" : "Marked Out") }
+			return
+		}
 		let action = (previous == nil ? "Mark " : "Move ") + (isIn ? "In" : "Out")
 		let before = state
 		if isIn { state.markIn = time } else { state.markOut = time }
 		record(action, before: before, after: state)
-		if toggleAtPlayhead { announce(isIn ? "Marked In" : "Marked Out") }
+		if toggleAtPlayhead || spoken { announce(isIn ? "Marked In" : "Marked Out") }
 	}
 
-	func clear(_ isIn: Bool) {
+	func clear(_ isIn: Bool, spoken: Bool = false) {
 		guard (isIn ? state.markIn : state.markOut) != nil else { return }
 		let before = state
 		if isIn { state.markIn = nil } else { state.markOut = nil }
 		record(isIn ? "Remove In" : "Remove Out", before: before, after: state)
+		if spoken { announce(isIn ? "In Removed" : "Out Removed") }
 	}
 
 	func delete(_ range: CMTimeRange?, spoken: Bool = false) {

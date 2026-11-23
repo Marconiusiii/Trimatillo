@@ -776,10 +776,16 @@ struct ProjectEditorView: View {
 		UIAccessibility.post(notification: .announcement, argument: label)
 	}
 
-	private func setMarker(_ isIn: Bool, to point: ProjectTime?) {
+	private func setMarker(_ isIn: Bool, to point: ProjectTime?, spoken: Bool = false) {
 		var next = project
 		if isIn { next.markIn = point } else { next.markOut = point }
-		commit(next, action: (point == nil ? "Clear " : "Mark ") + (isIn ? "In" : "Out"))
+		do {
+			try save(next, action: (point == nil ? "Clear " : "Mark ") + (isIn ? "In" : "Out"))
+			if spoken {
+				let message = point == nil ? (isIn ? "In Removed" : "Out Removed") : (isIn ? "Marked In" : "Marked Out")
+				UIAccessibility.post(notification: .announcement, argument: message)
+			}
+		} catch { self.error = error.localizedDescription }
 	}
 
 	private var historyActions: [EditorMenuAction] {
@@ -1325,7 +1331,7 @@ struct ProjectEditorView: View {
 		case " ", "k": playback.toggle(); return
 		case "j", "l": playback.shuttle(forward: key == "l"); return
 		case "i", "o":
-			setMarker(key == "i", to: flags.contains(.alternate) ? nil : ProjectTime(playback.position))
+			setMarker(key == "i", to: flags.contains(.alternate) ? nil : ProjectTime(playback.position), spoken: true)
 			return
 		case "z": history(back: !flags.contains(.shift)); return
 		case "t" where flags.isEmpty:
@@ -1366,8 +1372,8 @@ struct ProjectEditorView: View {
 				let forward = key == UIKeyCommand.inputRightArrow
 				if flags.contains(.command) { navigate(forward: forward, track: selectedTrack) }
 				else { step((forward ? 1 : -1) * (flags.contains(.shift) ? 10 : 1)) }
-			case UIKeyCommand.inputHome, UIKeyCommand.inputUpArrow: playback.seek(.zero)
-			case UIKeyCommand.inputEnd, UIKeyCommand.inputDownArrow: playback.seek(project.duration)
+			case UIKeyCommand.inputHome, UIKeyCommand.inputUpArrow: keyboardBoundary(end: false)
+			case UIKeyCommand.inputEnd, UIKeyCommand.inputDownArrow: keyboardBoundary(end: true)
 			default: break
 			}
 			return
@@ -1400,7 +1406,7 @@ struct ProjectEditorView: View {
 			if let clip, let source = project.sources.first(where: { $0.id == clip.sourceID }) { openBoard(source, placement: clip, rowID: focusedClip == nil ? nil : focusedRow) }
 		case "x": quickCross(track: track, clip: focusedClip)
 		case "f": openTransition(quick: true, track: track, clip: focusedClip)
-		case "t" where flags.contains([.command, .shift]): openTransition(quick: false, track: track, clip: focusedClip)
+		case "t" where flags.contains(.command): openTransition(quick: false, track: track, clip: focusedClip)
 		case UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow:
 			if flags.contains(.alternate), let index = project.tracks.firstIndex(of: track) {
 				let target = index + (key == UIKeyCommand.inputUpArrow ? -1 : 1)
@@ -1410,9 +1416,9 @@ struct ProjectEditorView: View {
 					keyboardClip = nil
 					focus = activeTrack
 				}
-			} else { playback.seek(key == UIKeyCommand.inputUpArrow ? .zero : project.duration) }
-		case UIKeyCommand.inputHome: playback.seek(.zero)
-		case UIKeyCommand.inputEnd: playback.seek(project.duration)
+			} else { keyboardBoundary(end: key == UIKeyCommand.inputDownArrow) }
+		case UIKeyCommand.inputHome: keyboardBoundary(end: false)
+		case UIKeyCommand.inputEnd: keyboardBoundary(end: true)
 		case ";", "'", UIKeyCommand.inputRightArrow, UIKeyCommand.inputLeftArrow:
 			let forward = key == "'" || key == UIKeyCommand.inputRightArrow
 			if let clip, (!dragging.isEmpty && !flags.contains(.command)) || flags.contains([.alternate, .command]) {
@@ -1444,6 +1450,7 @@ struct ProjectEditorView: View {
 				do {
 					try next.place(source, ranges: trimmed.ranges.map(\.range), at: clip.start.time, on: destinationTrack, mode: .update, replacing: clip.id, omitAudio: clip.omitAudio == true)
 					try save(next, action: "Trim Clip")
+					UIAccessibility.post(notification: .announcement, argument: key == "[" ? "Head trimmed to playhead" : "Tail trimmed to playhead")
 				} catch { self.error = error.localizedDescription }
 				return
 			}
@@ -1457,15 +1464,31 @@ struct ProjectEditorView: View {
 				next.placements.append(right)
 			}
 			next.assignPlacementLabels()
-			commit(next, action: key == "b" ? "Split Clip" : "Trim Clip")
+			keyboardEdit(next, action: key == "b" ? "Split Clip" : "Trim Clip",
+				confirmation: key == "b" ? "Clip split" : (key == "[" ? "Head trimmed to playhead" : "Tail trimmed to playhead"))
 		case "\u{8}", UIKeyCommand.inputDelete:
 			if let clip {
 				let ids: Set<UUID> = marked.contains(clip.id) ? marked : [clip.id]
 				next.removeClips(ids)
-				commit(next, action: ids.count == 1 ? "Remove Clip" : "Remove Clips")
+				keyboardEdit(next, action: ids.count == 1 ? "Remove Clip" : "Remove Clips",
+					confirmation: ids.count == 1 ? "Removed 1 clip" : "Removed \(ids.count) clips")
 			}
 		default: break
 		}
+	}
+
+	private func keyboardBoundary(end: Bool) {
+		playback.seek(end ? project.duration : .zero)
+		let label = (end ? "End" : "Start") + ", " + time(playback.position)
+		playback.playhead.navigationLabel = label
+		UIAccessibility.post(notification: .announcement, argument: label)
+	}
+
+	private func keyboardEdit(_ next: EditingProject, action: String, confirmation: String) {
+		do {
+			try save(next, action: action)
+			UIAccessibility.post(notification: .announcement, argument: confirmation)
+		} catch { self.error = error.localizedDescription }
 	}
 
 	private func time(_ value: CMTime) -> String {

@@ -89,7 +89,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 						("\r", [], tool == .captioner ? "Edit Caption" : "Edit Description")]
 				}
 			} else {
-				bindings += [("x", [], "Quick Crossfade"), ("f", [], "Quick Fade"), ("t", [.command, .shift], "Transitions"), ("d", [.command, .shift], "New Description"), (UIKeyCommand.inputUpArrow, [.alternate, .command], "Previous Track"),
+				bindings += [("x", [], "Quick Crossfade"), ("f", [], "Quick Fade"), ("t", .command, "Transitions"), ("t", [.command, .shift], "Transitions"), ("d", [.command, .shift], "New Description"), (UIKeyCommand.inputUpArrow, [.alternate, .command], "Previous Track"),
 				(UIKeyCommand.inputDownArrow, [.alternate, .command], "Next Track"),
 				(UIKeyCommand.inputLeftArrow, [.command, .alternate], "Move Earlier"),
 				(UIKeyCommand.inputRightArrow, [.command, .alternate], "Move Later"),
@@ -108,6 +108,11 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 			performKey != nil && presentedViewController == nil && !EditorKeyMap.isTyping(in: view.window)
 		}
 
+		override func canPerformAction(_ action: Selector, withSender sender: Any?) -> Bool {
+			if action == #selector(trimatilloProjectCommand(_:)) { return commandsEnabled }
+			return super.canPerformAction(action, withSender: sender)
+		}
+
 		@objc private func trimatilloProjectCommand(_ key: UIKeyCommand) {
 			#if DEBUG
 			let began = keyboardTrace.command(key, enabled: commandsEnabled, controller: self)
@@ -116,7 +121,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 				keyboardTrace.sample(after: began) { [weak playback] in playback?.keyboardPlaybackState ?? "closed" }
 			}
 			#endif
-			guard commandsEnabled, let input = key.input else { return }
+			guard commandsEnabled, let input = EditorKeyMap.normalizedInput(key.input) else { return }
 			performKey?(input, key.modifierFlags)
 		}
 	}
