@@ -208,7 +208,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe down to undo the last project change.",
 				"Swipe up to redo it."
 			]), HelpSection("Captioner keyboard commands", [
-				"Press I and O to mark In and Out. Option-I and Option-O clear the markers.",
+				"Press I and O to mark In and Out without stopping playback. Option-I and Option-O clear the markers.",
 				"Press Command-Shift-C to open New Caption. Return edits the focused caption or the caption at the playhead.",
 				"Press Space or K to play or pause. J rewinds and L plays forward.",
 				"Press Left or Right Arrow to step one frame. Hold Shift to step ten frames.",
@@ -324,10 +324,10 @@ private enum HelpTopic: String, CaseIterable {
 			]), Self.projectExport, HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
 				"In Editor, X applies a quick crossfade, F opens Quick Fade, and Command-Shift-T opens Transitions.",
-				"On the project timeline, Space or K plays or pauses. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
-				"I and O mark In and Out. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
+				"On the project timeline, Space or K plays or pauses, including when a clip is focused. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
+				"I and O mark In and Out at the current playhead without stopping playback. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
 				"Command-Option-Up and Command-Option-Down select a track. C opens its clip at or after the playhead. Return opens the focused clip. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",
-				"S marks or unmarks a clip. With a clip focused, Space picks it up. Shift-S adds another clip to the drag. Use Left or Right Arrow to choose a destination and press Space to drop. Escape cancels. Command-Option-V drops after the focused clip.",
+				"S marks or unmarks a clip. With a clip focused, Shift-S starts a drag or adds the clip to the current drag. Use Left or Right Arrow to choose a destination and Command-Option-V to drop. Escape cancels. Without a selected destination, Command-Option-V drops after the focused clip.",
 				"Command-Option-Left and Command-Option-Right move a clip or marked group earlier or later. Delete removes the selected clips. Command-Z undoes and Command-Shift-Z redoes."
 			]), HelpSection("Reopen and reconnect", numbered: true, [
 				"Choose Close, then My Projects and the project name. Choose Cancel during timeline preparation to return to the main screen. Trimatillo saves each project change as you work.",

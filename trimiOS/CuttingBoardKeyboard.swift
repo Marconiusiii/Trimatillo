@@ -18,6 +18,7 @@ struct CuttingBoardKeyboard: UIViewControllerRepresentable {
 
 final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	let session: CuttingBoardSession
+	private var commandCache: [Int: [UIKeyCommand]] = [:]
 	init(_ session: CuttingBoardSession, projectActions: BoardProjectActions? = nil, close: @escaping () -> Void) {
 		self.session = session
 		super.init(rootView: PrimaryCuttingBoard(session: session, projectActions: projectActions, close: close))
@@ -30,7 +31,7 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 
 	override func viewDidAppear(_ animated: Bool) {
 		super.viewDidAppear(animated)
-		becomeFirstResponder()
+		if !EditorKeyMap.isTyping(in: view.window) { becomeFirstResponder() }
 	}
 
 	override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
@@ -50,22 +51,26 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 	}
 
 	override var keyCommands: [UIKeyCommand]? {
-		guard presentedViewController == nil else { return [] }
+		guard commandsEnabled else { return [] }
+		let kind = rootView.projectActions == nil ? 0 : (rootView.projectActions?.update == nil ? 1 : 2)
+		if let cached = commandCache[kind] { return cached }
 		var bindings = EditorKeyMap.bindings
 		if let actions = rootView.projectActions {
 			bindings += [("e", [], "Append"), ("w", [], "Split at Playhead"), ("d", [], "Overwrite at Playhead"),
 				("w", .alternate, "Add at Playhead")]
 			if actions.update != nil { bindings.append(("u", .command, "Save Changes")) }
 		}
-		return bindings.map { input, modifiers, title in
-			let command = UIKeyCommand(input: input, modifierFlags: modifiers, action: #selector(performCommand(_:)))
-			command.discoverabilityTitle = title
-			return command
-		}
+		let commands = EditorKeyMap.commands(bindings, action: #selector(performCommand(_:)))
+		commandCache[kind] = commands
+		return commands
+	}
+
+	private var commandsEnabled: Bool {
+		presentedViewController == nil && session.sheet == nil && !session.choosingPlacement && session.message == nil && !EditorKeyMap.isTyping(in: view.window)
 	}
 
 	@objc private func performCommand(_ command: UIKeyCommand) {
-		guard presentedViewController == nil else { return }
+		guard commandsEnabled else { return }
 		let flags = command.modifierFlags
 		switch command.input {
 		case " ", "k": session.toggle()
@@ -92,7 +97,7 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 		case "u": rootView.projectActions?.update?()
 		case "t":
 			let format = EditorPreferences.shared.string(forKey: "timecodeFormat").flatMap(TimecodeFormat.init(rawValue:)) ?? .milliseconds
-			UIAccessibility.post(notification: .announcement, argument: session.timecode(session.position, format: format))
+			UIAccessibility.post(notification: .announcement, argument: session.timecode(session.currentPosition, format: format))
 		case "\r": session.showJoin()
 		default: break
 		}
@@ -100,6 +105,22 @@ final class BoardController: UIHostingController<PrimaryCuttingBoard> {
 }
 
 enum EditorKeyMap {
+	static func commands(_ bindings: [(String, UIKeyModifierFlags, String)], action: Selector) -> [UIKeyCommand] {
+		bindings.map { input, flags, title in
+			let command = UIKeyCommand(input: input, modifierFlags: flags, action: action)
+			command.discoverabilityTitle = title
+			command.wantsPriorityOverSystemBehavior = true
+			command.allowsAutomaticMirroring = false
+			return command
+		}
+	}
+
+	static func isTyping(in view: UIView?) -> Bool {
+		guard let view else { return false }
+		if view.isFirstResponder, view is any UITextInput { return true }
+		return view.subviews.contains { isTyping(in: $0) }
+	}
+
 	static let bindings: [(String, UIKeyModifierFlags, String)] = [
 		(" ", [], "Play or Pause"), ("k", [], "Play or Pause"),
 		("j", [], "Rewind"), ("l", [], "Play Forward"),

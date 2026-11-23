@@ -20,6 +20,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 	}
 
 	final class Controller: UIHostingController<Content> {
+		private var commandCache: [ProjectTool: [UIKeyCommand]] = [:]
 		var tool = ProjectTool.editor
 		var undoShake: (() -> Bool)?
 		var performKey: ((String, UIKeyModifierFlags) -> Void)?
@@ -27,7 +28,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 
 		override func viewDidAppear(_ animated: Bool) {
 			super.viewDidAppear(animated)
-			becomeFirstResponder()
+			if !EditorKeyMap.isTyping(in: view.window) { becomeFirstResponder() }
 		}
 
 		override func motionEnded(_ motion: UIEvent.EventSubtype, with event: UIEvent?) {
@@ -39,7 +40,8 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 		}
 
 		override var keyCommands: [UIKeyCommand]? {
-			guard performKey != nil, presentedViewController == nil else { return [] }
+			guard commandsEnabled else { return [] }
+			if let cached = commandCache[tool] { return cached }
 			var bindings = EditorKeyMap.bindings.map { input, flags, title in
 				switch input {
 				case "\r": return (input, flags, "Open Cutting Board")
@@ -67,15 +69,17 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 			}
 			bindings.append(("m", [.command, .shift], "Open Mixer"))
 			bindings.append(("v", [.command, .shift], "Record Voice Over"))
-			return bindings.map { key, flags, title in
-				let command = UIKeyCommand(input: key, modifierFlags: flags, action: #selector(handle(_:)))
-				command.discoverabilityTitle = title
-				return command
-			}
+			let commands = EditorKeyMap.commands(bindings, action: #selector(handle(_:)))
+			commandCache[tool] = commands
+			return commands
+		}
+
+		private var commandsEnabled: Bool {
+			performKey != nil && presentedViewController == nil && !EditorKeyMap.isTyping(in: view.window)
 		}
 
 		@objc private func handle(_ key: UIKeyCommand) {
-			guard presentedViewController == nil, let input = key.input else { return }
+			guard commandsEnabled, let input = key.input else { return }
 			performKey?(input, key.modifierFlags)
 		}
 	}

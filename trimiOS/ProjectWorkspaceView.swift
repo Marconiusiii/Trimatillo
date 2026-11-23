@@ -10,6 +10,9 @@ struct ProjectBoard: Identifiable {
 struct ProjectWorkspaceView: View {
 	@State var project: EditingProject
 	let close: () -> Void
+	@StateObject private var saves = ProjectSaveQueue()
+	@State private var savingError: String?
+	@State private var closing = false
 	@StateObject private var playback = ProjectPlayback()
 	@State private var board: ProjectBoard?
 	@State private var revision = 0
@@ -18,7 +21,7 @@ struct ProjectWorkspaceView: View {
 
 	var body: some View {
 		ProjectEditorView(project: $project, close: closeProject, playback: playback,
-			board: $board, revision: $revision, preparedRevision: preparedRevision)
+			board: $board, revision: $revision, preparedRevision: preparedRevision, saves: saves)
 			.task(id: board == nil ? revision : nil) {
 				guard board == nil else { return }
 				let preparing = revision
@@ -36,6 +39,22 @@ struct ProjectWorkspaceView: View {
 				if phase != .active { playback.pause() }
 			}
 			.onDisappear { playback.pause() }
+			.onChange(of: saves.failure) { _, failure in savingError = failure }
+			.alert("Could Not Save Project", isPresented: Binding(get: { savingError != nil }, set: { if !$0 { savingError = nil } })) {
+				Button("Retry") { saves.retry() }
+				Button("Close Without Saving", role: .destructive) {
+					saves.discardFailedSaves()
+					playback.cancelPreparation()
+					playback.pause()
+					close()
+				}
+				Button("Cancel", role: .cancel) { }
+			} message: { Text(savingError ?? "") }
+			.disabled(closing)
+			.accessibilityHidden(closing)
+			.overlay {
+				if closing { LoadingStatusView("Saving project") }
+			}
 	}
 
 	private func prepareNarration() async throws {
@@ -52,14 +71,24 @@ struct ProjectWorkspaceView: View {
 		guard project == original else { throw ProjectFailure("The project changed while preparing narration. Reopen the project.") }
 		var updated = original
 		updated.audioDescriptions = takes
-		try ProjectLibrary.save(updated, replacing: original)
+		try saves.enqueue(updated, replacing: original)
+		try await saves.flush()
 		project = updated
 	}
 
 	private func closeProject() {
 		playback.cancelPreparation()
 		playback.pause()
-		close()
+		guard !closing else { return }
+		if !saves.hasPendingSaves { close(); return }
+		closing = true
+		Task {
+			do {
+				try await saves.flush()
+				close()
+			} catch { savingError = error.localizedDescription }
+			closing = false
+		}
 	}
 }
 

@@ -429,6 +429,7 @@ nonisolated struct ProjectFailure: LocalizedError {
 }
 
 nonisolated enum ProjectLibrary {
+	private static let writeLock = NSLock()
 	static let directory = URL.documentsDirectory.appendingPathComponent("Projects", isDirectory: true)
 
 	// Only the manifest is decoded into memory. Project-owned media lives alongside it.
@@ -591,6 +592,8 @@ nonisolated enum ProjectLibrary {
 	}
 
 	@MainActor static func delete(_ entry: URL) throws {
+		writeLock.lock()
+		defer { writeLock.unlock() }
 		guard entry.isFileURL, entry.deletingLastPathComponent().standardizedFileURL.path == directory.standardizedFileURL.path,
 			try ProjectStorage.directoryExists(directory), entry.pathExtension == "json" || UUID(uuidString: entry.lastPathComponent) != nil else {
 			throw CocoaError(.fileWriteNoPermission)
@@ -605,7 +608,9 @@ nonisolated enum ProjectLibrary {
 		guard rename(entry.path, discarded.path) == 0 else { throw POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO) }
 	}
 
-	@MainActor static func save(_ project: EditingProject, replacing previous: EditingProject? = nil) throws {
+	static func save(_ project: EditingProject, replacing previous: EditingProject? = nil) throws {
+		writeLock.lock()
+		defer { writeLock.unlock() }
 		try ProjectStorage.prepareDirectory(directory)
 		let folder = directory.appendingPathComponent(project.id.uuidString, isDirectory: true)
 		let legacy = directory.appendingPathComponent(project.id.uuidString + ".json")

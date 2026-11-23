@@ -73,6 +73,7 @@ struct ProjectEditorView: View {
 	@Binding var board: ProjectBoard?
 	@Binding var revision: Int
 	let preparedRevision: Int?
+	let saves: ProjectSaveQueue
 	@State private var tool = ProjectTool.editor
 	@State private var mixerTrack = TimelineTrack.primaryAudio.id
 	@State private var soloTracks: Set<String> = []
@@ -739,7 +740,7 @@ struct ProjectEditorView: View {
 	}
 
 	private func step(_ count: Int32) {
-		playback.seek(playback.position + CMTimeMultiply(project.frame, multiplier: count))
+		playback.stepWithAudio(forward: count > 0, frame: project.frame, count: abs(count))
 	}
 
 	private func stepButton(forward: Bool) -> some View {
@@ -1112,7 +1113,7 @@ struct ProjectEditorView: View {
 		next.cleanTransitions()
 		try next.validateTransitions()
 		next.version = 11
-		try ProjectLibrary.save(next, replacing: project)
+		try saves.enqueue(next, replacing: project)
 		undo.append(HistoryEntry(project: project, action: action))
 		redo.removeAll()
 		update(next)
@@ -1121,7 +1122,7 @@ struct ProjectEditorView: View {
 	private func history(back: Bool) {
 		guard let entry = back ? undo.last : redo.last else { return }
 		do {
-			try ProjectLibrary.save(entry.project, replacing: project)
+			try saves.enqueue(entry.project, replacing: project)
 			let inverse = HistoryEntry(project: project, action: entry.action)
 			if back { undo.removeLast(); redo.append(inverse) }
 			else { redo.removeLast(); undo.append(inverse) }
@@ -1319,6 +1320,19 @@ struct ProjectEditorView: View {
 	}
 
 	private func projectKey(_ key: String, flags: UIKeyModifierFlags) {
+		// Transport and markers must not wait for clip sorting or focus resolution.
+		switch key {
+		case " ", "k": playback.toggle(); return
+		case "j", "l": playback.shuttle(forward: key == "l"); return
+		case "i", "o":
+			setMarker(key == "i", to: flags.contains(.alternate) ? nil : ProjectTime(playback.position))
+			return
+		case "z": history(back: !flags.contains(.shift)); return
+		case "t" where flags.isEmpty:
+			UIAccessibility.post(notification: .announcement, argument: time(playback.position))
+			return
+		default: break
+		}
 		if key.lowercased() == "m", flags.contains([.command, .shift]) { tool = .mixer; return }
 		if tool == .mixer, flags.contains([.command, .alternate]), key == UIKeyCommand.inputUpArrow || key == UIKeyCommand.inputDownArrow {
 			let tracks = project.mixerChannels
@@ -1347,8 +1361,6 @@ struct ProjectEditorView: View {
 			case "\r" where tool == .captioner:
 				if let cue = project.captions?.first(where: { ($0.id.uuidString == (keyboardClip ?? focus)) }) ??
 					project.captions?.first(where: { $0.start.time <= playback.position && playback.position < $0.end.time }) { openCaption(cue) }
-			case " ", "k": playback.toggle()
-			case "j", "l": playback.shuttle(forward: key == "l")
 			case ";", "'": navigate(forward: key == "'", track: selectedTrack)
 			case UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow:
 				let forward = key == UIKeyCommand.inputRightArrow
@@ -1356,11 +1368,6 @@ struct ProjectEditorView: View {
 				else { step((forward ? 1 : -1) * (flags.contains(.shift) ? 10 : 1)) }
 			case UIKeyCommand.inputHome, UIKeyCommand.inputUpArrow: playback.seek(.zero)
 			case UIKeyCommand.inputEnd, UIKeyCommand.inputDownArrow: playback.seek(project.duration)
-			case "i", "o":
-				playback.pause()
-				setMarker(key == "i", to: flags.contains(.alternate) ? nil : ProjectTime(playback.position))
-			case "z": history(back: !flags.contains(.shift))
-			case "t": UIAccessibility.post(notification: .announcement, argument: time(playback.position))
 			default: break
 			}
 			return
@@ -1377,35 +1384,23 @@ struct ProjectEditorView: View {
 		let destinationTrack = clip.flatMap { placement in project.tracks.first { $0.id == placement.trackID } } ?? track
 		var next = project
 		switch key {
-		case " " where !dragging.isEmpty && dropAnchor != nil:
-			if let anchor = project.placements.first(where: { $0.id == dropAnchor }),
-				let destination = project.tracks.first(where: { $0.id == anchor.trackID }) {
-				move(dragging, on: destination, beside: anchor.id, after: dropAfter)
-			}
-		case " " where focusedClip != nil:
-			if dragging.isEmpty, let clip { startDrag(clip) }
-			else if let clip, !dragging.contains(clip.id) { move(dragging, on: destinationTrack, beside: clip.id, after: true) }
-			else { dragging.removeAll() }
-		case " ", "k": playback.toggle()
-		case "j", "l": playback.shuttle(forward: key == "l")
 		case "s":
 			if let clip {
-				if flags.contains(.shift), !dragging.isEmpty {
-					if project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == clip.track }) { addToDrag(clip) }
+				if flags.contains(.shift) {
+					if dragging.isEmpty { startDrag(clip) }
+					else if project.placements.filter({ dragging.contains($0.id) }).allSatisfy({ $0.track == clip.track }) { addToDrag(clip) }
 				} else { toggleMark(clip.id) }
 			}
 		case UIKeyCommand.inputEscape: dragging.removeAll(); dropAnchor = nil
-		case "v": if !dragging.isEmpty { move(dragging, on: destinationTrack, beside: clip?.id, after: true) }
+		case "v":
+			if !dragging.isEmpty {
+				move(dragging, on: destinationTrack, beside: dropAnchor ?? clip?.id, after: dropAnchor == nil ? true : dropAfter)
+			}
 		case "c", "\r":
 			if let clip, let source = project.sources.first(where: { $0.id == clip.sourceID }) { openBoard(source, placement: clip, rowID: focusedClip == nil ? nil : focusedRow) }
-		case "z": history(back: !flags.contains(.shift))
 		case "x": quickCross(track: track, clip: focusedClip)
 		case "f": openTransition(quick: true, track: track, clip: focusedClip)
 		case "t" where flags.contains([.command, .shift]): openTransition(quick: false, track: track, clip: focusedClip)
-		case "t": UIAccessibility.post(notification: .announcement, argument: time(position))
-		case "i", "o":
-			playback.pause()
-			setMarker(key == "i", to: flags.contains(.alternate) ? nil : ProjectTime(playback.position))
 		case UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow:
 			if flags.contains(.alternate), let index = project.tracks.firstIndex(of: track) {
 				let target = index + (key == UIKeyCommand.inputUpArrow ? -1 : 1)

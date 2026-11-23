@@ -497,8 +497,7 @@ private struct ScrubAudioWindow {
 			try configureAudioSession()
 			try installPendingMix()
 			speed = rate
-			if rate == 1 { player.play() }
-			else { player.playImmediately(atRate: Float(rate)) }
+			player.playImmediately(atRate: Float(rate))
 			transport.playing = true
 		} catch { failure = "Could not start project audio. Check the audio output and choose Play again." }
 	}
@@ -550,10 +549,11 @@ private struct ScrubAudioWindow {
 		}
 	}
 
-	func stepWithAudio(forward: Bool, frame: CMTime) {
+	func stepWithAudio(forward: Bool, frame: CMTime, count: Int32 = 1) {
 		guard ready, let item = player.currentItem else { return }
 		stop(keepingAudio: true)
-		let target = min(duration, max(.zero, position + (forward ? frame : .zero - frame)))
+		let distance = CMTimeMultiply(frame, multiplier: count)
+		let target = min(duration, max(.zero, position + (forward ? distance : .zero - distance)))
 		let moved = target != position
 		seek(target)
 		guard moved, item.audioMix != nil else { pause(); return }

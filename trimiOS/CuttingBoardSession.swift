@@ -238,6 +238,10 @@ final class CuttingBoardSession: ObservableObject {
 		state.timeline.editPoints.first { CMTimeCompare($0.time, position) == 0 }
 	}
 	var position: CMTime { state.position }
+	var currentPosition: CMTime {
+		let time = rate > 0 && player.rate > 0 ? player.currentTime() : position
+		return time.isNumeric ? min(duration, max(.zero, time)) : position
+	}
 	var selection: CMTimeRange? {
 		guard let start = state.markIn, let end = state.markOut, start < end else { return nil }
 		return CMTimeRange(start: start, end: end)
@@ -522,6 +526,7 @@ final class CuttingBoardSession: ObservableObject {
 	}
 
 	func navigate(_ forward: Bool, spoken: Bool = false) {
+		let position = currentPosition
 		let stops = state.timeline.editPoints.map(\.time) + [state.markIn, state.markOut, .zero, duration].compactMap { $0 }
 		let next = forward ? stops.filter { $0 > position }.min() : stops.filter { $0 < position }.max()
 		guard let next else { return }
@@ -538,8 +543,7 @@ final class CuttingBoardSession: ObservableObject {
 	}
 
 	func mark(_ isIn: Bool, toggleAtPlayhead: Bool = false) {
-		let now = rate > 0 && player.rate > 0 ? player.currentTime() : position
-		let time = min(duration, max(.zero, now))
+		let time = currentPosition
 		if toggleAtPlayhead, (isIn ? state.markIn : state.markOut) == time {
 			clear(isIn)
 			announce(isIn ? "In Removed" : "Out Removed")
@@ -823,12 +827,17 @@ final class CuttingBoardSession: ObservableObject {
 	}
 
 	private func play(from start: CMTime, to end: CMTime, speed: Double) {
-		seek(start)
+		stop()
+		state.position = start
 		if engine.isRunning { engine.stop() }
 		do { try activateAudio() } catch { message = "Could not start audio. Check the audio output and try Play again."; return }
 		player.currentItem?.forwardPlaybackEndTime = end
 		let generation = seekGeneration
 		rate = speed
+		if player.currentTime() == start {
+			player.playImmediately(atRate: Float(speed))
+			return
+		}
 		player.seek(to: start, toleranceBefore: .zero, toleranceAfter: .zero) { [weak self] finished in
 			Task { @MainActor [weak self] in
 				guard finished, let self, generation == self.seekGeneration else { return }
