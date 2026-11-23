@@ -81,7 +81,7 @@ extension TimelineGestureHandling where Self: UIView {
 		let horizontal: [UISwipeGestureRecognizer.Direction] = [.left, .right]
 		let all = horizontal + [.up, .down]
 		let groups = [all, projectTimeline && !captioning ? all : horizontal + [.down], all,
-			projectTimeline ? (transitions ? [.up, .down] : []) : (placement ? all : horizontal)]
+			projectTimeline ? (transitions ? [.up, .down, .right] : []) : (placement ? all : horizontal)]
 		for (index, directions) in groups.enumerated() {
 			let count = index + 1
 			for direction in directions {

@@ -92,6 +92,7 @@ struct ProjectEditorView: View {
 	@State private var dropAnchor: UUID?
 	@State private var dropAfter = false
 	@State private var dragging: Set<UUID> = []
+	@ScaledMetric(relativeTo: .body) private var wideTransportWidth: CGFloat = 420
 	@State private var generatorRequest: GeneratorRequest?
 	@State private var effects: TimelineTrack?
 	@State private var transitionRequest: ProjectTransitionRequest?
@@ -275,12 +276,7 @@ struct ProjectEditorView: View {
 			.fullScreenCover(item: $board, onDismiss: { focus = trigger }) { editing in
 				CuttingBoardKeyboard(session: editing.session, projectActions: boardActions(editing)) { board = nil }
 			}
-			.sheet(item: $generatorRequest, onDismiss: { focus = trigger }) { request in
-				GeneratorEditorView(project: project, request: request) { next, action in
-					if next != project { placementFocus = trigger }
-					try save(next, action: action)
-				}
-			}
+			.sheet(item: generatorBinding(direct: false), onDismiss: finishGenerator, content: generatorSheet)
 			.sheet(item: $movingToTime, onDismiss: restoreClipFocus) { clip in
 				ProjectJumpSheet(format: format, frame: project.frame, moving: true, initial: time(clip.start.time).replacingOccurrences(of: "Frame ", with: "")) { time in
 					try moveClip(clip, to: time, exact: true)
@@ -350,7 +346,7 @@ struct ProjectEditorView: View {
 				List {
 					if hasVideo && !wide {
 						preview.frame(maxWidth: .infinity)
-							.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect))
+							.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect) + 48)
 							.listRowInsets(EdgeInsets())
 					}
 					Group {
@@ -423,18 +419,46 @@ struct ProjectEditorView: View {
 	}
 
 	private var preview: some View {
-		ProjectPreview(player: playback.player)
-			.overlay {
-				if let cues = project.captions, !cues.isEmpty {
-					CaptionOverlay(cues: cues, playhead: playback.playhead, aspect: pictureAspect)
+		VStack(spacing: 0) {
+			ProjectPreview(player: playback.player)
+				.overlay {
+					if let cues = project.captions, !cues.isEmpty {
+						CaptionOverlay(cues: cues, playhead: playback.playhead, aspect: pictureAspect)
+					}
 				}
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
+			Button { fullScreenPreview = playback.makePreview() } label: {
+				Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right")
 			}
-			.frame(maxWidth: .infinity, maxHeight: .infinity)
+			.buttonStyle(EditorButtonStyle())
+			.fixedSize(horizontal: false, vertical: true)
+			.disabled(!playback.ready)
+			.accessibilityFocused($focus, equals: "fullScreenPreview")
+		}
+	}
+
+	private var mainTransitionActions: [EditorMenuAction] {
+		[
+			EditorMenuAction("Transitions") { openTransition(quick: false); trigger = "transitions" },
+			EditorMenuAction("Quick Fade") { openTransition(quick: true); trigger = "transitions" },
+			EditorMenuAction(selectedTrack.kind == .video ? "Cross Dissolve" : "Cross Fade") {
+				trigger = "transitions"
+				quickCross()
+			}
+		]
 	}
 
 	@ViewBuilder private var projectRows: some View {
 		transport
-		Button("Add Generator") { openGenerator() }.accessibilityFocused($focus, equals: "generator")
+		EditorCommandRow {
+			Button("Add Generator") { openGenerator() }.accessibilityFocused($focus, equals: "generator")
+			Menu { EditorMenuAction.buttons(mainTransitionActions) } label: { Text("Transitions") }
+				.editorMenuActions("Transitions", mainTransitionActions)
+				.accessibilityFocused($focus, equals: "transitions")
+				.disabled(!playback.ready || project.displayedClips(on: selectedTrack).isEmpty)
+		}
+		.buttonStyle(EditorButtonStyle())
+		.fixedSize(horizontal: false, vertical: true)
 		DisclosureGroup("Project Media", isExpanded: $expanded) {
 			sourcePicker("Import Clip", source: nil)
 			ForEach(project.sources) { source in
@@ -530,18 +554,19 @@ struct ProjectEditorView: View {
 				.buttonStyle(EditorButtonStyle())
 				.accessibilityFocused($focus, equals: "jump")
 				.disabled(!playback.ready)
-			HStack(spacing: 0) {
-				stepButton(forward: false)
-				ProjectShuttleButton(playback: playback, forward: false, boundary: .zero)
-				ProjectPlayButton(playback: playback)
-				ProjectShuttleButton(playback: playback, forward: true, boundary: project.duration)
-				stepButton(forward: true)
-				if project.placements.contains(where: { $0.track == .video }) {
-					Button { fullScreenPreview = playback.makePreview() } label: {
-						Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right")
+			ViewThatFits(in: .horizontal) {
+				HStack(spacing: 0) {
+					editPointButton(forward: false)
+					playbackButtons
+					editPointButton(forward: true)
+				}
+				.frame(minWidth: wideTransportWidth)
+				VStack(spacing: 0) {
+					HStack(spacing: 0) { playbackButtons }
+					HStack(spacing: 0) {
+						editPointButton(forward: false)
+						editPointButton(forward: true)
 					}
-					.disabled(!playback.ready)
-					.accessibilityFocused($focus, equals: "fullScreenPreview")
 				}
 			}
 			.disabled(!playback.ready)
@@ -573,6 +598,29 @@ struct ProjectEditorView: View {
 			}
 			.buttonStyle(EditorButtonStyle())
 			.fixedSize(horizontal: false, vertical: true)
+		}
+	}
+
+	@ViewBuilder private var playbackButtons: some View {
+		stepButton(forward: false)
+		ProjectShuttleButton(playback: playback, forward: false, boundary: .zero)
+		ProjectPlayButton(playback: playback)
+		ProjectShuttleButton(playback: playback, forward: true, boundary: project.duration)
+		stepButton(forward: true)
+	}
+
+	private func editPointTitle(forward: Bool) -> String {
+		let direction = forward ? "Next" : "Previous"
+		switch tool {
+		case .captioner: return direction + " Caption Point"
+		case .describer: return direction + " Description Point"
+		default: return direction + " Edit Point"
+		}
+	}
+
+	private func editPointButton(forward: Bool) -> some View {
+		Button { navigate(forward: forward, track: selectedTrack) } label: {
+			Label(editPointTitle(forward: forward), systemImage: forward ? "forward.end" : "backward.end")
 		}
 	}
 
@@ -623,6 +671,7 @@ struct ProjectEditorView: View {
 		.editorAppearance()
 		.accessibilityAction(.magicTap) { playback.toggle() }
 		.sheet(item: transitionBinding(direct: true), onDismiss: finishTransition, content: transitionSheet)
+		.sheet(item: generatorBinding(direct: true), onDismiss: finishGenerator, content: generatorSheet)
 		.sheet(item: voiceBinding(direct: true), onDismiss: finishVoice, content: voiceSheet)
 		.sheet(item: descriptionBinding(direct: true), onDismiss: finishDescription, content: descriptionSheet)
 		.sheet(item: captionBinding(direct: true), onDismiss: { finishCaption(direct: true) }, content: captionSheet)
@@ -635,6 +684,7 @@ struct ProjectEditorView: View {
 		let forward = direction == .right
 		let down = direction == .down
 		switch (fingers, direction) {
+		case (4, .right) where tool == .editor: openGenerator()
 		case (4, .down) where tool == .editor: quickCross()
 		case (4, .up) where tool == .editor: openTransition(quick: true)
 		case (2, .down) where tool == .voicer: openVoice()
@@ -757,7 +807,7 @@ struct ProjectEditorView: View {
 		}
 		.accessibilityActions {
 			Button(direction + " 10 Frames") { step(count * 10) }
-			Button(tool == .describer ? (forward ? "Next Description Point" : "Previous Description Point") : tool == .captioner ? (forward ? "Next Caption Point" : "Previous Caption Point") : (forward ? "Next Edit Point" : "Previous Edit Point")) {
+			Button(editPointTitle(forward: forward)) {
 				if let track = project.tracks.first(where: { $0.id == activeTrack }) {
 					navigate(forward: forward, track: track)
 				}
@@ -1037,6 +1087,23 @@ struct ProjectEditorView: View {
 				commit(next, action: replacing == nil ? "Import Clip" : "Reconnect Clip")
 			} catch { if !Task.isCancelled { self.error = error.localizedDescription } }
 		}
+	}
+
+	private func generatorBinding(direct: Bool) -> Binding<GeneratorRequest?> {
+		Binding(get: { directTouch == direct ? generatorRequest : nil }, set: { if directTouch == direct { generatorRequest = $0 } })
+	}
+
+	private func generatorSheet(_ request: GeneratorRequest) -> some View {
+		GeneratorEditorView(project: project, request: request) { next, action in
+			try save(next, action: action)
+			if !directTouch && preparingTimeline { placementFocus = trigger }
+		}
+	}
+
+	private func finishGenerator() {
+		if directTouch { returnMessage = directTouchReturnMessage() }
+		else if preparingTimeline { placementFocus = trigger }
+		else { focus = trigger }
 	}
 
 	private func openGenerator(track: TimelineTrack? = nil, source: ProjectMediaSource? = nil, clip: ProjectPlacement? = nil, rowID: String = "generator") {

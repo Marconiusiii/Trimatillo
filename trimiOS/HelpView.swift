@@ -104,7 +104,7 @@ private enum HelpTopic: String, CaseIterable {
 		switch self {
 		case .generators:
 			[HelpSection("Create a clip", numbered: true, [
-				"In Editor, choose the destination track with Timeline Chooser. Choose Add Generator, use the track's Add Generator action, or press G.",
+				"In Editor, choose the destination track with Timeline Chooser. Choose Add Generator, use the track's Add Generator action, or press G. In Project Direct Touch, swipe right with four fingers to open Add Generator.",
 				"On a video track, choose Text, Black, Solid Color, or Gradient. On an audio track, create Silence. Set Duration in Seconds; a marked In and Out range supplies the initial duration.",
 				"For text, choose a preset and enter Text. Title and Subheading adds a second line; Name and Role adds a role below the name. Subtitle creates a text clip that appears over the video.",
 				"Open Typography to change font, bold, Font Size in points, or line spacing. Layout controls text position, safe margin, and width.",
@@ -265,13 +265,14 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe down to undo the last project edit.",
 				"Swipe up to redo the last project edit you undid."
 			]), HelpSection("Four fingers", [
+				"Swipe right to open Add Generator for the selected track. Choose the generator and placement, then Add. Add or Cancel returns to Direct Touch; VoiceOver announces In Direct Touch Editor.",
 				"Swipe down at an edit point to apply Cross Dissolve on a video track or Cross Fade on an audio track. The first duration is one second. Later uses follow the duration last saved for Cross Dissolve or Cross Fade.",
 				"Swipe up to open Quick Fade. Set Fade In and Fade Out and their durations, preview the result, then choose Save.",
 				"Tap once to open Transitions for the clip or edit point on the selected track. Choose a transition, set its duration, preview it, then choose Save. Cancel returns without applying the changes."
 			]), HelpSection("Track navigation", [
 				"Switching tracks keeps the playhead in place. Playback and scrubbing include the full project mix.",
 				"At a shared cut, the edit point uses the name of the clip beginning there in either direction. Start, End, In, and Out are also stops.",
-				"In the main Editor, adjust Timeline Chooser to select the active track. The Editor shows the selected track and its edit points on the playhead slider. Use the Next Edit Point and Previous Edit Point actions on the step buttons to reach the same stops."
+				"In the main Editor, adjust Timeline Chooser to select the active track. The Editor shows the selected track and its edit points on the playhead slider. Use the Previous Edit Point and Next Edit Point buttons near the step controls to reach the same stops. The step buttons also retain these accessibility actions."
 			])]
 		case .projects:
 			[HelpSection("Create a project", numbered: true, [
@@ -298,7 +299,7 @@ private enum HelpTopic: String, CaseIterable {
 				"During playback, turn Bypass Effects on to hear the original levels and off to hear the effects. Adjust Volume to change the level of the whole track.",
 				"Use the Remove button under an effect to take it off the track. Save applies your changes to existing clips and clips added later. Cancel discards your changes. In Editor, choose Undo to reverse a save."
 			]), HelpSection("Add and preview transitions", numbered: true, [
-				"Select a timeline clip, or move the playhead to the cut where two clips meet. Open Transitions from the clip menu or its accessibility actions. The track heading also offers Transitions, Quick Fade, and Cross Dissolve or Cross Fade.",
+				"Move the playhead onto a clip or to the cut where two clips meet. Open the Transitions menu beside Add Generator to choose Transitions, Quick Fade, or Cross Dissolve or Cross Fade for the selected track. To work on a specific clip, use its menu or accessibility actions. The track heading also offers these commands.",
 				"At a cut, choose a transition and its Duration in Seconds. Video choices include Cross Dissolve, Fade Out/Fade In through black, Fade Through White, directional wipes, slides, covers and reveals, circles, and Pixel Dissolve. Audio offers Cross Fade and Fade Out/Fade In.",
 				"Use Easing with a wipe, slide, cover, reveal, or circle to change its movement over time. Linear keeps a steady pace. Ease In slows toward the incoming picture, Ease Out accelerates away from the outgoing picture, and Easy Ease smooths both ends.",
 				"Turn on Crossfade Audio to include linked video sound. Choose Linear or Equal Power for the audio curve. Equal Power maintains more volume around the middle of a crossfade.",
@@ -318,7 +319,8 @@ private enum HelpTopic: String, CaseIterable {
 				"When scrub audio is unavailable, VoiceOver reads the timecode after a brief pause in your drag or when you lift.",
 				"Choose Jump to Time to enter a time or frame in your selected timecode format.",
 				"Choose Step Back or Step Forward to move one project frame. In the Actions rotor, choose the 10-frame action or the previous or next edit point. Double-tap to use that action again while the button stays focused.",
-				"Edit points include clip boundaries on the active track, project markers, Start, and End.",
+				"Previous Edit Point and Next Edit Point move between clip boundaries on the selected track, project markers, Start, and End. VoiceOver identifies the clip at a boundary and reads the position. At a shared cut, it names the incoming clip.",
+				"The edit-point buttons sit beside Step Back and Step Forward when space allows. On narrower layouts they appear underneath, with Previous on the left and Next on the right.",
 				"Choose Mark In or Mark Out to set a marker. Its actions let you go to it or clear it. Pressing the marker button at its marked position also clears it."
 			]), HelpSection("Name a project clip", numbered: true, [
 				"Expand Project Media. Open the imported clip's menu or actions and choose Rename Clip.",
@@ -326,7 +328,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Append a second passage from the same source. A clip named Interview becomes Interview A on the timeline, and the new passage is Interview B. Each clip keeps its letter when moved."
 			]), HelpSection("Full Screen Preview", numbered: true, [
 				"Pause or step to the picture you want to inspect. With VoiceOver, focus Video frame to explore the image.",
-				"Choose Full Screen Preview beside the playback controls to open the project at the playhead.",
+				"Choose Full Screen Preview beneath the video preview to open the project at the playhead.",
 				"Use Play or Pause, or use Magic Tap. Drag the playback slider to move to another time.",
 				"Choose Close to return to editing with the playhead at the preview position."
 			]), HelpSection("Add at Playhead", numbered: true, [
