@@ -38,7 +38,11 @@ struct GeneratorEditorView: View {
 			definition.picture = project.picture ?? definition.picture
 			definition.fontPoints = definition.effectiveFontPoints.rounded()
 			definition.kind = request.track.kind == .audio ? .silence : .text
-			if let start = project.markIn?.time, let end = project.markOut?.time, end > start { definition.seconds = (end - start).seconds }
+			definition.seconds = 5
+			if let start = project.markIn?.time, let end = project.markOut?.time,
+				start >= .zero, end > start, end <= project.duration {
+				definition.seconds = (end - start).seconds
+			}
 		}
 		// Separate legacy panel/background colors without changing their appearance.
 		definition.panelColor = definition.panelColor ?? definition.background
@@ -385,11 +389,16 @@ private struct GeneratorColorEditor: View {
 						Label {
 							Text(preset.rawValue)
 						} icon: {
-							Image(uiImage: swatch(preset.color ?? .black)).renderingMode(.original).accessibilityHidden(true)
+							let image = swatch(preset.color ?? .black)
+							if let pixels = image.cgImage {
+								Image(decorative: pixels, scale: image.scale).renderingMode(.original)
+							}
 						}.tag(preset)
 					}
 				}
 				.pickerStyle(.menu)
+				.accessibilityLabel("Preset Color")
+				.accessibilityValue(choice.rawValue)
 				.disabled(custom)
 				Toggle("Custom Color", isOn: $custom)
 				if custom {

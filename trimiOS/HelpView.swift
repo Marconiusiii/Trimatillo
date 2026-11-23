@@ -105,7 +105,7 @@ private enum HelpTopic: String, CaseIterable {
 		case .generators:
 			[HelpSection("Create a clip", numbered: true, [
 				"In Editor, choose the destination track with Timeline Chooser. Choose Add Generator, use the track's Add Generator action, or press G. In Project Direct Touch, swipe right with four fingers to open Add Generator.",
-				"On a video track, choose Text, Black, Solid Color, or Gradient. On an audio track, create Silence. Set Duration in Seconds; a marked In and Out range supplies the initial duration.",
+				"On a video track, choose Text, Black, Solid Color, or Gradient. On an audio track, create Silence. Duration in Seconds starts at five seconds, or uses the marked range when valid In and Out points are set.",
 				"For text, choose a preset and enter Text. Title and Subheading adds a second line; Name and Role adds a role below the name. Subtitle creates a text clip that appears over the video.",
 				"Open Typography to change font, bold, Font Size in points, or line spacing. Layout controls text position, safe margin, and width.",
 				"Choose Append, Insert at Playhead, Overwrite at Playhead, or New Track at Playhead. Enter a track name when creating a new track. Choose Preview to play the result in the project, then Close to return and Add to create the clip."
@@ -308,7 +308,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Quick Fade to apply Fade In, Fade Out, or both, with separate durations. At a shared cut, Fade Out affects the outgoing clip and Fade In affects the incoming clip. From a selected clip's menu, both apply to that clip.",
 				"Cross transitions use extra source material on both sides of the cut. If there is too little available, shorten the transition or adjust the cut in the Cutting Board. The project duration stays the same.",
 				"Transitions follow their clips. Removing a clip, separating a joined pair, or shortening a clip beyond its transition removes the affected transition. Undo restores it.",
-				"In Editor, press X for a quick crossfade, F for Quick Fade, or Command-Shift-T for Transitions. Commands use the focused clip when one is selected, otherwise the playhead on the selected track."
+				"In Editor, press X for a quick crossfade, F for Quick Fade, or Command-Shift-T for Transitions. These commands use the playhead on the selected track. Commands in a clip's own menu apply to that clip."
 			]), HelpSection("Project playback and navigation", [
 				"Choose Direct Touch Editor to use gestures on the project. The Project Direct Touch Editor Help topic lists each gesture.",
 				"Choose Play to preview the timeline. Choose Pause to stop at the current position.",
@@ -321,7 +321,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Step Back or Step Forward to move one project frame. In the Actions rotor, choose the 10-frame action or the previous or next edit point. Double-tap to use that action again while the button stays focused.",
 				"Previous Edit Point and Next Edit Point move between clip boundaries on the selected track, project markers, Start, and End. VoiceOver identifies the clip at a boundary and reads the position. At a shared cut, it names the incoming clip.",
 				"The edit-point buttons sit beside Step Back and Step Forward when space allows. On narrower layouts they appear underneath, with Previous on the left and Next on the right.",
-				"Choose Mark In or Mark Out to set a marker. Its actions let you go to it or clear it. Pressing the marker button at its marked position also clears it."
+				"Choose Mark In or Mark Out to set a marker. Its actions let you go to it or clear it. Pressing the marker button at its marked position also clears it. Opening a project clears its previous In and Out markers."
 			]), HelpSection("Name a project clip", numbered: true, [
 				"Expand Project Media. Open the imported clip's menu or actions and choose Rename Clip.",
 				"Enter a Clip Name and choose Save. The project uses that name for the source and its timeline clips.",

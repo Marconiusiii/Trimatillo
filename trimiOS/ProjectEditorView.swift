@@ -1415,6 +1415,12 @@ struct ProjectEditorView: View {
 		// Transport and markers must not wait for clip sorting or focus resolution.
 		switch key {
 		case "g" where flags.isEmpty && tool == .editor: openGenerator(); return
+		case "x" where flags.isEmpty && tool == .editor:
+			trigger = selectedTrack.id
+			quickCross()
+			return
+		case "f" where flags.isEmpty && tool == .editor: openTransition(quick: true); return
+		case "t" where flags.contains(.command) && tool == .editor: openTransition(quick: false); return
 		case " ", "k": playback.toggle(); return
 		case "j", "l": playback.shuttle(forward: key == "l"); return
 		case "i", "o":
@@ -1491,9 +1497,6 @@ struct ProjectEditorView: View {
 			}
 		case "c", "\r":
 			if let clip, let source = project.sources.first(where: { $0.id == clip.sourceID }) { openBoard(source, placement: clip, rowID: focusedClip == nil ? nil : focusedRow) }
-		case "x": quickCross(track: track, clip: focusedClip)
-		case "f": openTransition(quick: true, track: track, clip: focusedClip)
-		case "t" where flags.contains(.command): openTransition(quick: false, track: track, clip: focusedClip)
 		case UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow:
 			if flags.contains(.alternate), let index = project.tracks.firstIndex(of: track) {
 				let target = index + (key == UIKeyCommand.inputUpArrow ? -1 : 1)

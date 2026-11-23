@@ -120,7 +120,16 @@ struct ProjectLauncherView: View {
 	}
 
 	@concurrent private static func readProject(_ url: URL) async throws -> EditingProject {
-		try ProjectLibrary.load(url)
+		let saved = try ProjectLibrary.load(url)
+		guard saved.markIn != nil || saved.markOut != nil else { return saved }
+		var opened = saved
+		opened.markIn = nil
+		opened.markOut = nil
+		try Task.checkCancellation()
+		// Save against the unmodified disk snapshot so the next edit has a valid save baseline.
+		do { try ProjectLibrary.save(opened, replacing: saved) }
+		catch { throw ProjectFailure("Could not clear project markers. Reopen the project. " + error.localizedDescription) }
+		return opened
 	}
 
 	@concurrent private static func listProjects() async throws -> (projects: [SavedProject], unreadable: Bool) {
