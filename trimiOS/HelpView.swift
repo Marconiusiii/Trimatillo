@@ -112,7 +112,8 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Set generator colors", numbered: true, [
 				"In Appearance, choose Text Color to change the lettering. Turn off Transparent Background to reveal Background Color directly below it. The default background is black.",
 				"Turn on Outline or Shadow to reveal its color button. Turn on Text Panel to reveal Panel Color and Panel Opacity. Panel Color changes the area behind the text independently of the full-frame Background Color.",
-				"Choose a color button to open its color editor. Select a named color, or choose Custom and adjust the Red, Green, and Blue sliders from 0 to 255. Done applies the color; Cancel discards that color edit. Both return to the color button.",
+				"Choose a color button to open Color Chooser. Use the Preset Color menu to select a named color, including Teal, Cyan, Mint, Navy, Indigo, Lavender, and Cream.",
+				"Turn on Custom Color to disable the preset menu and reveal Red, Green, and Blue fields. Enter whole numbers from 0 to 255. The color swatch updates as you enter valid values. Dismiss Keyboard closes the keyboard. Done applies the color; Cancel discards the color edit. Both return to the color button.",
 				"For a Solid Color generator, use Color. For a Gradient, use Start Color and End Color, then choose the gradient direction. These buttons use the same color editor."
 			]), HelpSection("Edit a generated clip", numbered: true, [
 				"Open a generated timeline clip's menu or accessibility actions and choose Edit Generator. Change its text or appearance, then Save. Other copies retain their own settings.",

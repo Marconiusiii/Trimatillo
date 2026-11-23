@@ -276,7 +276,7 @@ struct ClipCompositingSheet: View {
 }
 
 private enum GeneratorNamedColor: String, CaseIterable {
-	case black = "Black", white = "White", gray = "Gray", red = "Red", orange = "Orange", yellow = "Yellow", green = "Green", blue = "Blue", purple = "Purple", pink = "Pink", brown = "Brown", custom = "Custom"
+	case black = "Black", white = "White", gray = "Gray", red = "Red", orange = "Orange", yellow = "Yellow", green = "Green", blue = "Blue", purple = "Purple", pink = "Pink", brown = "Brown", teal = "Teal", cyan = "Cyan", mint = "Mint", navy = "Navy", indigo = "Indigo", lavender = "Lavender", cream = "Cream", custom = "Custom"
 	var color: GeneratorColor? {
 		switch self {
 		case .black: .black
@@ -290,6 +290,13 @@ private enum GeneratorNamedColor: String, CaseIterable {
 		case .purple: GeneratorColor(red: 0.5, green: 0, blue: 0.5)
 		case .pink: GeneratorColor(red: 1, green: 0.5, blue: 0.75)
 		case .brown: GeneratorColor(red: 0.6, green: 0.3, blue: 0.1)
+		case .teal: GeneratorColor(red: 0, green: 0.5, blue: 0.5)
+		case .cyan: GeneratorColor(red: 0, green: 1, blue: 1)
+		case .mint: GeneratorColor(red: 0.6, green: 0.9, blue: 0.75)
+		case .navy: GeneratorColor(red: 0, green: 0, blue: 0.5)
+		case .indigo: GeneratorColor(red: 0.29, green: 0, blue: 0.51)
+		case .lavender: GeneratorColor(red: 0.75, green: 0.65, blue: 0.9)
+		case .cream: GeneratorColor(red: 1, green: 0.98, blue: 0.85)
 		case .custom: nil
 		}
 	}
@@ -324,52 +331,123 @@ private struct GeneratorColorButton: View {
 		.accessibilityValue(GeneratorNamedColor.value(for: color))
 		.accessibilityFocused($focused)
 		.fullScreenCover(isPresented: $editing, onDismiss: { focused = true }) {
-			GeneratorColorEditor(title: title, initial: color) { color = $0 }
+			GeneratorColorEditor(initial: color) { color = $0 }
 		}
 	}
 }
 
 private struct GeneratorColorEditor: View {
-	let title: String
 	let save: (GeneratorColor) -> Void
+	@State private var initial: GeneratorColor
+	@State private var initialComponents: [String]
 	@Environment(\.dismiss) private var dismiss
-	@State private var draft: GeneratorColor
+	@State private var custom: Bool
 	@State private var choice: GeneratorNamedColor
+	@State private var red: String
+	@State private var green: String
+	@State private var blue: String
+	@State private var lastValid: GeneratorColor
+	@State private var invalidColor = false
+	@FocusState private var typing: Bool
 
-	init(title: String, initial: GeneratorColor, save: @escaping (GeneratorColor) -> Void) {
-		self.title = title
+	init(initial: GeneratorColor, save: @escaping (GeneratorColor) -> Void) {
+		_initial = State(initialValue: initial)
 		self.save = save
-		_draft = State(initialValue: initial)
-		_choice = State(initialValue: GeneratorNamedColor.selection(for: initial))
+		let components = [initial.red, initial.green, initial.blue].map { String(Int(($0 * 255).rounded())) }
+		_initialComponents = State(initialValue: components)
+		_red = State(initialValue: components[0])
+		_green = State(initialValue: components[1])
+		_blue = State(initialValue: components[2])
+		_lastValid = State(initialValue: initial)
+		let selection = GeneratorNamedColor.selection(for: initial)
+		_custom = State(initialValue: selection == .custom)
+		_choice = State(initialValue: selection == .custom ? .black : selection)
+	}
+
+	private var components: [String] { [red, green, blue] }
+	private var customColor: GeneratorColor? {
+		var values: [Double] = []
+		for component in components {
+			let text = component.trimmingCharacters(in: .whitespacesAndNewlines)
+			guard !text.isEmpty, text.allSatisfy({ $0.isNumber }), let value = Int(text), (0...255).contains(value) else { return nil }
+			values.append(Double(value) / 255)
+		}
+		// Opening and confirming a saved color must not quantize its existing components.
+		if components == initialComponents { return initial }
+		return GeneratorColor(red: values[0], green: values[1], blue: values[2])
 	}
 
 	var body: some View {
 		NavigationStack {
 			Form {
-				Picker("Color", selection: $choice) {
-					ForEach(GeneratorNamedColor.allCases, id: \.self) { Text($0.rawValue).tag($0) }
+				Picker("Preset Color", selection: $choice) {
+					ForEach(GeneratorNamedColor.allCases.filter { $0 != .custom }, id: \.self) { preset in
+						Label {
+							Text(preset.rawValue)
+						} icon: {
+							Image(uiImage: swatch(preset.color ?? .black)).renderingMode(.original).accessibilityHidden(true)
+						}.tag(preset)
+					}
 				}
-				.pickerStyle(.inline)
-				if choice == .custom {
-					GeneratorSlider("Red", value: channel(\.red), range: 0...255, unit: "", step: 1)
-					GeneratorSlider("Green", value: channel(\.green), range: 0...255, unit: "", step: 1)
-					GeneratorSlider("Blue", value: channel(\.blue), range: 0...255, unit: "", step: 1)
+				.pickerStyle(.menu)
+				.disabled(custom)
+				Toggle("Custom Color", isOn: $custom)
+				if custom {
+					channel("Red", text: $red)
+					channel("Green", text: $green)
+					channel("Blue", text: $blue)
+					RoundedRectangle(cornerRadius: 4)
+						.fill(Color(cgColor: (customColor ?? lastValid).cg))
+						.frame(height: 64)
+						.overlay { RoundedRectangle(cornerRadius: 4).stroke(.secondary) }
+						.accessibilityHidden(true)
 				}
 			}
+			.dismissKeyboardToolbar(while: typing) { typing = false }
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
 				ToolbarItem(placement: .cancellationAction) { Button("Cancel") { dismiss() } }
-				ToolbarItem(placement: .principal) { Text(title).font(.headline).accessibilityAddTraits(.isHeader) }
-				ToolbarItem(placement: .confirmationAction) { Button("Done") { save(draft); dismiss() } }
+				ToolbarItem(placement: .principal) { Text("Color Chooser").font(.headline).accessibilityAddTraits(.isHeader) }
+				ToolbarItem(placement: .confirmationAction) { Button("Done") {
+					guard let color = custom ? customColor : choice.color else { invalidColor = true; return }
+					typing = false
+					save(color)
+					dismiss()
+				} }
 			}
-			.onChange(of: choice) { _, choice in
-				if let color = choice.color { draft = color }
+			.onChange(of: components) { if let color = customColor { lastValid = color } }
+			.onChange(of: choice) { _, selection in
+				guard let color = selection.color else { return }
+				let values = [color.red, color.green, color.blue].map { String(Int(($0 * 255).rounded())) }
+				initial = color
+				initialComponents = values
+				red = values[0]
+				green = values[1]
+				blue = values[2]
+				lastValid = color
 			}
+			.onChange(of: custom) { _, enabled in if !enabled { typing = false } }
+			.alert("Invalid Color", isPresented: $invalidColor) {
+				Button("OK", role: .cancel) {}
+			} message: { Text("Enter whole numbers from 0 to 255 for Red, Green, and Blue.") }
 		}
 		.editorAppearance()
 	}
 
-	private func channel(_ key: WritableKeyPath<GeneratorColor, Double>) -> Binding<Double> {
-		Binding(get: { draft[keyPath: key] * 255 }, set: { draft[keyPath: key] = $0.rounded() / 255 })
+	private func channel(_ title: String, text: Binding<String>) -> some View {
+		TextField("", text: text)
+			.keyboardType(.numberPad)
+			.focused($typing)
+			.editorFieldLabel(title)
+	}
+
+	private func swatch(_ color: GeneratorColor) -> UIImage {
+		UIGraphicsImageRenderer(size: CGSize(width: 24, height: 24)).image { context in
+			let rect = CGRect(x: 1, y: 1, width: 22, height: 22)
+			context.cgContext.setFillColor(color.cg)
+			context.cgContext.fill(rect)
+			context.cgContext.setStrokeColor(UIColor.secondaryLabel.cgColor)
+			context.cgContext.stroke(rect)
+		}
 	}
 }
