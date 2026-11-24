@@ -92,6 +92,8 @@ struct ProjectEditorView: View {
 	@State private var captionCreated = false
 	@State private var selectedEntries: Set<UUID> = []
 	@State private var activeTrack = TimelineTrack.primaryVideo.id
+	@State private var pendingEditorTrack: String?
+	@State private var timelineOpacity = 1.0
 	@State private var marked: Set<UUID> = []
 	@State private var dropAnchor: UUID?
 	@State private var dropAfter = false
@@ -166,6 +168,14 @@ struct ProjectEditorView: View {
 		}
 		.onChange(of: activeTrack) {
 			dropAnchor = nil
+			if let pendingEditorTrack, pendingEditorTrack != activeTrack { self.pendingEditorTrack = nil }
+		}
+		.onChange(of: reduceMotion) {
+			if reduceMotion {
+				if let pendingEditorTrack { activeTrack = pendingEditorTrack }
+				pendingEditorTrack = nil
+				withAnimation(nil) { timelineOpacity = 1 }
+			}
 		}
 		.onChange(of: soloTracks) { playback.updateMix(project, solo: soloTracks) }
 		.onChange(of: playback.ready) { if playback.ready { playback.updateMix(project, solo: soloTracks) } }
@@ -498,12 +508,7 @@ struct ProjectEditorView: View {
 			}
 		} label: { Text("Project Media").editorTouchRow(alignment: .leading) }
 		.accessibilityAddTraits(.isHeader)
-		TimelineChooser(selection: Binding(get: { activeTrack }, set: { track in
-			guard activeTrack != track else { return }
-			activeTrack = track
-			keyboardClip = nil
-			playback.playhead.navigationLabel = nil
-		}), options: project.editorTimelines, title: \.title)
+		TimelineChooser(selection: Binding(get: { pendingEditorTrack ?? activeTrack }, set: selectEditorTrack), options: project.editorTimelines, title: \.title)
 			.id("editor-timeline-chooser")
 			.transaction { $0.animation = nil }
 
@@ -529,15 +534,39 @@ struct ProjectEditorView: View {
 				editorEntryContents
 			}
 		}
-		.keyframeAnimator(initialValue: 1.0, trigger: activeTrack) { [reduceMotion] content, opacity in
-			content.opacity(reduceMotion ? 1 : opacity)
-		} keyframes: { _ in
-			LinearKeyframe(0.65, duration: 0.08)
-			LinearKeyframe(1, duration: 0.12)
+		.opacity(timelineOpacity)
+		.task(id: pendingEditorTrack) {
+			guard let destination = pendingEditorTrack else {
+				withAnimation(reduceMotion ? nil : .easeIn(duration: 0.12)) { timelineOpacity = 1 }
+				return
+			}
+			if !reduceMotion {
+				withAnimation(.easeOut(duration: 0.1)) { timelineOpacity = 0 }
+				do { try await Task.sleep(for: .milliseconds(100)) } catch { return }
+			}
+			guard !Task.isCancelled, pendingEditorTrack == destination else { return }
+			activeTrack = destination
+			keyboardClip = nil
+			playback.playhead.navigationLabel = nil
+			pendingEditorTrack = nil
+			withAnimation(reduceMotion ? nil : .easeIn(duration: 0.12)) { timelineOpacity = 1 }
 		}
 		.id("editor-timeline-content")
 
 		if let seconds = project.targetSeconds { LabeledContent("Project Duration", value: time(CMTime(seconds: seconds, preferredTimescale: 60000))) }
+	}
+
+	private func selectEditorTrack(_ track: String) {
+		guard project.editorTimelines.contains(where: { $0.id == track }) else { return }
+		if reduceMotion {
+			pendingEditorTrack = nil
+			activeTrack = track
+			keyboardClip = nil
+			playback.playhead.navigationLabel = nil
+			withAnimation(nil) { timelineOpacity = 1 }
+		} else {
+			pendingEditorTrack = track == activeTrack ? nil : track
+		}
 	}
 
 	private func entrySelection(_ id: UUID) -> Set<UUID> {
@@ -1691,11 +1720,10 @@ struct ProjectEditorView: View {
 		}
 		if flags.contains([.command, .alternate]), key == UIKeyCommand.inputUpArrow || key == UIKeyCommand.inputDownArrow {
 			let tracks = project.editorTimelines
-			if let index = tracks.firstIndex(of: editorTimeline) {
+			if let index = tracks.firstIndex(where: { $0.id == (pendingEditorTrack ?? activeTrack) }) {
 				let target = index + (key == UIKeyCommand.inputUpArrow ? -1 : 1)
 				if tracks.indices.contains(target) {
-					activeTrack = tracks[target].id; keyboardClip = nil
-					playback.playhead.navigationLabel = nil
+					selectEditorTrack(tracks[target].id)
 					UIAccessibility.post(notification: .announcement, argument: tracks[target].title)
 				}
 			}
