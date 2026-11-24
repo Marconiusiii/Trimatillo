@@ -78,7 +78,10 @@ struct ProjectEditorView: View {
 	@State private var mixerTrack = TimelineTrack.primaryAudio.id
 	@State private var soloTracks: Set<String> = []
 	@State private var voiceInsertion: VoiceInsertion?
-	@State private var descriptionTimeline = DescriptionTimeline.transcript
+	@State private var descriptionTimeline = DescriptionTimeline.audio
+	@State private var descriptionProjectID: UUID?
+	@State private var shifting: TimelineShiftRequest?
+	@State private var clipsBoard: ClipsBoardRequest?
 	@State private var descriptionEntry: DescriptionEntry?
 	@State private var descriptionTrigger = "newDescription"
 	@State private var descriptionNeedsRebuild = false
@@ -146,6 +149,12 @@ struct ProjectEditorView: View {
 				ProjectWorkspaceTabs(selection: $tool) { workspacePage }
 			}
 		}
+		.onAppear {
+			if descriptionProjectID != project.id {
+				descriptionTimeline = project.initialDescriptionTimeline
+				descriptionProjectID = project.id
+			}
+		}
 		.onChange(of: playback.failure) { _, message in
 			if let message { error = message; playback.failure = nil }
 		}
@@ -164,7 +173,7 @@ struct ProjectEditorView: View {
 	}
 
 	private var workspacePage: some View {
-		ProjectEditorKeyboard(playback: playback, enabled: generatorRequest == nil && deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && transitionRequest == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
+		ProjectEditorKeyboard(playback: playback, enabled: clipsBoard == nil && shifting == nil && generatorRequest == nil && deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && transitionRequest == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
 			tool: tool, undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
@@ -221,6 +230,21 @@ struct ProjectEditorView: View {
 				}
 			}
 			.sheet(item: transitionBinding(direct: false), onDismiss: finishTransition, content: transitionSheet)
+			.fullScreenCover(item: $clipsBoard, onDismiss: restoreClipFocus) { request in
+				if let model = try? ClipsBoardModel(request) {
+					ClipsCuttingBoardView(model: model) { edited in
+						guard project == request.project else { throw ProjectFailure("The project changed. Reopen Clips Cutting Board to edit the current clips.") }
+						try save(edited, action: "Edit Selected Clips")
+					}
+				}
+			}
+			.sheet(item: $shifting, onDismiss: restoreClipFocus) { request in
+				TimelineShiftView(request: request) { seconds in
+					var next = project
+					try next.shift(request, by: seconds)
+					try save(next, action: request.title)
+				}
+			}
 			.sheet(item: $effects, onDismiss: { focus = trigger }) { track in
 				trackEffectsSheet(track)
 			}
@@ -371,7 +395,7 @@ struct ProjectEditorView: View {
 						else if tool == .describer {
 							transport
 							DescriberView(project: $project, timeline: $descriptionTimeline, focus: $focus, keyboardFocus: $keyboardClip,
-								time: time, open: openDescription, seek: playback.seek, save: save)
+								time: time, open: openDescription, seek: playback.seek, save: save, shift: openShift)
 						} else {
 							transport
 							CaptionerView(project: $project, playback: playback, focus: $focus, keyboardFocus: $keyboardClip, time: time,
@@ -870,7 +894,7 @@ struct ProjectEditorView: View {
 			.contentShape(Rectangle())
 		}
 		.buttonStyle(.plain)
-		.accessibilityValue((linked ? "Linked audio, " : "") + (marked.contains(clip.id) ? "Marked, " : "") + "Start " + time(clip.start.time) + ", duration " + time(clip.duration))
+		.accessibilityValue((linked ? "Linked audio, " : "") + (marked.contains(clip.id) ? "Selected, " : "") + "Start " + time(clip.start.time) + ", duration " + time(clip.duration))
 		.contextMenu { EditorMenuAction.buttons(actions) }
 		.focused($keyboardClip, equals: rowID)
 		.accessibilityFocused($focus, equals: rowID)
@@ -883,8 +907,15 @@ struct ProjectEditorView: View {
 		.editorMenuActions(name, actions)
 	}
 
+	private func openShift(_ request: TimelineShiftRequest, trigger row: String) {
+		playback.pause()
+		trigger = row
+		shifting = request
+	}
+
 	private func trackActions(_ track: TimelineTrack) -> [EditorMenuAction] {
 		var actions = [
+			EditorMenuAction("Shift Track") { openShift(TimelineShiftRequest(title: "Shift Track", clips: Set(project.displayedClips(on: track).map(\.id))), trigger: track.id) },
 			EditorMenuAction("Add Generator") { openGenerator(track: track, rowID: track.id) },
 			EditorMenuAction(project.isMagnetic(track) ? "Turn Magnetic Off" : "Turn Magnetic On") {
 				let enabled = !project.isMagnetic(track)
@@ -985,12 +1016,15 @@ struct ProjectEditorView: View {
 
 	private func clipActions(_ clip: ProjectPlacement, source: ProjectMediaSource, rowID: String, linked: Bool) -> [EditorMenuAction] {
 		let name = clip.displayName(for: source)
+		let selection: Set<UUID> = marked.contains(clip.id) ? marked : [clip.id]
+		let shiftTitle = selection.count == 1 ? "Shift Clip" : "Shift Clips"
 		let track = linked ? project.audioPartner(for: clip.trackID) : project.tracks.first { $0.id == clip.trackID }
 		var actions = [
+			EditorMenuAction(shiftTitle) { openShift(TimelineShiftRequest(title: shiftTitle, clips: selection), trigger: rowID) },
 			EditorMenuAction("Transitions") { trigger = rowID; openTransition(quick: false, track: track, clip: clip) },
 			EditorMenuAction("Quick Fade") { trigger = rowID; openTransition(quick: true, track: track, clip: clip) },
 			EditorMenuAction(linked || clip.track == .audio ? "Cross Fade" : "Cross Dissolve") { trigger = rowID; quickCross(track: track, clip: clip) },
-			EditorMenuAction("Open Cutting Board") { openBoard(source, placement: clip, rowID: rowID) },
+			EditorMenuAction(selection.count > 1 ? "Open Clips Cutting Board" : "Open Cutting Board") { openSelectedBoard(clip, source: source, track: track, rowID: rowID) },
 			EditorMenuAction("Move to Playhead") {
 				playback.pause()
 				trigger = rowID
@@ -998,7 +1032,7 @@ struct ProjectEditorView: View {
 			},
 			EditorMenuAction("Move to Time") { playback.pause(); trigger = rowID; movingToTime = clip },
 			EditorMenuAction("Move to New Track") { playback.pause(); trigger = rowID; newTrackName = ""; trackForMove = clip },
-			EditorMenuAction(marked.contains(clip.id) ? "Unmark for Editing" : "Mark for Editing") { toggleMark(clip.id) }
+			EditorMenuAction(marked.contains(clip.id) ? "Deselect Clip" : "Select Clip") { toggleMark(clip.id) }
 		]
 		if source.generator != nil { actions.append(EditorMenuAction("Edit Generator") { openGenerator(source: source, clip: clip, rowID: rowID) }) }
 		if dragging.isEmpty {
@@ -1014,10 +1048,10 @@ struct ProjectEditorView: View {
 		}
 		actions.append(EditorMenuAction("Go to Start") { playback.seek(clip.start.time) })
 		actions.append(EditorMenuAction("Go to End") { playback.seek(clip.end) })
-		actions.append(EditorMenuAction(linked ? "Remove Linked Clip Pair" : "Remove from Track") {
+		actions.append(EditorMenuAction(selection.count > 1 ? "Remove Clips from Track" : linked ? "Remove Linked Clip Pair" : "Remove from Track") {
 			var next = project
-			next.removeClips([clip.id])
-			commit(next, action: "Remove Clip")
+			next.removeClips(selection)
+			commit(next, action: selection.count > 1 ? "Remove Clips" : "Remove Clip")
 		})
 		actions.append(deleteAction(source, rowID: rowID))
 		return actions
@@ -1110,6 +1144,19 @@ struct ProjectEditorView: View {
 		playback.releaseAudio()
 		trigger = rowID
 		generatorRequest = GeneratorRequest(track: track ?? selectedTrack, time: playback.position, source: source, clip: clip)
+	}
+
+	private func openSelectedBoard(_ clip: ProjectPlacement, source: ProjectMediaSource, track: TimelineTrack?, rowID: String?) {
+		let ids: Set<UUID> = marked.contains(clip.id) ? marked : [clip.id]
+		guard ids.count > 1 else { openBoard(source, placement: clip, rowID: rowID); return }
+		guard let track else { error = "Select clips on the same track."; return }
+		let request = ClipsBoardRequest(project: project, track: track, ids: ids)
+		do {
+			_ = try ClipsBoardModel(request)
+			playback.releaseAudio()
+			trigger = rowID ?? clip.id.uuidString
+			clipsBoard = request
+		} catch { self.error = error.localizedDescription }
 	}
 
 	private func openBoard(_ source: ProjectMediaSource, placement: ProjectPlacement?, rowID: String? = nil) {
@@ -1269,7 +1316,7 @@ struct ProjectEditorView: View {
 		if rebuild {
 			if voiceInsertion != nil { placementNeedsRebuild = true }
 			else if descriptionEntry != nil { descriptionNeedsRebuild = true }
-			else if movingToTime != nil || trackForMove != nil { placementNeedsRebuild = true }
+			else if clipsBoard != nil || shifting != nil || movingToTime != nil || trackForMove != nil { placementNeedsRebuild = true }
 			else { revision += 1 }
 		}
 	}
@@ -1496,7 +1543,7 @@ struct ProjectEditorView: View {
 				move(dragging, on: destinationTrack, beside: dropAnchor ?? clip?.id, after: dropAnchor == nil ? true : dropAfter)
 			}
 		case "c", "\r":
-			if let clip, let source = project.sources.first(where: { $0.id == clip.sourceID }) { openBoard(source, placement: clip, rowID: focusedClip == nil ? nil : focusedRow) }
+			if let clip, let source = project.sources.first(where: { $0.id == clip.sourceID }) { openSelectedBoard(clip, source: source, track: track, rowID: focusedClip == nil ? nil : focusedRow) }
 		case UIKeyCommand.inputUpArrow, UIKeyCommand.inputDownArrow:
 			if flags.contains(.alternate), let index = project.tracks.firstIndex(of: track) {
 				let target = index + (key == UIKeyCommand.inputUpArrow ? -1 : 1)
@@ -1861,7 +1908,7 @@ private struct TrackEffectsSheet: View {
 	}
 }
 
-private struct ProjectJumpSheet: View {
+struct ProjectJumpSheet: View {
 	let format: TimecodeFormat
 	let frame: CMTime
 	let moving: Bool
@@ -2281,7 +2328,7 @@ private struct ProjectSliderControl: UIViewRepresentable {
 	}
 }
 
-private struct ProjectTouchSurface: UIViewRepresentable {
+struct ProjectTouchSurface: UIViewRepresentable {
 	@ObservedObject var playhead: ProjectPlayhead
 	let playback: ProjectPlayback
 	let formatTime: (CMTime) -> String
@@ -2293,13 +2340,14 @@ private struct ProjectTouchSurface: UIViewRepresentable {
 	let mode: DirectTouchScrubbing
 	let close: () -> Void
 	let swipe: (Int, UISwipeGestureRecognizer.Direction) -> Void
+	var clipEditing = false
 
 	func makeUIView(context: Context) -> Surface {
 		let view = Surface()
 		view.isAccessibilityElement = true
 		view.accessibilityLabel = "Direct Touch Editor"
 		view.accessibilityTraits = .allowsDirectInteraction
-		view.installTimelineGestures(projectTimeline: true, captioning: captioning, transitions: transitions != nil, join: editDescription == nil ? nil : #selector(Surface.descriptionTap))
+		view.installTimelineGestures(projectTimeline: !clipEditing, captioning: captioning, transitions: transitions != nil, join: editDescription == nil ? nil : #selector(Surface.descriptionTap))
 		view.backgroundColor = UIColor(EditorTheme.surface)
 		configureProjectPreview(view.video)
 		view.layer.addSublayer(view.cursor)

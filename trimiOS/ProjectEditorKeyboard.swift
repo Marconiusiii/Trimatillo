@@ -5,6 +5,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 	let playback: ProjectPlayback
 	let enabled: Bool
 	var tool = ProjectTool.editor
+	var groupEditing = false
 	let undoShake: () -> Bool
 	let perform: (String, UIKeyModifierFlags) -> Void
 	@ViewBuilder let content: () -> Content
@@ -16,6 +17,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 	func updateUIViewController(_ controller: Controller, context: Context) {
 		controller.rootView = content()
 		controller.tool = tool
+		controller.groupEditing = groupEditing
 		controller.undoShake = enabled ? undoShake : nil
 		controller.performKey = enabled ? perform : nil
 	}
@@ -35,6 +37,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 		required init?(coder: NSCoder) { fatalError() }
 
 		private var commandCache: [ProjectTool: [UIKeyCommand]] = [:]
+		var groupEditing = false { didSet { if oldValue != groupEditing { commandCache.removeAll() } } }
 		var tool = ProjectTool.editor
 		var undoShake: (() -> Bool)?
 		var performKey: ((String, UIKeyModifierFlags) -> Void)?
@@ -79,6 +82,11 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 				default: return (input, flags, title)
 				}
 			}
+			if groupEditing {
+				let commands = EditorKeyMap.commands(EditorKeyMap.bindings + [("u", .command, "Save Changes")], action: #selector(trimatilloProjectCommand(_:)))
+				commandCache[tool] = commands
+				return commands
+			}
 			if tool != .editor {
 				bindings.removeAll { ["[", "]", "\u{8}", UIKeyCommand.inputDelete, "\r"].contains($0.0) }
 				if tool == .mixer {
@@ -93,7 +101,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 				(UIKeyCommand.inputDownArrow, [.alternate, .command], "Next Track"),
 				(UIKeyCommand.inputLeftArrow, [.command, .alternate], "Move Earlier"),
 				(UIKeyCommand.inputRightArrow, [.command, .alternate], "Move Later"),
-				("s", .shift, "Add to Drag"), ("s", [], "Mark for Editing"), ("c", [], "Open Cutting Board"),
+				("s", .shift, "Add to Drag"), ("s", [], "Select Clip"), ("c", [], "Open Cutting Board"),
 				("b", .command, "Split Clip"), ("v", [.command, .alternate], "Drop After"),
 				(UIKeyCommand.inputEscape, [], "Cancel Drag")]
 			}

@@ -84,6 +84,8 @@ struct DescriberView: View {
 	let open: (UUID?) -> Void
 	let seek: (CMTime) -> Void
 	let save: (EditingProject, String) throws -> Void
+	let shift: (TimelineShiftRequest, String) -> Void
+	@State private var marked: Set<UUID> = []
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@State private var outgoingTimeline: DescriptionTimeline?
 	@State private var transitionStart: Date?
@@ -133,12 +135,27 @@ struct DescriberView: View {
 		case .transcript: exportTranscriptButton
 		case .audio: duckingButton
 		}
-		Text(timeline.rawValue)
-			.font(.headline)
-			.padding(12)
-			.accessibilityAddTraits(.isHeader)
+		let trackActions = [EditorMenuAction("Shift Track") {
+			shift(shiftRequest(timeline, ids: Set(project.descriptionRows(timeline).map(\.id)), title: "Shift Track"), "descriptionTrack")
+		}]
+		Menu { EditorMenuAction.buttons(trackActions) } label: {
+			Text(timeline.rawValue).font(.headline).editorTouchRow(alignment: .leading)
+		}
+		.contextMenu { EditorMenuAction.buttons(trackActions) }
+		.editorMenuActions(timeline.rawValue, trackActions)
+		.accessibilityAddTraits(.isHeader)
+		.accessibilityFocused(focus, equals: "descriptionTrack")
 		ForEach(project.descriptionRows(timeline)) { row in
+			let available = Set(project.descriptionRows(timeline).map(\.id))
+			let ids: Set<UUID> = marked.contains(row.id) ? marked.intersection(available) : [row.id]
+			let shiftTitle = ids.count == 1 ? "Shift Clip" : "Shift Clips"
 			let actions = [
+				EditorMenuAction(marked.contains(row.id) ? "Deselect Clip" : "Select Clip") {
+					if marked.contains(row.id) { marked.remove(row.id) } else { marked.insert(row.id) }
+				},
+				EditorMenuAction(shiftTitle) {
+					shift(shiftRequest(timeline, ids: ids, title: shiftTitle), row.id.uuidString)
+				},
 				EditorMenuAction("Go to Start") { seek(row.start) },
 				EditorMenuAction("Edit " + timeline.rawValue) { open(row.id) },
 				EditorMenuAction("Delete " + timeline.rawValue) { delete(row.id) }
@@ -151,10 +168,14 @@ struct DescriberView: View {
 			}
 			.contextMenu { EditorMenuAction.buttons(actions) }
 			.editorMenuActions(row.name, actions)
-			.accessibilityValue(time(row.start) + " to " + time(row.end))
+			.accessibilityValue((marked.contains(row.id) ? "Selected, " : "") + time(row.start) + " to " + time(row.end))
 			.focused(keyboardFocus, equals: row.id.uuidString)
 			.accessibilityFocused(focus, equals: row.id.uuidString)
 		}
+	}
+
+	private func shiftRequest(_ timeline: DescriptionTimeline, ids: Set<UUID>, title: String) -> TimelineShiftRequest {
+		TimelineShiftRequest(title: title, transcripts: timeline == .transcript ? ids : [], descriptions: timeline == .audio ? ids : [])
 	}
 
 	private var duckingButton: some View {

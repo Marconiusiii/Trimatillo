@@ -21,6 +21,7 @@ struct GeneratorEditorView: View {
 	@State private var definition: GeneratorDefinition
 	@State private var placement = GeneratorPlacement.append
 	@State private var trackName = ""
+	@State private var shiftOtherTracks = false
 	@State private var error: String?
 	@FocusState private var typing: Bool
 	@AccessibilityFocusState private var previewFocused: Bool
@@ -67,6 +68,7 @@ struct GeneratorEditorView: View {
 				}
 				if !editing {
 					Picker("Placement", selection: $placement) { ForEach(GeneratorPlacement.allCases, id: \.self) { Text($0.rawValue).tag($0) } }
+					Toggle("Shift Other Tracks", isOn: $shiftOtherTracks)
 					if placement == .newTrack { TextField("", text: $trackName).focused($typing).editorFieldLabel("Track Name") }
 				}
 				Button("Preview") {
@@ -164,7 +166,12 @@ struct GeneratorEditorView: View {
 		let start = placement == .append ? next.clips(on: track).last?.end ?? .zero : request.time
 		let mode: PlacementMode = placement == .insert ? .split : placement == .overwrite ? .overwrite : .append
 		try next.place(source, ranges: [CMTimeRange(start: .zero, duration: source.duration.time)], at: start, on: track, mode: mode)
-		return (next, start)
+		let placedStart = next.placements.first { $0.sourceID == sourceID }?.start.time ?? start
+		if shiftOtherTracks {
+			let shift = project.shiftOtherTracksRequest(excluding: track, from: placedStart)
+			try next.shift(shift, by: source.duration.seconds)
+		}
+		return (next, placedStart)
 	}
 }
 
@@ -240,19 +247,20 @@ struct GeneratorProjectPreview: View {
 struct ClipCompositingSheet: View {
 	let project: EditingProject
 	let clip: ProjectPlacement
+	let selectedIDs: Set<UUID>?
 	let save: (EditingProject, String) throws -> Void
 	@Environment(\.dismiss) private var dismiss
 	@State private var settings: ClipCompositing
 	@State private var preview = false
 	@AccessibilityFocusState private var previewFocused: Bool
 	@State private var error: String?
-	init(project: EditingProject, clip: ProjectPlacement, save: @escaping (EditingProject, String) throws -> Void) {
-		self.project = project; self.clip = clip; self.save = save
+	init(project: EditingProject, clip: ProjectPlacement, selectedIDs: Set<UUID>? = nil, save: @escaping (EditingProject, String) throws -> Void) {
+		self.project = project; self.clip = clip; self.selectedIDs = selectedIDs; self.save = save
 		_settings = State(initialValue: clip.compositing ?? ClipCompositing())
 	}
 	private var draft: EditingProject {
 		var next = project
-		if let index = next.placements.firstIndex(where: { $0.id == clip.id }) { next.placements[index].compositing = settings }
+		for index in next.placements.indices where (selectedIDs ?? [clip.id]).contains(next.placements[index].id) { next.placements[index].compositing = settings }
 		return next
 	}
 	var body: some View {

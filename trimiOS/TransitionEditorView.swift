@@ -9,6 +9,7 @@ struct ProjectTransitionRequest: Identifiable {
 	let incoming: UUID?
 	let quickFade: Bool
 	let returnTime: CMTime
+	var clips: Set<UUID>? = nil
 	var between: Bool { outgoing != nil && incoming != nil }
 }
 
@@ -79,6 +80,12 @@ struct TransitionEditorView: View {
 				includeAudio: includeAudio, equalPower: equalPower, ease: ease)
 		}
 		if request.quickFade {
+			if let clips = request.clips {
+				return clips.flatMap { id in
+					(fadeIn ? [ProjectTransition(trackID: request.track.id, incoming: id, edge: .intro, style: .fade, seconds: inSeconds, includeAudio: includeAudio, equalPower: equalPower, ease: ease)] : []) +
+					(fadeOut ? [ProjectTransition(trackID: request.track.id, outgoing: id, edge: .outro, style: .fade, seconds: outSeconds, includeAudio: includeAudio, equalPower: equalPower, ease: ease)] : [])
+				}
+			}
 			return (fadeIn ? [effect(.intro, seconds: inSeconds)] : []) + (fadeOut ? [effect(.outro, seconds: outSeconds)] : [])
 		}
 		return [effect(edge, seconds: seconds)]
@@ -86,6 +93,9 @@ struct TransitionEditorView: View {
 	private func manages(_ effect: ProjectTransition) -> Bool {
 		guard effect.trackID == request.track.id else { return false }
 		if request.quickFade {
+			if let clips = request.clips {
+				return effect.edge == .intro && effect.incoming.map(clips.contains) == true || effect.edge == .outro && effect.outgoing.map(clips.contains) == true
+			}
 			return effect.edge == .intro && effect.incoming == (request.incoming ?? request.clip) ||
 				effect.edge == .outro && effect.outgoing == (request.outgoing ?? request.clip)
 		}

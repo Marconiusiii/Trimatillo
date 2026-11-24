@@ -108,7 +108,8 @@ private enum HelpTopic: String, CaseIterable {
 				"On a video track, choose Text, Black, Solid Color, or Gradient. On an audio track, create Silence. Duration in Seconds starts at five seconds, or uses the marked range when valid In and Out points are set.",
 				"For text, choose a preset and enter Text. Title and Subheading adds a second line; Name and Role adds a role below the name. Subtitle creates a text clip that appears over the video.",
 				"Open Typography to change font, bold, Font Size in points, or line spacing. Layout controls text position, safe margin, and width.",
-				"Choose Append, Insert at Playhead, Overwrite at Playhead, or New Track at Playhead. Enter a track name when creating a new track. Choose Preview to play the result in the project before adding it."
+				"Choose Append, Insert at Playhead, Overwrite at Playhead, or New Track at Playhead. Enter a track name when creating a new track. Choose Preview to play the result in the project before adding it.",
+				"Enable Shift Other Tracks to move later clips, captions, and descriptions on other tracks by the generator's duration. Entries beginning before the placement time stay where they are. Leave it off to change only the destination track and its linked audio."
 			]), HelpSection("Set generator colors", numbered: true, [
 				"Choose a preset color, or enable Custom Color and enter Red, Green, and Blue values from 0 to 255."
 			]), HelpSection("Edit a generated clip", numbered: true, [
@@ -194,7 +195,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Play Take to hear the original recording. Speed Up to Fit trims silence from the end of the take. Your voice plays at its recorded speed if it fits before Out. Longer narration speeds up and keeps its pitch. Choose Trim at Out to play the original take up to Out. Play with Primary Audio previews the result against the passage.",
 				"To resume a recorded draft, mark the passage, open Audio Description, and choose Recover Take."
 			]), HelpSection("Review and export", numbered: true, [
-				"Use Timeline Chooser to switch between Descriptive Transcript and Audio Description at the current playhead.",
+				"Use Timeline Chooser to switch between Descriptive Transcript and Audio Description at the current playhead. Projects open with Audio Description selected when recordings exist, or Descriptive Transcript when only written entries exist.",
+				"For a group, use Select Clip in each entry's accessibility actions or menu, then choose Shift Clips on a selected entry. To shift the whole timeline, choose Shift Track from its heading. Choose Earlier or Later and enter Seconds. Recording lengths and spacing stay the same; Undo reverses the shift.",
 				"Open an entry's accessibility actions or menu to go to its start, edit, or delete it. Return edits a focused entry with a keyboard. Mark a new range and choose Use Marked Range while editing to change its timing. Undo restores a deleted entry.",
 				"A transcript spans the marked range. A shorter recording ends when the take ends. Entries on the two timelines can be changed independently.",
 				"On the Audio Description timeline, choose Audio Ducking to lower project audio during descriptions. Set how much to lower the audio and how gradually it fades. Project playback and movie export use the same mix.",
@@ -288,8 +290,8 @@ private enum HelpTopic: String, CaseIterable {
 				"On the project timeline, Space or K plays or pauses, including when a clip is focused. K also stops rewind or fast forward. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
 				"I and O mark In and Out at the current playhead without stopping playback. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
 				"Command-Option-Up and Command-Option-Down select a track. C opens its clip at or after the playhead. Return opens the focused clip. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",
-				"S marks or unmarks a clip. With a clip focused, Shift-S starts a drag or adds the clip to the current drag. Use Left or Right Arrow to choose a destination and Command-Option-V to drop. Escape cancels. Without a selected destination, Command-Option-V drops after the focused clip.",
-				"Command-Option-Left and Command-Option-Right move a clip or marked group earlier or later. Delete removes the selected clips. Command-Z undoes and Command-Shift-Z redoes."
+				"S selects or deselects a clip. With a clip focused, Shift-S starts a drag or adds the clip to the current drag. Use Left or Right Arrow to choose a destination and Command-Option-V to drop. Escape cancels. Without a selected destination, Command-Option-V drops after the focused clip.",
+				"Command-Option-Left and Command-Option-Right move a clip or selected group earlier or later. Delete removes the selected clips. Command-Z undoes and Command-Shift-Z redoes."
 			]), HelpSection("Create a project", numbered: true, [
 				"Choose Create Project and enter a name.",
 				"Choose Same as Media to use the size and frame rate of the first video you place on the timeline. To set your own, choose a resolution and enter a frame rate.",
@@ -353,14 +355,21 @@ private enum HelpTopic: String, CaseIterable {
 				"For a video cutaway, choose New Track. Turn off Include Clip Audio to keep the underlying sound."
 			]), HelpSection("Track actions and clip movement", numbered: true, [
 				"Choose a track with Timeline Chooser. Open its heading for Track Actions, including Track Effects and the Magnetic setting.",
+				"Choose Shift Track from the track heading's accessibility actions or menu to move all its clips by a set amount. For a group, select the clips and choose Shift Clips on a selected clip. Choose Earlier or Later and enter Seconds. Linked video and audio move together, spacing stays the same, and Undo reverses the whole shift.",
 				"The primary tracks start with Magnetic on. Removing or trimming a clip shifts later clips on its track. New tracks use absolute placement. Turn Magnetic off to keep neighboring clips at their project times. Turning it on asks for confirmation when clips need to move together.",
 				"Choose Move to Playhead on a clip to place its start at the playhead. On a magnetic track, a move into another clip splits it and preserves the rest. A move beyond the last clip appends it.",
 				"Choose Remove from Track to remove one placement and keep its source in Project Media. To remove the source and every placement made from it, choose Delete from Project in the clip accessibility actions or menu, then confirm. Undo restores the source and its timeline clips together.",
 				"Choose Move to Time, enter Start Time or Start Frame, then choose Move. Absolute placement needs open time for the clip. To leave a gap on a populated magnetic track, turn Magnetic off first.",
 				"Choose Move to New Track, enter Track Name, and choose Move to keep the clip at its current time on a new track. Moving linked audio moves its video with it.",
-				"On a clip, choose Mark for Editing to include it in a group. Choose Start Drag on a marked clip to pick up the group. Choose Add to Drag on another compatible clip to include it.",
+				"On a clip, choose Select Clip to include it in a group. Choose Start Drag on a selected clip to pick up the group. Choose Add to Drag on another compatible clip to include it.",
 				"Choose the destination track with Timeline Chooser. On the destination clip, choose Drop Before or Drop After followed by the destination clip name. On an empty compatible track, choose Drop on Track. After a drop, choose Undo or shake the device to restore the previous order. A group move takes one undo.",
 				"You can also drag a clip onto the leading or trailing half of another clip to place it before or after that clip."
+			]), HelpSection("Edit selected clips", numbered: true, [
+				"Choose Select Clip in each clip's accessibility actions or menu. Selected clips form a group on that track. Choose Deselect Clip to remove a clip from the group.",
+				"Choose Shift Clip to move one clip, or Shift Clips on a selected clip to move the group. Choose Earlier or Later, enter Seconds, then choose Shift.",
+				"Choose Open Clips Cutting Board on a selected clip. The selected clips play consecutively for editing. Use the Cutting Board playback commands, markers, trimming, and Direct Touch gestures to edit the group. Command-U saves the changes.",
+				"Choose Quick Fade or Compositing from Effects to apply settings to the selected clips. Save Changes applies your edits to the project. Linked audio follows the video, and a magnetic track moves later clips to close the removed time.",
+				"Choose Remove Clips from Track on a selected clip to remove the group. Undo restores the group together."
 			]), Self.projectExport, HelpSection("Reopen and reconnect", numbered: true, [
 				"Choose My Projects on the main screen, then the project name. Trimatillo saves each project change as you work.",
 				"If a saved project cannot be read, restore its project file from backup. Choose another project in My Projects to keep editing.",

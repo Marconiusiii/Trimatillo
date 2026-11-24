@@ -570,7 +570,7 @@ private struct JoinSheet: View {
 	}
 }
 
-private struct EditPointButton: UIViewRepresentable {
+struct EditPointButton: UIViewRepresentable {
 	let name: String
 	let value: String
 	let longestValue: String
