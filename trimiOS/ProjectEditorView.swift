@@ -90,6 +90,7 @@ struct ProjectEditorView: View {
 	@State private var captionEntry: CaptionEntry?
 	@State private var captionTrigger = "newCaption"
 	@State private var captionCreated = false
+	@State private var selectedEntries: Set<UUID> = []
 	@State private var activeTrack = TimelineTrack.primaryVideo.id
 	@State private var marked: Set<UUID> = []
 	@State private var dropAnchor: UUID?
@@ -474,6 +475,7 @@ struct ProjectEditorView: View {
 
 	@ViewBuilder private var projectRows: some View {
 		transport
+		if editorTimeline.mediaTrack != nil {
 		EditorCommandRow {
 			Button("Add Generator") { openGenerator() }.accessibilityFocused($focus, equals: "generator")
 			Menu { EditorMenuAction.buttons(mainTransitionActions) } label: { Text("Transitions") }
@@ -483,6 +485,7 @@ struct ProjectEditorView: View {
 		}
 		.buttonStyle(EditorButtonStyle())
 		.fixedSize(horizontal: false, vertical: true)
+		}
 		DisclosureGroup("Project Media", isExpanded: $expanded) {
 			sourcePicker("Import Clip", source: nil)
 			ForEach(project.sources) { source in
@@ -505,12 +508,100 @@ struct ProjectEditorView: View {
 			withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { activeTrack = track }
 			keyboardClip = nil
 			playback.playhead.navigationLabel = nil
-		}), options: project.tracks, title: \.title)
-		trackSection(selectedTrack)
-			.id(selectedTrack.id)
+		}), options: project.editorTimelines, title: \.title)
+		Group {
+			if let track = editorTimeline.mediaTrack { trackSection(track) }
+			else { editorEntrySection }
+		}
+			.id(editorTimeline.id)
 			.transition(.opacity)
 
 		if let seconds = project.targetSeconds { LabeledContent("Project Duration", value: time(CMTime(seconds: seconds, preferredTimescale: 60000))) }
+	}
+
+	private func entrySelection(_ id: UUID) -> Set<UUID> {
+		selectedEntries.contains(id) ? selectedEntries.intersection(project.editorRows(editorTimeline).map(\.id)) : [id]
+	}
+	private func selectEntry(_ id: UUID) {
+		if selectedEntries.contains(id) { selectedEntries.remove(id) } else { selectedEntries.insert(id) }
+	}
+	private func entryShift(_ ids: Set<UUID>, title: String) -> TimelineShiftRequest {
+		switch editorTimeline {
+		case .captions: TimelineShiftRequest(title: title, captions: ids)
+		case .descriptions(.audio): TimelineShiftRequest(title: title, descriptions: ids)
+		case .descriptions(.transcript): TimelineShiftRequest(title: title, transcripts: ids)
+		case .media: TimelineShiftRequest(title: title, clips: ids)
+		}
+	}
+	private func editEntry(_ row: DescriptionRow) {
+		switch editorTimeline {
+		case .captions:
+			if let cue = project.captions?.first(where: { $0.id == row.id }) { openCaption(cue) }
+		case .descriptions(let type): descriptionTimeline = type; openDescription(row.id)
+		case .media: break
+		}
+	}
+	private func deleteEntries(_ ids: Set<UUID>) {
+		var next = project
+		let action: String
+		switch editorTimeline {
+		case .captions:
+			next.captions?.removeAll { ids.contains($0.id) }
+			action = ids.count == 1 ? "Delete Caption" : "Delete Captions"
+		case .descriptions(.audio):
+			next.audioDescriptions?.removeAll { ids.contains($0.id) }
+			action = ids.count == 1 ? "Delete Audio Description" : "Delete Audio Descriptions"
+		case .descriptions(.transcript):
+			next.descriptiveTranscript?.removeAll { ids.contains($0.id) }
+			action = ids.count == 1 ? "Delete Descriptive Transcript" : "Delete Descriptive Transcripts"
+		case .media: return
+		}
+		commit(next, action: action)
+	}
+	private func entryActions(_ row: DescriptionRow) -> [EditorMenuAction] {
+		let ids = entrySelection(row.id)
+		let shiftTitle = ids.count == 1 ? "Shift Clip" : "Shift Clips"
+		let editTitle = editorTimeline == .captions ? "Edit Caption" : "Edit " + editorTimeline.title
+		let deleteTitle = editorTimeline == .captions ? (ids.count == 1 ? "Delete Caption" : "Delete Captions") : (ids.count == 1 ? "Delete Description" : "Delete Descriptions")
+		return [
+			EditorMenuAction("Go to Start") { playback.seek(row.start) },
+			EditorMenuAction("Go to End") { playback.seek(row.end) },
+			EditorMenuAction(editTitle) { editEntry(row) },
+			EditorMenuAction(selectedEntries.contains(row.id) ? "Deselect Clip" : "Select Clip") { selectEntry(row.id) },
+			EditorMenuAction(shiftTitle) { openShift(entryShift(ids, title: shiftTitle), trigger: row.id.uuidString) },
+			EditorMenuAction(deleteTitle) { deleteEntries(ids) }
+		]
+	}
+	private var editorEntrySection: some View {
+		Section {
+			let rows = project.editorRows(editorTimeline)
+			if rows.isEmpty { Text("No entries").editorTouchRow(alignment: .leading) }
+			ForEach(rows) { row in
+				let actions = entryActions(row)
+				Menu { EditorMenuAction.buttons(actions) } label: {
+					VStack(alignment: .leading) {
+						Text(row.name)
+						Text(time(row.start) + " to " + time(row.end)).font(.subheadline)
+					}.editorTouchRow(alignment: .leading)
+				}
+				.contextMenu { EditorMenuAction.buttons(actions) }
+				.editorMenuActions(row.name, actions)
+				.accessibilityValue((selectedEntries.contains(row.id) ? "Selected, " : "") + time(row.start) + " to " + time(row.end))
+				.focused($keyboardClip, equals: row.id.uuidString)
+				.accessibilityFocused($focus, equals: row.id.uuidString)
+			}
+		} header: {
+			let actions = [EditorMenuAction("Shift Track") {
+				openShift(entryShift(Set(project.editorRows(editorTimeline).map(\.id)), title: "Shift Track"), trigger: editorTimeline.id)
+			}]
+			Menu { EditorMenuAction.buttons(actions) } label: {
+				Text(editorTimeline.title).editorTouchRow(alignment: .leading)
+			}
+			.editorMenuActions(editorTimeline.title, actions)
+			.contextMenu { EditorMenuAction.buttons(actions) }
+			.accessibilityAddTraits(.isHeader)
+			.accessibilityFocused($focus, equals: editorTimeline.id)
+		}
 	}
 
 	private func trackSection(_ track: TimelineTrack) -> some View {
@@ -551,7 +642,7 @@ struct ProjectEditorView: View {
 
 	private var timelinePoints: [CMTime] {
 		switch tool {
-		case .editor: return project.editPoints(on: selectedTrack)
+		case .editor: return project.editorPoints(editorTimeline)
 		case .voicer: return project.editPoints(for: project.voiceClips)
 		case .mixer:
 			if mixerTrack == EditingProject.descriptionMixID {
@@ -648,12 +739,19 @@ struct ProjectEditorView: View {
 		}
 	}
 
+	private var editorTimeline: EditorTimeline {
+		project.editorTimelines.first { $0.id == activeTrack } ?? .media(.primaryVideo)
+	}
+
 	private var selectedTrack: TimelineTrack {
 		project.tracks.first { $0.id == activeTrack } ?? .primaryVideo
 	}
 
 	private var directSurface: ProjectTouchSurface {
-		let edit: (() -> Void)? = tool == .describer ? { descriptionTap() } : nil
+		let edit: (() -> Void)? = tool == .describer ? { descriptionTap() } : tool == .editor ? {
+			let rows = project.editorRows(editorTimeline)
+			if let row = rows.first(where: { $0.start == playback.position }) ?? rows.first(where: { $0.end == playback.position }) { editEntry(row) }
+		} : nil
 		return ProjectTouchSurface(playhead: playback.playhead, playback: playback, formatTime: time, transitions: tool == .editor ? { openTransition(quick: false) } : nil, duration: project.duration,
 					captioning: tool == .captioner, editDescription: edit, trackName: touchTrackName, mode: scrubMode, close: { directTouch = false }, swipe: projectSwipe)
 	}
@@ -723,8 +821,8 @@ struct ProjectEditorView: View {
 		case (2, .up) where tool == .captioner:
 			break
 		case (2, .up), (2, .down):
-			let tracks = project.tracks
-			guard let index = tracks.firstIndex(of: selectedTrack) else { return }
+			let tracks = project.editorTimelines
+			guard let index = tracks.firstIndex(of: editorTimeline) else { return }
 			let next = index + (down ? 1 : -1)
 			guard tracks.indices.contains(next) else { return }
 			activeTrack = tracks[next].id
@@ -755,7 +853,9 @@ struct ProjectEditorView: View {
 
 
 	private func transitionTarget(quick: Bool, track: TimelineTrack?, clip: ProjectPlacement?) throws -> ProjectTransitionRequest {
-		let track = track ?? selectedTrack
+		guard let track = track ?? editorTimeline.mediaTrack else {
+			throw ProjectFailure("Choose a video or audio track in Timeline Chooser to add a transition.")
+		}
 		let clips = project.displayedClips(on: track)
 		let time = playback.position
 		let incoming = clips.first { abs(($0.start.time - time).seconds) < project.frame.seconds / 2 }
@@ -832,9 +932,7 @@ struct ProjectEditorView: View {
 		.accessibilityActions {
 			Button(direction + " 10 Frames") { step(count * 10) }
 			Button(editPointTitle(forward: forward)) {
-				if let track = project.tracks.first(where: { $0.id == activeTrack }) {
-					navigate(forward: forward, track: track)
-				}
+				navigate(forward: forward, track: selectedTrack)
 			}
 		}
 	}
@@ -842,6 +940,7 @@ struct ProjectEditorView: View {
 	private func navigate(forward: Bool, track: TimelineTrack) {
 		let point: (time: CMTime, name: String)
 		switch tool {
+		case .editor: point = project.editorPoint(editorTimeline, from: playback.position, forward: forward)
 		case .captioner: point = project.captionPoint(from: playback.position, forward: forward)
 		case .describer: point = project.descriptionPoint(descriptionTimeline, from: playback.position, forward: forward)
 		case .mixer where mixerTrack == EditingProject.descriptionMixID:
@@ -1141,9 +1240,12 @@ struct ProjectEditorView: View {
 	}
 
 	private func openGenerator(track: TimelineTrack? = nil, source: ProjectMediaSource? = nil, clip: ProjectPlacement? = nil, rowID: String = "generator") {
+		guard let destination = track ?? editorTimeline.mediaTrack else {
+			error = "Choose a video or audio track in Timeline Chooser to add a generator."; return
+		}
 		playback.releaseAudio()
 		trigger = rowID
-		generatorRequest = GeneratorRequest(track: track ?? selectedTrack, time: playback.position, source: source, clip: clip)
+		generatorRequest = GeneratorRequest(track: destination, time: playback.position, source: source, clip: clip)
 	}
 
 	private func openSelectedBoard(_ clip: ProjectPlacement, source: ProjectMediaSource, track: TimelineTrack?, rowID: String?) {
@@ -1310,9 +1412,10 @@ struct ProjectEditorView: View {
 		if playback.playhead.navigationLabel != nil { playback.playhead.navigationLabel = nil }
 		project = next
 		let valid = Set(next.placements.map(\.id))
+		selectedEntries.formIntersection(next.editorTimelines.flatMap { next.editorRows($0).map(\.id) })
 		marked.formIntersection(valid)
 		dragging.formIntersection(valid)
-		if !next.tracks.contains(where: { $0.id == activeTrack }) { activeTrack = TimelineTrack.primaryVideo.id }
+		if !next.editorTimelines.contains(where: { $0.id == activeTrack }) { activeTrack = TimelineTrack.primaryVideo.id }
 		if rebuild {
 			if voiceInsertion != nil { placementNeedsRebuild = true }
 			else if descriptionEntry != nil { descriptionNeedsRebuild = true }
@@ -1323,7 +1426,7 @@ struct ProjectEditorView: View {
 
 	private var touchTrackName: String {
 		switch tool {
-		case .editor: selectedTrack.title
+		case .editor: editorTimeline.title
 		case .captioner, .voicer, .mixer: tool.rawValue
 		case .describer: descriptionTimeline.rawValue
 		}
@@ -1518,9 +1621,39 @@ struct ProjectEditorView: View {
 			}
 			return
 		}
+		if flags.contains([.command, .alternate]), key == UIKeyCommand.inputUpArrow || key == UIKeyCommand.inputDownArrow {
+			let tracks = project.editorTimelines
+			if let index = tracks.firstIndex(of: editorTimeline) {
+				let target = index + (key == UIKeyCommand.inputUpArrow ? -1 : 1)
+				if tracks.indices.contains(target) {
+					activeTrack = tracks[target].id; keyboardClip = nil
+					playback.playhead.navigationLabel = nil
+					UIAccessibility.post(notification: .announcement, argument: tracks[target].title)
+				}
+			}
+			return
+		}
+		if editorTimeline.mediaTrack == nil {
+			let rows = project.editorRows(editorTimeline)
+			let row = rows.first { $0.id.uuidString == (keyboardClip ?? focus) } ?? rows.first { $0.start <= playback.position && playback.position < $0.end }
+			switch key {
+			case "c", "\r": if let row { editEntry(row) }
+			case "s": if let row { selectEntry(row.id) }
+			case "\u{8}", UIKeyCommand.inputDelete: if let row { deleteEntries(entrySelection(row.id)) }
+			case ";", "'": navigate(forward: key == "'", track: selectedTrack)
+			case UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow:
+				let forward = key == UIKeyCommand.inputRightArrow
+				if flags.contains(.command) { navigate(forward: forward, track: selectedTrack) }
+				else { step((forward ? 1 : -1) * (flags.contains(.shift) ? 10 : 1)) }
+			case UIKeyCommand.inputHome, UIKeyCommand.inputUpArrow: keyboardBoundary(end: false)
+			case UIKeyCommand.inputEnd, UIKeyCommand.inputDownArrow: keyboardBoundary(end: true)
+			default: break
+			}
+			return
+		}
 		let focusedRow = keyboardClip ?? focus
 		let focusedID = focusedRow?.split(separator: "/").last.flatMap { UUID(uuidString: String($0)) }
-		let focusedClip = project.placements.first { $0.id == focusedID }
+		let focusedClip = project.displayedClips(on: selectedTrack).first { $0.id == focusedID }
 		var trackID = focusedClip?.trackID ?? activeTrack
 		if focusedRow?.hasPrefix("linked/") == true, let partner = project.audioPartner(for: trackID) { trackID = partner.id }
 		guard let track = project.tracks.first(where: { $0.id == trackID }) else { return }

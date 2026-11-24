@@ -254,13 +254,14 @@ private enum HelpTopic: String, CaseIterable {
 				"Double-tap and hold the second tap, then drag to scrub with project audio. Absolute scrubbing maps the full project across the surface. Relative scrubbing starts at the current playhead and spans up to ten seconds across the surface. Lift to leave the playhead there.",
 				"Swipe down to mark In at the playhead. Repeat there to remove it.",
 				"Swipe up to mark Out at the playhead. Repeat there to remove it.",
+				"Double-tap at a caption or description boundary to open that entry for editing.",
 				"Triple-tap to close Direct Touch and return to the Editor."
 			]), HelpSection("Two fingers", [
 				"Double-tap to play or pause. With VoiceOver, use Magic Tap.",
 				"Swipe right to play forward. Repeat to increase speed through 1x, 1.5x, 2x, 4x, and 8x.",
 				"Swipe left to rewind. Repeat to increase rewind speed through the same five speeds.",
-				"Swipe up to select the track above and load its edit points.",
-				"Swipe down to select the track below and load its edit points. From Primary Video, one swipe down selects Primary Audio Track."
+				"Swipe up to select the previous project timeline and load its edit points.",
+				"Swipe down to select the next project timeline and load its edit points. This includes video and audio tracks, Voice Over tracks, Captions, Audio Description, and Descriptive Transcript."
 			]), HelpSection("Three fingers", [
 				"Tap once to hear the current playhead position.",
 				"Swipe right to snap to the next edit point on the selected track.",
@@ -354,7 +355,9 @@ private enum HelpTopic: String, CaseIterable {
 				"When a named video track first receives a clip with audio included, its linked audio track appears. The sound follows the video through edits. Adjust its volume in Track Effects.",
 				"For a video cutaway, choose New Track. Turn off Include Clip Audio to keep the underlying sound."
 			]), HelpSection("Track actions and clip movement", numbered: true, [
-				"Choose a track with Timeline Chooser. Open its heading for Track Actions, including Track Effects and the Magnetic setting.",
+				"In Editor, use Timeline Chooser to browse video and audio tracks, Voice Over tracks, Captions, Audio Description, and Descriptive Transcript. The selected timeline shows its clips or entries and their edit points. Open a media track heading for Track Actions, including Track Effects and Magnetic.",
+				"Use Previous Edit Point and Next Edit Point to move between boundaries in the selected timeline. Caption and description boundaries identify their entries. Choose Go to Start or Go to End in an entry's accessibility actions or menu to move directly to it.",
+				"Open caption and description entries from Editor to edit, select, shift, or delete them. Their specialized tabs also provide recording and creation tools. In Editor, Command-Option-Up Arrow and Command-Option-Down Arrow change timelines. Return opens the focused entry for editing.",
 				"Choose Shift Track from the track heading's accessibility actions or menu to move all its clips by a set amount. For a group, select the clips and choose Shift Clips on a selected clip. Choose Earlier or Later and enter Seconds. Linked video and audio move together, spacing stays the same, and Undo reverses the whole shift.",
 				"The primary tracks start with Magnetic on. Removing or trimming a clip shifts later clips on its track. New tracks use absolute placement. Turn Magnetic off to keep neighboring clips at their project times. Turning it on asks for confirmation when clips need to move together.",
 				"Choose Move to Playhead on a clip to place its start at the playhead. On a magnetic track, a move into another clip splits it and preserves the rest. A move beyond the last clip appends it.",
