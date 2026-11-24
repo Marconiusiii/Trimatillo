@@ -90,7 +90,6 @@ struct ProjectEditorView: View {
 	@State private var captionEntry: CaptionEntry?
 	@State private var captionTrigger = "newCaption"
 	@State private var captionCreated = false
-	@State private var chooserConfirmation: String?
 	@State private var selectedEntries: Set<UUID> = []
 	@State private var activeTrack = TimelineTrack.primaryVideo.id
 	@State private var marked: Set<UUID> = []
@@ -166,7 +165,6 @@ struct ProjectEditorView: View {
 		}
 		.onChange(of: activeTrack) {
 			dropAnchor = nil
-			if chooserConfirmation != activeTrack { chooserConfirmation = nil }
 		}
 		.onChange(of: soloTracks) { playback.updateMix(project, solo: soloTracks) }
 		.onChange(of: playback.ready) { if playback.ready { playback.updateMix(project, solo: soloTracks) } }
@@ -503,18 +501,10 @@ struct ProjectEditorView: View {
 			activeTrack = track
 			keyboardClip = nil
 			playback.playhead.navigationLabel = nil
-			chooserConfirmation = track
 		}), options: project.editorTimelines, title: \.title)
 			.id("editor-timeline-chooser")
 			.transaction { $0.animation = nil }
-			.task(id: chooserConfirmation) {
-				guard let chosen = chooserConfirmation else { return }
-				do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
-				guard activeTrack == chosen, UIAccessibility.isVoiceOverRunning else { return }
-				// The native wheel speaks its selected title. Confirm the resulting content separately.
-				let count = editorTimeline.mediaTrack.map { project.displayedClips(on: $0).count } ?? project.editorRows(editorTimeline).count
-				UIAccessibility.post(notification: .announcement, argument: count == 0 ? "No clips" : count == 1 ? "1 clip" : "\(count) clips")
-			}
+
 		VStack(spacing: 0) {
 		if editorTimeline.mediaTrack != nil {
 		EditorCommandRow {
