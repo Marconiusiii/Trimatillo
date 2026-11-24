@@ -10,6 +10,7 @@ struct ProjectTransitionRequest: Identifiable {
 	let quickFade: Bool
 	let returnTime: CMTime
 	var clips: Set<UUID>? = nil
+	var existingID: UUID? = nil
 	var between: Bool { outgoing != nil && incoming != nil }
 }
 
@@ -50,19 +51,20 @@ struct TransitionEditorView: View {
 		self.formatTime = formatTime
 		self.save = save
 		let effects = project.transitions ?? []
+		let selected = effects.first { $0.id == request.existingID }
 		let existing = effects.first { $0.trackID == request.track.id && $0.edge == .between && $0.outgoing == request.outgoing && $0.incoming == request.incoming }
 		let intro = effects.first { $0.trackID == request.track.id && $0.edge == .intro && $0.incoming == (request.incoming ?? request.clip) }
 		let outro = effects.first { $0.trackID == request.track.id && $0.edge == .outro && $0.outgoing == (request.outgoing ?? request.clip) }
-		_style = State(initialValue: existing?.style ?? .crossDissolve)
-		_edge = State(initialValue: request.between ? .between : .intro)
-		_seconds = State(initialValue: existing?.seconds ?? Self.lastDuration(audio: request.track.kind == .audio))
+		_style = State(initialValue: selected?.style ?? existing?.style ?? .crossDissolve)
+		_edge = State(initialValue: selected?.edge ?? (request.between ? .between : .intro))
+		_seconds = State(initialValue: selected?.seconds ?? existing?.seconds ?? Self.lastDuration(audio: request.track.kind == .audio))
 		_fadeIn = State(initialValue: intro != nil || outro == nil)
 		_fadeOut = State(initialValue: outro != nil || intro == nil)
 		_inSeconds = State(initialValue: intro?.seconds ?? 1)
 		_outSeconds = State(initialValue: outro?.seconds ?? 1)
-		_includeAudio = State(initialValue: existing?.includeAudio ?? true)
-		_equalPower = State(initialValue: existing?.equalPower ?? false)
-		_ease = State(initialValue: existing?.ease ?? .linear)
+		_includeAudio = State(initialValue: selected?.includeAudio ?? existing?.includeAudio ?? true)
+		_equalPower = State(initialValue: selected?.equalPower ?? existing?.equalPower ?? false)
+		_ease = State(initialValue: selected?.ease ?? existing?.ease ?? .linear)
 	}
 	static func lastDuration(audio: Bool, style: TransitionStyle = .crossDissolve) -> Double {
 		let value = EditorPreferences.shared.double(forKey: (audio ? "audioTransitionDuration." : "videoTransitionDuration.") + style.rawValue)
@@ -91,6 +93,7 @@ struct TransitionEditorView: View {
 		return [effect(edge, seconds: seconds)]
 	}
 	private func manages(_ effect: ProjectTransition) -> Bool {
+		if let id = request.existingID { return effect.id == id }
 		guard effect.trackID == request.track.id else { return false }
 		if request.quickFade {
 			if let clips = request.clips {
@@ -110,7 +113,7 @@ struct TransitionEditorView: View {
 		let old = project.transitions ?? []
 		let additions = edits.map { edit in
 			var copy = edit
-			copy.id = old.first { $0.trackID == edit.trackID && $0.edge == edit.edge && $0.outgoing == edit.outgoing && $0.incoming == edit.incoming }?.id ?? UUID()
+			copy.id = request.existingID ?? old.first { $0.trackID == edit.trackID && $0.edge == edit.edge && $0.outgoing == edit.outgoing && $0.incoming == edit.incoming }?.id ?? UUID()
 			return copy
 		}
 		next.transitions = old.filter { !manages($0) } + additions

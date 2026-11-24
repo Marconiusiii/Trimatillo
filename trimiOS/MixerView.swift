@@ -22,6 +22,7 @@ struct MixerView: View {
 	var body: some View {
 		Toggle("Loop", isOn: Binding(get: { playback.mixerLoop != nil }, set: { playback.setMixerLoop($0 ? project.captionRange : nil) }))
 			.disabled(project.captionRange == nil)
+			.frame(minHeight: 48)
 		Group {
 			if textSize.isAccessibilitySize {
 				stackedTrackControls
@@ -35,7 +36,6 @@ struct MixerView: View {
 				}
 			}
 		}
-		.listRowInsets(EdgeInsets())
 		Section {
 			MixerSlider(title: "Volume", level: project.trackVolumes?[channel.id] ?? 1) { level, commit in
 				var next = project
@@ -53,6 +53,7 @@ struct MixerView: View {
 				ForEach(TrackChannelRouting.allCases) { route in Text(route.title).tag(route) }
 			}
 			.pickerStyle(.menu)
+			.frame(minHeight: 48)
 			Button("Reset Track Mix") {
 				var next = project
 				next.trackStereo?.removeValue(forKey: channel.id)
@@ -67,7 +68,7 @@ struct MixerView: View {
 				.contentTransition(.opacity)
 		}
 		.id(channel.id)
-		.listRowInsets(EdgeInsets(top: 0, leading: 12, bottom: 0, trailing: 12))
+		.padding(.horizontal, 12)
 		Section {
 			MixerSlider(title: "Master Volume", level: project.masterVolume ?? 1) { level, commit in
 				var next = project

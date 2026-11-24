@@ -104,7 +104,7 @@ private enum HelpTopic: String, CaseIterable {
 		switch self {
 		case .generators:
 			[HelpSection("Create a clip", numbered: true, [
-				"Choose the destination track with Timeline Chooser. In Project Direct Touch, swipe right with four fingers to open Add Generator. In Editor, use the track's Add Generator accessibility action, press G, or choose Add Generator.",
+				"Choose the destination track with Timeline Chooser. In Project Direct Touch, swipe right with four fingers to open Add Generator. In Editor, use the track's Add Generator accessibility action, press G, or choose Generators.",
 				"On a video track, choose Text, Black, Solid Color, or Gradient. On an audio track, create Silence. Duration in Seconds starts at five seconds, or uses the marked range when valid In and Out points are set.",
 				"For text, choose a preset and enter Text. Title and Subheading adds a second line; Name and Role adds a role below the name. Subtitle creates a text clip that appears over the video.",
 				"Open Typography to change font, bold, Font Size in points, or line spacing. Layout controls text position, safe margin, and width.",
@@ -317,7 +317,7 @@ private enum HelpTopic: String, CaseIterable {
 				"During playback, turn Bypass Effects on to hear the original levels and off to hear the effects. Adjust Volume to change the level of the whole track.",
 				"Track effects apply to existing clips and clips added later. In Editor, choose Undo to reverse a saved effect change."
 			]), HelpSection("Add and preview transitions", numbered: true, [
-				"Move the playhead onto a clip or to the cut where two clips meet. Open the Transitions menu beside Add Generator to choose Transitions, Quick Fade, or Cross Dissolve or Cross Fade for the selected track. To work on a specific clip, use its accessibility actions or menu. The track heading also offers these commands.",
+				"Move the playhead onto a clip or to the cut where two clips meet. Open the Transitions menu beside Generators to choose Add Transition..., Quick Fade, or Cross Dissolve or Cross Fade for the selected track. To work on a specific clip, use its accessibility actions or menu. The track heading also offers these commands.",
 				"At a cut, choose a transition and its Duration in Seconds. Video choices include Cross Dissolve, Fade Out/Fade In through black, Fade Through White, directional wipes, slides, covers and reveals, circles, and Pixel Dissolve. Audio offers Cross Fade and Fade Out/Fade In.",
 				"Use Easing with a wipe, slide, cover, reveal, or circle to change its movement over time. Linear keeps a steady pace. Ease In slows toward the incoming picture, Ease Out accelerates away from the outgoing picture, and Easy Ease smooths both ends.",
 				"Turn on Crossfade Audio to include linked video sound. Choose Linear or Equal Power for the audio curve. Equal Power maintains more volume around the middle of a crossfade.",
@@ -327,6 +327,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Quick Fade to apply Fade In, Fade Out, or both, with separate durations. At a shared cut, Fade Out affects the outgoing clip and Fade In affects the incoming clip. From a selected clip's menu, both apply to that clip.",
 				"Cross transitions use extra source material on both sides of the cut. If there is too little available, shorten the transition or adjust the cut in the Cutting Board. The project duration stays the same.",
 				"Transitions follow their clips. Removing a clip, separating a joined pair, or shortening a clip beyond its transition removes the affected transition. Undo restores it.",
+				"Applied fades and transitions appear beside their clips. Fade In appears before a clip, Fade Out after it, and a transition between clips before the incoming clip. Open an entry to adjust it or choose Remove Transition and save. Transitions that include linked audio also appear on its audio track; either entry edits the same transition.",
 				"In Editor, press X for a quick crossfade, F for Quick Fade, or Command-Shift-T for Transitions. These commands use the playhead on the selected track. Commands in a clip's own menu apply to that clip."
 			]), HelpSection("Project playback and navigation", [
 				"Choose Direct Touch Editor to use gestures on the project. The Project Direct Touch Editor Help topic lists each gesture.",

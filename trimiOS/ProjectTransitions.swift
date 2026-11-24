@@ -160,3 +160,30 @@ extension EditingProject {
 		}
 	}
 }
+
+nonisolated enum ProjectTimelineItem: Identifiable {
+	case clip(ProjectPlacement)
+	case transition(ProjectTransition)
+	var id: String {
+		switch self {
+		case .clip(let clip): "clip/" + clip.id.uuidString
+		case .transition(let transition): "transition/" + transition.id.uuidString
+		}
+	}
+}
+
+extension EditingProject {
+	func timelineItems(on track: TimelineTrack) -> [ProjectTimelineItem] {
+		let clips = displayedClips(on: track)
+		let ids = Set(clips.map(\.id))
+		let effects = (transitions ?? []).filter { effect in
+			let references = [effect.incoming, effect.outgoing].compactMap { $0 }
+			return !references.isEmpty && references.allSatisfy(ids.contains) &&
+				(effect.trackID == track.id || (effect.includeAudio && audioPartner(for: effect.trackID)?.id == track.id))
+		}.sorted { $0.id.uuidString < $1.id.uuidString }
+		return clips.flatMap { clip in
+			effects.filter { $0.incoming == clip.id && $0.edge != .outro }.map(ProjectTimelineItem.transition) +
+			[.clip(clip)] + effects.filter { $0.outgoing == clip.id && $0.edge == .outro }.map(ProjectTimelineItem.transition)
+		}
+	}
+}

@@ -101,6 +101,7 @@ struct ProjectEditorView: View {
 	@State private var effects: TimelineTrack?
 	@State private var transitionRequest: ProjectTransitionRequest?
 	@State private var transitionChanged = false
+	@State private var transitionFallback: String?
 	@FocusState private var keyboardClip: String?
 	@State private var expanded = true
 	@State private var pickingFile = false
@@ -370,44 +371,45 @@ struct ProjectEditorView: View {
 				if hasVideo && wide {
 					preview.frame(width: geometry.size.width * 0.45)
 				}
-				List {
-					if hasVideo && !wide {
-						preview.frame(maxWidth: .infinity)
-							.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect) + 48)
-							.listRowInsets(EdgeInsets())
-					}
-					Group {
-						if tool == .editor { projectRows }
-						else if tool == .mixer {
-							transport
-							MixerView(project: project, selection: $mixerTrack, solo: $soloTracks, playback: playback, apply: applyMixerEdit)
+				ScrollView {
+					VStack(alignment: .leading, spacing: 0) {
+						if hasVideo && !wide {
+							preview.frame(maxWidth: .infinity)
+								.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect) + 48)
 						}
-						else if tool == .voicer {
-							transport
-							Button("Record Voice Over", action: openVoice)
-								.buttonStyle(EditorButtonStyle()).accessibilityFocused($focus, equals: "recordVoice")
-							ForEach(project.tracks.filter { $0.isVoiceOver == true }) { track in
-								Text(track.title).font(.headline).accessibilityAddTraits(.isHeader)
-								ForEach(project.clips(on: track)) { clip in
-									if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
-										clipButton(clip, source: source, track: track, count: 1)
+						Group {
+							if tool == .editor { projectRows }
+							else if tool == .mixer {
+								transport
+								MixerView(project: project, selection: $mixerTrack, solo: $soloTracks, playback: playback, apply: applyMixerEdit)
+							}
+							else if tool == .voicer {
+								transport
+								Button("Record Voice Over", action: openVoice)
+									.buttonStyle(EditorButtonStyle()).accessibilityFocused($focus, equals: "recordVoice")
+								ForEach(project.tracks.filter { $0.isVoiceOver == true }) { track in
+									Text(track.title).font(.headline).accessibilityAddTraits(.isHeader)
+									ForEach(project.clips(on: track)) { clip in
+										if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
+											clipButton(clip, source: source, track: track, count: 1)
+										}
 									}
 								}
 							}
-						}
-						else if tool == .describer {
-							transport
-							DescriberView(project: $project, timeline: $descriptionTimeline, focus: $focus, keyboardFocus: $keyboardClip,
-								time: time, open: openDescription, seek: playback.seek, save: save, shift: openShift)
-						} else {
-							transport
-							CaptionerView(project: $project, playback: playback, focus: $focus, keyboardFocus: $keyboardClip, time: time,
-								newCaption: { openCaption(nil) }, edit: { openCaption($0) }, save: save)
+							else if tool == .describer {
+								transport
+								DescriberView(project: $project, timeline: $descriptionTimeline, focus: $focus, keyboardFocus: $keyboardClip,
+									time: time, open: openDescription, seek: playback.seek, save: save, shift: openShift)
+							} else {
+								transport
+								CaptionerView(project: $project, playback: playback, focus: $focus, keyboardFocus: $keyboardClip, time: time,
+									newCaption: { openCaption(nil) }, edit: { openCaption($0) }, save: save)
+							}
 						}
 					}
-					.listRowInsets(EdgeInsets())
+					.frame(maxWidth: .infinity, alignment: .leading)
 				}
-				.editorListMargins()
+				.contentMargins(.all, 0, for: .scrollContent)
 			}
 		}
 		.accessibilityAction(.magicTap) { playback.toggle() }
@@ -466,7 +468,7 @@ struct ProjectEditorView: View {
 
 	private var mainTransitionActions: [EditorMenuAction] {
 		[
-			EditorMenuAction("Transitions") { openTransition(quick: false); trigger = "transitions" },
+			EditorMenuAction("Add Transition...") { openTransition(quick: false); trigger = "transitions" },
 			EditorMenuAction("Quick Fade") { openTransition(quick: true); trigger = "transitions" },
 			EditorMenuAction(selectedTrack.kind == .video ? "Cross Dissolve" : "Cross Fade") {
 				trigger = "transitions"
@@ -478,7 +480,7 @@ struct ProjectEditorView: View {
 	@ViewBuilder private var projectRows: some View {
 		transport
 
-		DisclosureGroup("Project Media", isExpanded: $expanded) {
+		DisclosureGroup(isExpanded: $expanded) {
 			sourcePicker("Import Clip", source: nil)
 			ForEach(project.sources) { source in
 				let actions = (source.generator == nil ? [] : [EditorMenuAction("Edit Generator") { openGenerator(source: source, rowID: source.id.uuidString) }]) + [
@@ -488,14 +490,14 @@ struct ProjectEditorView: View {
 				] + (source.generator == nil ? [EditorMenuAction("Reconnect from Files") { pick(source.id, files: true) }, EditorMenuAction("Reconnect from Photos") { pick(source.id, files: false) }] : [])
 				Menu { EditorMenuAction.buttons(actions) } label: {
 					Text(source.displayName)
-						.frame(maxWidth: .infinity, alignment: .leading)
-						.contentShape(Rectangle())
+						.editorTouchRow(alignment: .leading)
 				}
 				.contextMenu { EditorMenuAction.buttons(actions) }
 				.editorMenuActions(source.displayName, actions)
 				.accessibilityFocused($focus, equals: source.id.uuidString)
 			}
-		}
+		} label: { Text("Project Media").editorTouchRow(alignment: .leading) }
+		.accessibilityAddTraits(.isHeader)
 		TimelineChooser(selection: Binding(get: { activeTrack }, set: { track in
 			guard activeTrack != track else { return }
 			activeTrack = track
@@ -508,7 +510,9 @@ struct ProjectEditorView: View {
 		VStack(spacing: 0) {
 		if editorTimeline.mediaTrack != nil {
 		EditorCommandRow {
-			Button("Add Generator") { openGenerator() }.accessibilityFocused($focus, equals: "generator")
+			Button("Generators") { openGenerator() }
+				.accessibilityHint("Adds a generator to your project.")
+				.accessibilityFocused($focus, equals: "generator")
 			Menu { EditorMenuAction.buttons(mainTransitionActions) } label: { Text("Transitions") }
 				.editorMenuActions("Transitions", mainTransitionActions)
 				.accessibilityFocused($focus, equals: "transitions")
@@ -623,6 +627,7 @@ struct ProjectEditorView: View {
 
 	@ViewBuilder private func trackContents(_ track: TimelineTrack) -> some View {
 		let clips = project.displayedClips(on: track)
+		let items = project.timelineItems(on: track)
 		if clips.isEmpty {
 			Text("No clips").editorTouchRow(alignment: .leading)
 				.accessibilityDropPoint(.center, description: Text("Drop on " + track.title))
@@ -630,9 +635,13 @@ struct ProjectEditorView: View {
 		} else {
 			ScrollView(.horizontal) {
 				HStack(spacing: 0) {
-					ForEach(clips) { clip in
-						if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
-							clipButton(clip, source: source, track: track, count: clips.count)
+					ForEach(items) { item in
+						switch item {
+						case .clip(let clip):
+							if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
+								clipButton(clip, source: source, track: track, count: items.count)
+							}
+						case .transition(let effect): transitionButton(effect, track: track, count: items.count)
 						}
 					}
 				}
@@ -887,8 +896,45 @@ struct ProjectEditorView: View {
 			incoming: quick && clip != nil ? nil : (next ?? (previous == nil ? nil : selected))?.id,
 			quickFade: quick, returnTime: time)
 	}
+	private func transitionButton(_ effect: ProjectTransition, track: TimelineTrack, count: Int) -> some View {
+		let title = effect.title(audio: track.kind == .audio)
+		let names = [effect.outgoing, effect.incoming].compactMap { $0 }.compactMap { clipName(for: $0) }
+		let context = names.joined(separator: " to ")
+		let rowID = "transition/" + track.id + "/" + effect.id.uuidString
+		let duration = effect.seconds.formatted(.number.precision(.fractionLength(0...3)))
+		let value = (track.id != effect.trackID ? "Linked audio, " : "") + "Duration " + duration + " seconds"
+		return Button { editTransition(effect, track: track) } label: {
+			VStack(alignment: .leading, spacing: 2) {
+				Text(title)
+				Text(context).font(.subheadline)
+			}
+			.fixedSize(horizontal: false, vertical: true)
+			.padding(.horizontal, 6)
+			.frame(minHeight: 48)
+			.containerRelativeFrame(.horizontal) { width, _ in max(120, width / CGFloat(count)) }
+			.background(.quaternary, in: RoundedRectangle(cornerRadius: 8).inset(by: 2))
+		}
+		.buttonStyle(.plain)
+		.accessibilityLabel(title + ", " + context)
+		.accessibilityValue(Text(value))
+		.accessibilityAction(named: "Edit Transition") { editTransition(effect, track: track) }
+		.contextMenu { Button("Edit Transition") { editTransition(effect, track: track) } }
+		.focused($keyboardClip, equals: rowID)
+		.accessibilityFocused($focus, equals: rowID)
+	}
+	private func editTransition(_ effect: ProjectTransition, track: TimelineTrack) {
+		guard let owner = project.tracks.first(where: { $0.id == effect.trackID }), let clip = effect.incoming ?? effect.outgoing else { return }
+		playback.pause()
+		trigger = "transition/" + track.id + "/" + effect.id.uuidString
+		let linked = project.placements.first { $0.id == clip }?.trackID != track.id
+		transitionFallback = (linked ? "linked/" : "") + clip.uuidString
+		transitionChanged = false
+		transitionRequest = ProjectTransitionRequest(track: owner, clip: clip, outgoing: effect.outgoing, incoming: effect.incoming,
+			quickFade: false, returnTime: playback.position, existingID: effect.id)
+	}
 	private func openTransition(quick: Bool, track: TimelineTrack? = nil, clip: ProjectPlacement? = nil) {
 		do {
+			transitionFallback = nil
 			let request = try transitionTarget(quick: quick, track: track, clip: clip)
 			playback.pause()
 			if clip == nil { trigger = request.track.id }
@@ -925,6 +971,11 @@ struct ProjectEditorView: View {
 		}
 	}
 	private func finishTransition() {
+		if let trigger, trigger.hasPrefix("transition/"), let id = trigger.split(separator: "/").last,
+			!project.timelineItems(on: selectedTrack).contains(where: { $0.id == "transition/" + id }) {
+			self.trigger = transitionFallback
+		}
+		transitionFallback = nil
 		if directTouch { returnMessage = directTouchReturnMessage() }
 		else if transitionChanged && preparingTimeline { placementFocus = trigger }
 		else { focus = trigger }
@@ -1670,6 +1721,10 @@ struct ProjectEditorView: View {
 		}
 		let focusedRow = keyboardClip ?? focus
 		let focusedID = focusedRow?.split(separator: "/").last.flatMap { UUID(uuidString: String($0)) }
+		if focusedRow?.hasPrefix("transition/") == true, ["c", "\r"].contains(key),
+			let effect = project.transitions?.first(where: { $0.id == focusedID }) {
+			editTransition(effect, track: selectedTrack); return
+		}
 		let focusedClip = project.displayedClips(on: selectedTrack).first { $0.id == focusedID }
 		var trackID = focusedClip?.trackID ?? activeTrack
 		if focusedRow?.hasPrefix("linked/") == true, let partner = project.audioPartner(for: trackID) { trackID = partner.id }
