@@ -80,7 +80,7 @@ nonisolated enum ClipSilenceTrimming {
 
 	private static func scan(asset: AVAsset, range: CMTimeRange, bounds: Range<Int64>, detector initial: SilenceDetector) async throws -> SilenceDetector {
 		var detector = initial
-		guard let track = try await asset.loadTracks(withMediaType: .audio).first else { throw CocoaError(.fileReadUnsupportedScheme) }
+		guard let track = try await MediaQuality.playbackAudioTrack(asset) else { throw CocoaError(.fileReadUnsupportedScheme) }
 		let reader = try AVAssetReader(asset: asset)
 		reader.timeRange = range
 		let output = AVAssetReaderAudioMixOutput(audioTracks: [track], audioSettings: [

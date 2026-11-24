@@ -2272,6 +2272,9 @@ private struct ProjectExportView: View {
 	@State private var failure: String?
 	@State private var savingToPhotos = false
 	@State private var burnInCaptions = false
+	@State private var allowStereo = false
+	@State private var pendingDestination: Destination?
+	@State private var stereoConfirmation = false
 	private enum Destination { case files, photos }
 
 	var body: some View {
@@ -2283,8 +2286,8 @@ private struct ProjectExportView: View {
 					if timeline.hasVideo && !timeline.captions.isEmpty {
 						Toggle("Burn In Open Captions", isOn: $burnInCaptions)
 					}
-					if timeline.hasVideo { Button("Photos") { destination = .photos } }
-					Button("Files") { destination = .files }
+					if timeline.hasVideo { Button("Photos") { request(.photos) } }
+					Button("Files") { request(.files) }
 				}
 			}
 			.scrollContentBackground(.hidden)
@@ -2297,6 +2300,12 @@ private struct ProjectExportView: View {
 					Button("Cancel") { dismiss() }.disabled(savingToPhotos)
 				}
 			}
+		}
+		.confirmationDialog("Export in Stereo?", isPresented: $stereoConfirmation, titleVisibility: .visible, presenting: pendingDestination) { selected in
+			Button("Export in Stereo") { allowStereo = true; destination = selected }
+			Button("Cancel", role: .cancel) { pendingDestination = nil }
+		} message: { _ in
+			Text("This export will convert spatial or multichannel audio to stereo.")
 		}
 		.editorAppearance()
 		.interactiveDismissDisabled(savingToPhotos)
@@ -2318,7 +2327,7 @@ private struct ProjectExportView: View {
 				}
 				try Task.checkCancellation()
 				stage = burnInCaptions ? "render the video with open captions" : "render the project"
-				let file = try await timeline.render(burnInCaptions: burnInCaptions)
+				let file = try await timeline.render(burnInCaptions: burnInCaptions, allowStereo: allowStereo)
 				if destination == .files {
 					output = file
 				} else {
@@ -2344,7 +2353,15 @@ private struct ProjectExportView: View {
 		} message: { Text(failure ?? "") }
 	}
 
+	private func request(_ selected: Destination) {
+		if timeline.quality.needsAudioChoice {
+			pendingDestination = selected
+			stereoConfirmation = true
+		} else { destination = selected }
+	}
+
 	private static func failureMessage(_ error: Error, stage: String) -> String {
+		if let error = error as? MediaExportFailure { return error.localizedDescription }
 		var chain = [NSError]()
 		var next: NSError? = error as NSError
 		while let current = next, !chain.contains(where: { $0 === current }) {

@@ -191,6 +191,7 @@ final class CuttingBoardSession: ObservableObject {
 	let hasVideo: Bool
 	let hasAudio: Bool
 	private let source: AVAsset
+	private(set) var mediaQuality = MediaQuality()
 	private var projectAccess: AnyObject?
 	private var openingTimeline: ClipEditTimeline?
 	private let scopedURL: URL?
@@ -298,7 +299,7 @@ final class CuttingBoardSession: ObservableObject {
 		let duration = try await asset.load(.duration)
 		guard duration.isNumeric, duration > .zero else { throw CocoaError(.fileReadCorruptFile) }
 		let video = try await asset.loadTracks(withMediaType: .video).first
-		let audio = try await asset.loadTracks(withMediaType: .audio).first
+		let audio = try await MediaQuality.playbackAudioTrack(asset)
 		var tracks: [(AVAssetTrack, CMTimeRange)] = []
 		for track in [video, audio].compactMap({ $0 }) {
 			tracks.append((track, try await track.load(.timeRange)))
@@ -309,9 +310,11 @@ final class CuttingBoardSession: ObservableObject {
 		let displaySize = size.map { CGRect(origin: .zero, size: $0).applying(transform).standardized.size }
 		let frames = try await MediaTimelineReader.shared.frameTimes(asset: asset, track: video)
 		try Task.checkCancellation()
-		return CuttingBoardSession(asset: asset, title: title, importedMovie: importedMovie, originalFile: originalFile,
+		let session = CuttingBoardSession(asset: asset, title: title, importedMovie: importedMovie, originalFile: originalFile,
 			photoIdentifier: photoIdentifier, modification: modification, scopedURL: scopedURL, duration: duration,
 			tracks: tracks, transform: transform, displaySize: displaySize, frames: frames, hasVideo: video != nil, hasAudio: audio != nil)
+		session.mediaQuality = try await MediaQuality.inspect(asset)
+		return session
 	}
 
 	private init(asset: AVAsset, title: String, importedMovie: ImportedMovie?, originalFile: URL?, photoIdentifier: String?, modification: Date?, scopedURL: URL?, duration: CMTime, tracks: [(AVAssetTrack, CMTimeRange)],
@@ -1022,7 +1025,7 @@ private actor FrameAudioDecoder {
 		let sampleRate = FrameAudioSamples.sampleRate
 		let channels = FrameAudioSamples.channels
 		guard time.isNumeric, time.seconds >= 0 else { return [] }
-		let tracks = try await asset.loadTracks(withMediaType: .audio)
+		let tracks = try await MediaQuality.playbackAudioTracks(asset)
 		guard !tracks.isEmpty else { return [] }
 		let duration = try await asset.load(.duration)
 		guard duration.isNumeric else { return [] }
@@ -1157,9 +1160,9 @@ extension CuttingBoardSession {
 		return photoIdentifier != nil
 	}
 
-	func saveOriginal() async throws {
+	func saveOriginal(allowStereo: Bool = false) async throws {
 		if let originalFile, let originalType {
-			let output = try await exportClip(type: originalType)
+			let output = try await exportClip(type: originalType, allowStereo: allowStereo)
 			defer { withExtendedLifetime(output) {} }
 			let file = output.url
 			let expected = originalModification
@@ -1205,7 +1208,7 @@ extension CuttingBoardSession {
 		case "mp4": type = .mp4
 		default: throw SaveFailure.unavailable
 		}
-		let rendered = try await exportClip(type: type)
+		let rendered = try await exportClip(type: type, allowStereo: allowStereo)
 		defer { withExtendedLifetime(rendered) {} }
 		let file = rendered.url
 		try await Task.detached { try FileManager.default.copyItem(at: file, to: renderedURL) }.value
@@ -1217,9 +1220,9 @@ extension CuttingBoardSession {
 		originalModification = Date()
 	}
 
-	func saveNewVideo() async throws {
+	func saveNewVideo(allowStereo: Bool = false) async throws {
 		try await authorizePhotos(.addOnly)
-		let output = try await exportClip()
+		let output = try await exportClip(allowStereo: allowStereo)
 		defer { withExtendedLifetime(output) {} }
 		let file = output.url
 		try await PHPhotoLibrary.shared().performChanges {
@@ -1246,29 +1249,53 @@ extension CuttingBoardSession {
 		}
 	}
 
-	func exportClip(type requested: AVFileType? = nil) async throws -> ExportFile {
-		let preset = hasVideo ? AVAssetExportPresetHighestQuality : AVAssetExportPresetAppleM4A
-		guard let exporter = AVAssetExportSession(asset: editAsset, presetName: preset) else {
-			throw CocoaError(.featureUnsupported)
+	func exportClip(type requested: AVFileType? = nil, allowStereo: Bool = false) async throws -> ExportFile {
+		let preserveAudio = mediaQuality.needsAudioChoice && !allowStereo
+		if preserveAudio && !mediaQuality.spatialAudio { throw MediaExportFailure.spatialPreservation }
+		let exportAsset: AVAsset
+		let exportRange: CMTimeRange
+		if preserveAudio {
+			if state.timeline.sourceRanges.count == 1, let range = state.timeline.sourceRanges.first {
+				exportAsset = source
+				exportRange = range
+			} else if #available(iOS 26, *), mediaQuality.spatialAudio, requested == nil || requested == .mov {
+				return try await SpatialClipExport.render(source: source, ranges: state.timeline.sourceRanges,
+					videoAsset: editAsset, quality: mediaQuality, name: (title as NSString).deletingPathExtension + " Edited")
+			} else { throw MediaExportFailure.spatialPreservation }
+		} else {
+			exportAsset = editAsset
+			exportRange = CMTimeRange(start: .zero, duration: duration)
 		}
-		exporter.timeRange = CMTimeRange(start: .zero, duration: duration)
-		if hasAudio {
+
+		let type = requested ?? (preserveAudio ? AVFileType.mov : (hasVideo ? (mediaQuality.hdr ? .mov : .mp4) : .m4a))
+		let exporter: AVAssetExportSession
+		if preserveAudio && !hasVideo {
+			guard let passthrough = AVAssetExportSession(asset: exportAsset, presetName: AVAssetExportPresetPassthrough),
+				passthrough.supportedFileTypes.contains(type) else { throw MediaExportFailure.spatialPreservation }
+			exporter = passthrough
+		} else {
+			exporter = try await MediaExportSupport.exporter(asset: exportAsset, video: hasVideo, hdr: mediaQuality.hdr, type: type)
+		}
+		exporter.timeRange = exportRange
+		if preserveAudio {
+			exporter.audioTrackGroupHandling = .preserveAlternateTracks
+		} else if hasAudio {
 			let mix = AVMutableAudioMix()
-			mix.inputParameters = try await editAsset.loadTracks(withMediaType: .audio).map { track in
+			if let track = try await MediaQuality.playbackAudioTrack(exportAsset) {
 				let input = AVMutableAudioMixInputParameters(track: track)
 				input.setVolume(1, at: .zero)
-				return input
+				mix.inputParameters = [input]
 			}
 			exporter.audioMix = mix
 		}
-		let type: AVFileType = requested ?? (hasVideo ? (exporter.supportedFileTypes.contains(.mp4) ? .mp4 : .mov) : .m4a)
-		guard exporter.supportedFileTypes.contains(type) else { throw CocoaError(.featureUnsupported) }
 		let name = (title as NSString).deletingPathExtension + " Edited"
 		let output = try ExportFile(name: name, suffix: type == .mp4 ? "mp4" : type == .mov ? "mov" : "m4a")
 		try await exporter.export(to: output.url, as: type)
+		try await MediaExportSupport.validate(output.url, hdr: mediaQuality.hdr, preserveAudioFrom: preserveAudio ? source : nil)
 		try Task.checkCancellation()
 		return output
 	}
+
 }
 
 /// Serializes explicit engine activation off the main thread. Forward AVPlayer

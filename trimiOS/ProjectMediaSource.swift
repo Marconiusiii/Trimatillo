@@ -61,7 +61,7 @@ nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 	@MainActor private static func inspect(asset: AVAsset, name: String, reference: Reference) async throws -> Self {
 		let duration = try await asset.load(.duration)
 		let video = try await asset.loadTracks(withMediaType: .video).first
-		let audio = try await asset.loadTracks(withMediaType: .audio).first
+		let audio = try await MediaQuality.playbackAudioTrack(asset)
 		guard duration.isNumeric, duration > .zero, video != nil || audio != nil else {
 			throw ProjectFailure("Choose a playable video or audio clip.")
 		}

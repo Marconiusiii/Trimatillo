@@ -385,7 +385,7 @@ private struct ScrubAudioWindow {
 		snapshot.videoComposition = item.videoComposition
 		do { snapshot.audioMix = try audioMix(project, solo: []) }
 		catch { failure = error.localizedDescription; return nil }
-		return ProjectExport(name: name, captions: captions, item: snapshot, duration: duration, sources: Array(media.values))
+		return ProjectExport(name: name, captions: captions, item: snapshot, duration: duration, sources: Array(media.values), quality: mediaQuality)
 	}
 
 	func makePreview() -> PreviewPlayback? {
@@ -718,6 +718,7 @@ private struct ScrubAudioWindow {
 		}
 	}
 	private var stereoMedia = StereoMedia()
+	private var mediaQuality = MediaQuality()
 	private var mixOutputs: [MixOutput] = []
 	private var liveProcessors: [CMPersistentTrackID: TrackMixProcessor] = [:]
 	private var isPreviewMix = false
@@ -945,6 +946,7 @@ private struct ScrubAudioWindow {
 		guard duration > .zero else { return }
 		let composition = AVMutableComposition()
 		var sources: [UUID: ProjectMediaAccess] = [:]
+		var quality = MediaQuality()
 		var layers: [(CMTimeRange, AVMutableVideoCompositionLayerInstruction)] = []
 		var transitionLayers: [TransitionVideoLayer] = []
 		let generatedVideoIDs = Set(project.sources.filter { $0.generator != nil && $0.picture != nil }.map(\.id))
@@ -965,12 +967,14 @@ private struct ScrubAudioWindow {
 					else {
 						access = try await source.open()
 						sources[source.id] = access
+						quality.include(try await MediaQuality.inspect(access.asset))
 					}
 					guard try await access.asset.load(.duration) >= (clip.ranges.map { $0.range.end }.max() ?? .zero) else { throw CocoaError(.fileReadCorruptFile) }
 					for type in [AVMediaType.video, .audio] {
 						if type == .video && audition?.kind == .audio { continue }
 						if type == .audio && clip.omitAudio == true { continue }
-						guard let input = try await access.asset.loadTracks(withMediaType: type).first else {
+						let selected = type == .audio ? try await MediaQuality.playbackAudioTrack(access.asset) : try await access.asset.loadTracks(withMediaType: type).first
+						guard let input = selected else {
 							if type == .video && source.picture != nil || type == .audio && source.hasAudio { throw CocoaError(.fileReadCorruptFile) }
 							continue
 						}
@@ -1041,6 +1045,8 @@ private struct ScrubAudioWindow {
 			guard generation == request else { return }
 			if composition.duration < duration { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: duration)) }
 			let item = AVPlayerItem(asset: composition)
+			if layers.isEmpty { quality.hdr = false }
+			mediaQuality = quality
 			stereoMedia = preparedMedia
 			mixOutputs = builtOutputs
 			if !builtOutputs.isEmpty {
@@ -1064,9 +1070,10 @@ private struct ScrubAudioWindow {
 				let video = AVMutableVideoComposition()
 				video.renderSize = CGSize(width: picture.width, height: picture.height)
 				video.frameDuration = picture.frame.time
+				if quality.hdr { MediaExportSupport.configureHDR(video) }
 				if usesTransitions {
 					let boundaries = Set([CMTime.zero, duration] + transitionLayers.flatMap { [$0.range.start, $0.range.end] }).sorted()
-					video.customVideoCompositorClass = TransitionCompositor.self
+					video.customVideoCompositorClass = quality.hdr ? HDRTransitionCompositor.self : TransitionCompositor.self
 					video.instructions = zip(boundaries, boundaries.dropFirst()).compactMap { start, end in
 						guard start < end else { return nil }
 						return TransitionInstruction(range: CMTimeRange(start: start, end: end),
@@ -1150,13 +1157,13 @@ private struct ScrubAudioWindow {
 	let duration: CMTime
 	// Keep security-scoped files open through rendering.
 	let sources: [ProjectMediaAccess]
+	let quality: MediaQuality
 	var hasVideo: Bool { item.videoComposition != nil }
 
-	func render(burnInCaptions: Bool = false) async throws -> ExportFile {
-		let preset = hasVideo ? AVAssetExportPresetHighestQuality : AVAssetExportPresetAppleM4A
-		guard let exporter = AVAssetExportSession(asset: item.asset, presetName: preset) else {
-			throw ProjectFailure("Could not prepare the export. Reopen the project and try again.")
-		}
+	func render(burnInCaptions: Bool = false, allowStereo: Bool = false) async throws -> ExportFile {
+		if quality.needsAudioChoice && !allowStereo { throw MediaExportFailure.spatialProcessing }
+		let type: AVFileType = hasVideo ? (quality.hdr ? .mov : .mp4) : .m4a
+		let exporter = try await MediaExportSupport.exporter(asset: item.asset, video: hasVideo, hdr: quality.hdr, type: type)
 		if burnInCaptions, let composition = item.videoComposition, !captions.isEmpty {
 			exporter.videoComposition = try await captionedComposition(composition)
 		} else {
@@ -1164,12 +1171,12 @@ private struct ScrubAudioWindow {
 		}
 		exporter.audioMix = item.audioMix
 		exporter.timeRange = CMTimeRange(start: .zero, duration: duration)
-		let type: AVFileType = hasVideo ? (exporter.supportedFileTypes.contains(.mp4) ? .mp4 : .mov) : .m4a
 		guard exporter.supportedFileTypes.contains(type) else {
 			throw ProjectFailure("Could not export this media format. Check the project settings and try again.")
 		}
 		let output = try Self.temporaryFile(named: name, suffix: type == .mp4 ? "mp4" : type == .mov ? "mov" : "m4a")
 		try await exporter.export(to: output.url, as: type)
+		try await MediaExportSupport.validate(output.url, hdr: quality.hdr)
 		try Task.checkCancellation()
 		return output
 	}
@@ -1213,7 +1220,7 @@ private struct ScrubAudioWindow {
 			changes.append(CaptionPanelChange(time: time, image: image))
 		}
 		let panels = CaptionPanelTimeline(changes: changes)
-		if original.customVideoCompositorClass == TransitionCompositor.self {
+		if original.instructions.first is TransitionInstruction {
 			composition.instructions = try original.instructions.map {
 				guard let instruction = $0 as? TransitionInstruction else { throw CocoaError(.fileReadCorruptFile) }
 				return TransitionInstruction(instruction, panels: panels)
@@ -1226,7 +1233,7 @@ private struct ScrubAudioWindow {
 			}
 			return CaptionCompositionInstruction(video, panels: panels)
 		}
-		composition.customVideoCompositorClass = CaptionCompositor.self
+		composition.customVideoCompositorClass = quality.hdr ? HDRCaptionCompositor.self : CaptionCompositor.self
 		composition.instructions = instructions
 		return composition
 	}
@@ -1273,14 +1280,18 @@ nonisolated private final class CaptionCompositionInstruction: NSObject, AVVideo
 	}
 }
 
-nonisolated private final class CaptionCompositor: NSObject, AVVideoCompositing {
-	let sourcePixelBufferAttributes: [String: any Sendable]? = [
-		kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-	]
-	let requiredPixelBufferAttributesForRenderContext: [String: any Sendable] = [
-		kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA
-	]
+nonisolated private class CaptionCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
+	var hdr: Bool { false }
+	var supportsHDRSourceFrames: Bool { hdr }
+	var supportsWideColorSourceFrames: Bool { hdr }
+	var sourcePixelBufferAttributes: [String: any Sendable]? {
+		[kCVPixelBufferPixelFormatTypeKey as String: hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_32BGRA]
+	}
+	var requiredPixelBufferAttributesForRenderContext: [String: any Sendable] {
+		[kCVPixelBufferPixelFormatTypeKey as String: hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_32BGRA]
+	}
 	private let context = CIContext(options: [.cacheIntermediates: false])
+	private let hdrContext = CIContext(options: [.workingColorSpace: MediaExportSupport.hdrWorkingSpace, .workingFormat: CIFormat.RGBAh, .cacheIntermediates: false])
 	// NSCache supports concurrent requests from AVFoundation.
 	nonisolated(unsafe) private let panels = NSCache<NSData, CIImage>()
 
@@ -1321,7 +1332,12 @@ nonisolated private final class CaptionCompositor: NSObject, AVVideoCompositing 
 				y: size.height * CaptionPanel.bottomFraction)
 			image = panel.transformed(by: point).composited(over: image)
 		}
-		context.render(image, to: buffer, bounds: bounds, colorSpace: colorSpace)
+		if hdr { MediaExportSupport.markHDR(buffer) }
+		(hdr ? hdrContext : context).render(image, to: buffer, bounds: bounds, colorSpace: hdr ? MediaExportSupport.hdrColorSpace : colorSpace)
 		request.finish(withComposedVideoFrame: buffer)
 	}
+}
+
+nonisolated private final class HDRCaptionCompositor: CaptionCompositor, @unchecked Sendable {
+	override var hdr: Bool { true }
 }

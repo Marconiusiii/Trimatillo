@@ -7,7 +7,7 @@ nonisolated enum ClipLoudnessAnalyzer {
 
 	@concurrent static func measure(asset: AVAsset, ranges: [ProjectRange]) async throws -> Measurement {
 		try Task.checkCancellation()
-		guard let input = try await asset.loadTracks(withMediaType: .audio).first else {
+		guard let input = try await MediaQuality.playbackAudioTrack(asset) else {
 			throw ProjectFailure("Could not read the clip's audio. Reconnect it in Project Media.")
 		}
 		let available = try await input.load(.timeRange)

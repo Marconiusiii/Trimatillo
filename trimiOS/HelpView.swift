@@ -96,7 +96,9 @@ private enum HelpTopic: String, CaseIterable {
 			"Open Project Actions beside the project name and choose Export. Export includes the full timeline and its track volumes.",
 			"To make captions part of the picture, turn on Burn In Open Captions. The movie uses the captions and timing in the Caption Timeline.",
 			"For video, choose Photos to save a new video to the library, or Files to choose a folder. For an audio project, choose Files to save an M4A.",
-			"In Files, choose a folder and filename for the export."
+			"In Files, choose a folder and filename for the export.",
+			"HDR video is exported in HDR when supported by the device and media format.",
+			"For a project containing spatial or multichannel audio, Export in Stereo creates a two-channel mix. Cancel returns to the export choices."
 		])
 	}
 
@@ -520,6 +522,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Save Changes to Original updates the selected Photos video or replaces a writable MOV, MP4, or M4A original in Files.",
 				"Save as New Clip creates a separate clip. For video, choose Photos or Files. For audio, use the Files picker.",
 				"In Files, choose a folder and filename for the edited clip.",
+				"The Cutting Board preserves HDR and supported original audio layouts. On iOS 26 or later, supported spatial recordings can also retain spatial audio after sections are removed. If preservation is unavailable, Export in Stereo creates a two-channel version.",
 				"When editing from the Photos Share sheet, choose Export, then Photos or Files under Save as New Clip.",
 				"Export edits you want to keep before closing a clip in Trim a Clip."
 			])]

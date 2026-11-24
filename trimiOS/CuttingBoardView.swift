@@ -721,6 +721,9 @@ private struct ClipExportView: View {
 	@State private var destination: Destination?
 	@State private var output: ExportFile?
 	@State private var failure: String?
+	@State private var allowStereo = false
+	@State private var pendingDestination: Destination?
+	@State private var stereoConfirmation = false
 
 	private enum Destination { case original, photos, files }
 
@@ -768,19 +771,31 @@ private struct ClipExportView: View {
 			guard let destination else { return }
 			do {
 				switch destination {
-				case .original: try await session.saveOriginal()
-				case .photos: try await session.saveNewVideo()
+				case .original: try await session.saveOriginal(allowStereo: allowStereo)
+				case .photos: try await session.saveNewVideo(allowStereo: allowStereo)
 				case .files:
-					output = try await session.exportClip()
+					output = try await session.exportClip(allowStereo: allowStereo)
 					return
 				}
 				dismiss()
 			} catch {
 				guard !Task.isCancelled else { return }
-				failure = (error as? CuttingBoardSession.SaveFailure)?.errorDescription ??
+				if let error = error as? MediaExportFailure, case .spatialPreservation = error, !allowStereo {
+					pendingDestination = destination
+					self.destination = nil
+					stereoConfirmation = true
+					return
+				}
+				failure = (error as? MediaExportFailure)?.errorDescription ?? (error as? CuttingBoardSession.SaveFailure)?.errorDescription ??
 					"Could not save the clip. Check available storage or choose another destination."
 				self.destination = nil
 			}
+		}
+		.confirmationDialog("Export in Stereo?", isPresented: $stereoConfirmation, titleVisibility: .visible, presenting: pendingDestination) { selected in
+			Button("Export in Stereo") { allowStereo = true; destination = selected }
+			Button("Cancel", role: .cancel) { pendingDestination = nil }
+		} message: { _ in
+			Text("This edit cannot retain the original audio layout. Exporting in stereo will convert the audio to two channels.")
 		}
 		.alert("Could Not Save Clip", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
 			Button("OK") { failure = nil }

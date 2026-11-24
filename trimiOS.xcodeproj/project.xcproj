@@ -34,6 +34,8 @@
             "CuttingBoardTouchSurface.swift",
             "CuttingBoardView.swift",
             "EditorTheme.swift",
+            "MediaExportSupport.swift",
+			"SpatialClipExport.swift",
             "TrimSilencesView.swift",
           ],
         },

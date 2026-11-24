@@ -48,14 +48,21 @@ nonisolated final class TransitionInstruction: NSObject, AVVideoCompositionInstr
 
 }
 
-nonisolated final class TransitionCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
-	let sourcePixelBufferAttributes: [String: any Sendable]? = [kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA]
-	let requiredPixelBufferAttributesForRenderContext: [String: any Sendable] = [
-		kCVPixelBufferPixelFormatTypeKey as String: kCVPixelFormatType_32BGRA,
-		kCVPixelBufferMetalCompatibilityKey as String: true
-	]
+nonisolated class TransitionCompositor: NSObject, AVVideoCompositing, @unchecked Sendable {
+	var hdr: Bool { false }
+	var supportsHDRSourceFrames: Bool { hdr }
+	var supportsWideColorSourceFrames: Bool { hdr }
+	var sourcePixelBufferAttributes: [String: any Sendable]? {
+		[kCVPixelBufferPixelFormatTypeKey as String: hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_32BGRA]
+	}
+	var requiredPixelBufferAttributesForRenderContext: [String: any Sendable] {
+		[kCVPixelBufferPixelFormatTypeKey as String: hdr ? kCVPixelFormatType_420YpCbCr10BiPlanarVideoRange : kCVPixelFormatType_32BGRA,
+		 kCVPixelBufferMetalCompatibilityKey as String: true]
+	}
 	private let queue = DispatchQueue(label: "com.marconius.trimato.transitions")
-	private let context = CIContext(options: [.cacheIntermediates: false])
+	nonisolated(unsafe) private lazy var context = CIContext(options: hdr
+		? [.workingColorSpace: MediaExportSupport.hdrWorkingSpace, .workingFormat: CIFormat.RGBAh, .cacheIntermediates: false]
+		: [.cacheIntermediates: false])
 	private let noise = CIFilter(name: "CIRandomGenerator")!.outputImage!
 	private let lock = NSLock()
 	private let panels = NSCache<NSData, CIImage>()
@@ -108,7 +115,8 @@ nonisolated final class TransitionCompositor: NSObject, AVVideoCompositing, @unc
 					let offset = CGAffineTransform(translationX: (rect.width - panel.extent.width) / 2, y: rect.height * CaptionPanel.bottomFraction)
 					result = panel.transformed(by: offset).composited(over: result)
 				}
-				context.render(result, to: buffer, bounds: rect, colorSpace: CGColorSpace(name: CGColorSpace.sRGB))
+				if hdr { MediaExportSupport.markHDR(buffer) }
+				context.render(result, to: buffer, bounds: rect, colorSpace: hdr ? MediaExportSupport.hdrColorSpace : CGColorSpace(name: CGColorSpace.sRGB))
 				guard lock.withLock({ generation == current }) else { request.finishCancelledRequest(); return }
 				request.finish(withComposedVideoFrame: buffer)
 			}
@@ -253,4 +261,8 @@ extension AVMutableAudioMixInputParameters {
 			setVolumeRamp(fromStartVolume: ramp.start, toEndVolume: ramp.end, timeRange: ramp.range)
 		}
 	}
+}
+
+nonisolated final class HDRTransitionCompositor: TransitionCompositor, @unchecked Sendable {
+	override var hdr: Bool { true }
 }
