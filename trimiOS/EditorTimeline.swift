@@ -27,7 +27,7 @@ nonisolated enum EditorTimeline: Identifiable, Equatable {
 
 extension EditingProject {
 	var editorTimelines: [EditorTimeline] {
-		tracks.map(EditorTimeline.media) + [.captions, .descriptions(.audio), .descriptions(.transcript)]
+		[.captions] + tracks.map(EditorTimeline.media) + [.descriptions(.audio), .descriptions(.transcript)]
 	}
 	func editorRows(_ timeline: EditorTimeline) -> [DescriptionRow] {
 		switch timeline {

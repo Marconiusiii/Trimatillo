@@ -90,6 +90,7 @@ struct ProjectEditorView: View {
 	@State private var captionEntry: CaptionEntry?
 	@State private var captionTrigger = "newCaption"
 	@State private var captionCreated = false
+	@State private var chooserConfirmation: String?
 	@State private var selectedEntries: Set<UUID> = []
 	@State private var activeTrack = TimelineTrack.primaryVideo.id
 	@State private var marked: Set<UUID> = []
@@ -163,7 +164,10 @@ struct ProjectEditorView: View {
 			if !preparing, let placementFocus { focus = placementFocus; self.placementFocus = nil }
 			if !preparing && restoringDescription { restoreDescriptionFocus() }
 		}
-		.onChange(of: activeTrack) { dropAnchor = nil }
+		.onChange(of: activeTrack) {
+			dropAnchor = nil
+			if chooserConfirmation != activeTrack { chooserConfirmation = nil }
+		}
 		.onChange(of: soloTracks) { playback.updateMix(project, solo: soloTracks) }
 		.onChange(of: playback.ready) { if playback.ready { playback.updateMix(project, solo: soloTracks) } }
 		.onChange(of: tool) { previous, _ in
@@ -475,17 +479,7 @@ struct ProjectEditorView: View {
 
 	@ViewBuilder private var projectRows: some View {
 		transport
-		if editorTimeline.mediaTrack != nil {
-		EditorCommandRow {
-			Button("Add Generator") { openGenerator() }.accessibilityFocused($focus, equals: "generator")
-			Menu { EditorMenuAction.buttons(mainTransitionActions) } label: { Text("Transitions") }
-				.editorMenuActions("Transitions", mainTransitionActions)
-				.accessibilityFocused($focus, equals: "transitions")
-				.disabled(!playback.ready || project.displayedClips(on: selectedTrack).isEmpty)
-		}
-		.buttonStyle(EditorButtonStyle())
-		.fixedSize(horizontal: false, vertical: true)
-		}
+
 		DisclosureGroup("Project Media", isExpanded: $expanded) {
 			sourcePicker("Import Clip", source: nil)
 			ForEach(project.sources) { source in
@@ -505,16 +499,49 @@ struct ProjectEditorView: View {
 			}
 		}
 		TimelineChooser(selection: Binding(get: { activeTrack }, set: { track in
-			withAnimation(reduceMotion ? nil : .easeInOut(duration: 0.2)) { activeTrack = track }
+			guard activeTrack != track else { return }
+			activeTrack = track
 			keyboardClip = nil
 			playback.playhead.navigationLabel = nil
+			chooserConfirmation = track
 		}), options: project.editorTimelines, title: \.title)
-		Group {
-			if let track = editorTimeline.mediaTrack { trackSection(track) }
-			else { editorEntrySection }
+			.id("editor-timeline-chooser")
+			.transaction { $0.animation = nil }
+			.task(id: chooserConfirmation) {
+				guard let chosen = chooserConfirmation else { return }
+				do { try await Task.sleep(for: .milliseconds(350)) } catch { return }
+				guard activeTrack == chosen, UIAccessibility.isVoiceOverRunning else { return }
+				// The native wheel speaks its selected title. Confirm the resulting content separately.
+				let count = editorTimeline.mediaTrack.map { project.displayedClips(on: $0).count } ?? project.editorRows(editorTimeline).count
+				UIAccessibility.post(notification: .announcement, argument: count == 0 ? "No clips" : count == 1 ? "1 clip" : "\(count) clips")
+			}
+		VStack(spacing: 0) {
+		if editorTimeline.mediaTrack != nil {
+		EditorCommandRow {
+			Button("Add Generator") { openGenerator() }.accessibilityFocused($focus, equals: "generator")
+			Menu { EditorMenuAction.buttons(mainTransitionActions) } label: { Text("Transitions") }
+				.editorMenuActions("Transitions", mainTransitionActions)
+				.accessibilityFocused($focus, equals: "transitions")
+				.disabled(!playback.ready || project.displayedClips(on: selectedTrack).isEmpty)
 		}
-			.id(editorTimeline.id)
-			.transition(.opacity)
+		.buttonStyle(EditorButtonStyle())
+		.fixedSize(horizontal: false, vertical: true)
+		}
+			if let track = editorTimeline.mediaTrack {
+				trackHeading(track)
+				trackContents(track)
+			} else {
+				entryHeading
+				editorEntryContents
+			}
+		}
+		.keyframeAnimator(initialValue: 1.0, trigger: activeTrack) { [reduceMotion] content, opacity in
+			content.opacity(reduceMotion ? 1 : opacity)
+		} keyframes: { _ in
+			LinearKeyframe(0.65, duration: 0.08)
+			LinearKeyframe(1, duration: 0.12)
+		}
+		.id("editor-timeline-content")
 
 		if let seconds = project.targetSeconds { LabeledContent("Project Duration", value: time(CMTime(seconds: seconds, preferredTimescale: 60000))) }
 	}
@@ -572,72 +599,72 @@ struct ProjectEditorView: View {
 			EditorMenuAction(deleteTitle) { deleteEntries(ids) }
 		]
 	}
-	private var editorEntrySection: some View {
-		Section {
-			let rows = project.editorRows(editorTimeline)
-			if rows.isEmpty { Text("No entries").editorTouchRow(alignment: .leading) }
-			ForEach(rows) { row in
-				let actions = entryActions(row)
-				Menu { EditorMenuAction.buttons(actions) } label: {
-					VStack(alignment: .leading) {
-						Text(row.name)
-						Text(time(row.start) + " to " + time(row.end)).font(.subheadline)
-					}.editorTouchRow(alignment: .leading)
-				}
-				.contextMenu { EditorMenuAction.buttons(actions) }
-				.editorMenuActions(row.name, actions)
-				.accessibilityValue((selectedEntries.contains(row.id) ? "Selected, " : "") + time(row.start) + " to " + time(row.end))
-				.focused($keyboardClip, equals: row.id.uuidString)
-				.accessibilityFocused($focus, equals: row.id.uuidString)
-			}
-		} header: {
-			let actions = [EditorMenuAction("Shift Track") {
-				openShift(entryShift(Set(project.editorRows(editorTimeline).map(\.id)), title: "Shift Track"), trigger: editorTimeline.id)
-			}]
+	@ViewBuilder private var editorEntryContents: some View {
+		let rows = project.editorRows(editorTimeline)
+		if rows.isEmpty { Text("No entries").editorTouchRow(alignment: .leading) }
+		ForEach(rows) { row in
+			let actions = entryActions(row)
 			Menu { EditorMenuAction.buttons(actions) } label: {
-				Text(editorTimeline.title).editorTouchRow(alignment: .leading)
+				VStack(alignment: .leading) {
+					Text(row.name)
+					Text(time(row.start) + " to " + time(row.end)).font(.subheadline)
+				}.editorTouchRow(alignment: .leading)
 			}
-			.editorMenuActions(editorTimeline.title, actions)
 			.contextMenu { EditorMenuAction.buttons(actions) }
-			.accessibilityAddTraits(.isHeader)
-			.accessibilityFocused($focus, equals: editorTimeline.id)
+			.editorMenuActions(row.name, actions)
+			.accessibilityValue((selectedEntries.contains(row.id) ? "Selected, " : "") + time(row.start) + " to " + time(row.end))
+			.focused($keyboardClip, equals: row.id.uuidString)
+			.accessibilityFocused($focus, equals: row.id.uuidString)
 		}
 	}
 
-	private func trackSection(_ track: TimelineTrack) -> some View {
-		Section {
-			let clips = project.displayedClips(on: track)
-			if clips.isEmpty {
-				Text("No clips").editorTouchRow(alignment: .leading)
-					.accessibilityDropPoint(.center, description: Text("Drop on " + track.title))
-					.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: false) }
-			} else {
-				ScrollView(.horizontal) {
-					HStack(spacing: 0) {
-						ForEach(clips) { clip in
-							if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
-								clipButton(clip, source: source, track: track, count: clips.count)
-							}
+	@ViewBuilder private var entryHeading: some View {
+		let actions = [EditorMenuAction("Shift Track") {
+			openShift(entryShift(Set(project.editorRows(editorTimeline).map(\.id)), title: "Shift Track"), trigger: editorTimeline.id)
+		}]
+		Menu { EditorMenuAction.buttons(actions) } label: {
+			Text(editorTimeline.title).editorTouchRow(alignment: .leading)
+		}
+		.editorMenuActions(editorTimeline.title, actions)
+		.contextMenu { EditorMenuAction.buttons(actions) }
+		.accessibilityAddTraits(.isHeader)
+		.accessibilityFocused($focus, equals: editorTimeline.id)
+	}
+
+	@ViewBuilder private func trackContents(_ track: TimelineTrack) -> some View {
+		let clips = project.displayedClips(on: track)
+		if clips.isEmpty {
+			Text("No clips").editorTouchRow(alignment: .leading)
+				.accessibilityDropPoint(.center, description: Text("Drop on " + track.title))
+				.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: false) }
+		} else {
+			ScrollView(.horizontal) {
+				HStack(spacing: 0) {
+					ForEach(clips) { clip in
+						if let source = project.sources.first(where: { $0.id == clip.sourceID }) {
+							clipButton(clip, source: source, track: track, count: clips.count)
 						}
 					}
 				}
 			}
-		} header: {
-			let actions = trackActions(track)
-			Menu { EditorMenuAction.buttons(actions) } label: {
-				HStack {
-					Text(track.title)
-					Image(systemName: "chevron.down").accessibilityHidden(true)
-				}
-				.padding(.horizontal, 12)
-				.editorTouchRow(alignment: .leading)
-			}
-				.accessibilityAddTraits(.isHeader)
-				.contextMenu { EditorMenuAction.buttons(actions) }
-				.accessibilityFocused($focus, equals: track.id)
-				.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: true) }
-				.editorMenuActions(track.title, actions)
 		}
+	}
+
+	@ViewBuilder private func trackHeading(_ track: TimelineTrack) -> some View {
+		let actions = trackActions(track)
+		Menu { EditorMenuAction.buttons(actions) } label: {
+			HStack {
+				Text(track.title)
+				Image(systemName: "chevron.down").accessibilityHidden(true)
+			}
+			.padding(.horizontal, 12)
+			.editorTouchRow(alignment: .leading)
+		}
+			.accessibilityAddTraits(.isHeader)
+			.contextMenu { EditorMenuAction.buttons(actions) }
+			.accessibilityFocused($focus, equals: track.id)
+			.dropDestination(for: String.self) { items, _ in drop(items, on: track, beside: nil, after: true) }
+			.editorMenuActions(track.title, actions)
 	}
 
 	private var timelinePoints: [CMTime] {
