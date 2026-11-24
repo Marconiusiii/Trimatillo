@@ -518,8 +518,7 @@ struct ProjectEditorView: View {
 			Button("Generators") { openGenerator() }
 				.accessibilityHint("Adds a generator to your project.")
 				.accessibilityFocused($focus, equals: "generator")
-			Menu { EditorMenuAction.buttons(mainTransitionActions) } label: { Text("Transitions") }
-				.editorMenuActions("Transitions", mainTransitionActions)
+			EditorMenuButton(title: "Transitions", actions: mainTransitionActions)
 				.accessibilityFocused($focus, equals: "transitions")
 				.disabled(!playback.ready || project.displayedClips(on: selectedTrack).isEmpty)
 		}
