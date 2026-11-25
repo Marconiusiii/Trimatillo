@@ -9,6 +9,8 @@ struct ProjectBoard: Identifiable {
 
 struct ProjectWorkspaceView: View {
 	@State var project: EditingProject
+	let support: SupportStore
+	var openProjectIDs: Set<UUID> = []
 	let close: () -> Void
 	@StateObject private var saves = ProjectSaveQueue()
 	@State private var savingError: String?
@@ -20,7 +22,7 @@ struct ProjectWorkspaceView: View {
 	@Environment(\.scenePhase) private var phase
 
 	var body: some View {
-		ProjectEditorView(project: $project, close: closeProject, playback: playback,
+		ProjectEditorView(project: $project, support: support, openProjectIDs: openProjectIDs.union([project.id]), close: closeProject, playback: playback,
 			board: $board, revision: $revision, preparedRevision: preparedRevision, saves: saves)
 			.task(id: board == nil ? revision : nil) {
 				guard board == nil else { return }

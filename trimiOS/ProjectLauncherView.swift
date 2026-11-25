@@ -56,6 +56,7 @@ private enum ProjectResolutionChoice: String, CaseIterable, Identifiable, Sendab
 
 struct ProjectLauncherView: View {
 	let mode: ProjectLauncher
+	var openProjectIDs: Set<UUID> = []
 	let open: (EditingProject) -> Void
 	@Environment(\.dismiss) private var dismiss
 	private nonisolated struct SavedProject: Identifiable, Sendable {
@@ -89,6 +90,11 @@ struct ProjectLauncherView: View {
 		.task(id: selection) {
 			guard mode == .open else { return }
 			if let selection {
+				guard !isOpen(selection) else {
+					self.selection = nil
+					error = "This project is already open. Close its editor before opening it again."
+					return
+				}
 				do {
 					let project = try await Self.readProject(selection)
 					try Task.checkCancellation()
@@ -145,7 +151,32 @@ struct ProjectLauncherView: View {
 		return (projects, unreadable)
 	}
 
+	private func isOpen(_ url: URL) -> Bool {
+		guard let id = UUID(uuidString: url.deletingPathExtension().lastPathComponent) else { return false }
+		return openProjectIDs.contains(id)
+	}
+
+	private func choose(_ project: SavedProject) {
+		guard !isOpen(project.id) else {
+			error = "This project is already open. Close its editor before opening it again."
+			return
+		}
+		selection = project.id
+	}
+
+	private func confirmDeletion(_ project: SavedProject) {
+		guard !isOpen(project.id) else {
+			error = "Close this project before deleting it."
+			return
+		}
+		pendingDeletion = project
+	}
+
 	private func delete(_ project: SavedProject) {
+		guard !isOpen(project.id) else {
+			error = "Close this project before deleting it."
+			return
+		}
 		guard var projects = saved, let index = projects.firstIndex(where: { $0.id == project.id }) else { return }
 		do {
 			try ProjectLibrary.delete(project.id)
@@ -185,13 +216,13 @@ struct ProjectLauncherView: View {
 								.listRowInsets(EdgeInsets())
 						}
 						ForEach(saved ?? []) { project in
-							Button { selection = project.id } label: {
+							Button { choose(project) } label: {
 								LabeledContent(project.name, value: ProjectStorage.formatted(project.bytes)).editorTouchRow(alignment: .leading)
 							}
 								.accessibilityFocused($focusedProject, equals: .project(project.id))
-								.accessibilityAction(named: "Delete Project") { pendingDeletion = project }
+								.accessibilityAction(named: "Delete Project") { confirmDeletion(project) }
 								.contextMenu {
-									Button("Delete Project", role: .destructive) { pendingDeletion = project }
+									Button("Delete Project", role: .destructive) { confirmDeletion(project) }
 								}
 						}
 					}

@@ -32,7 +32,7 @@ struct ContentView: View {
 			if loadingTask != nil {
 				LoadingStatusView("Opening clip", cancel: cancelOpening)
 			} else if let project {
-				ProjectWorkspaceView(project: project) {
+				ProjectWorkspaceView(project: project, support: support) {
 					self.project = nil
 					projectFocus = projectTrigger
 					handleIncomingFile()

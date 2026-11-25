@@ -207,6 +207,8 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Same as Media to use the size and frame rate of the first video you place on the timeline. To set your own, choose a resolution and enter a frame rate.",
 				"Choose Custom to enter a width and height. With Lock Aspect Ratio on, changing one dimension adjusts the other.",
 				"To set a length to aim for, turn on Use Set Project Duration and enter the Duration in Seconds. Clips can extend beyond that duration."
+			]), HelpSection("Help and app settings", [
+				"From any project tab, open Project Actions and choose Help or Trimatillo Settings. Trimatillo Settings changes app-wide preferences, including appearance, timecode, and Direct Touch scrubbing."
 			]), HelpSection("Change project settings", numbered: true, [
 				"Open Project Actions beside the project name and choose Project Settings.",
 				"Edit the name, resolution, frame rate, or duration. Resolution and frame rate apply to project playback and export."

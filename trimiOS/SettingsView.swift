@@ -4,6 +4,7 @@ import SwiftUI
 
 struct SettingsView: View {
 	@ObservedObject var support: SupportStore
+	var openProjectIDs: Set<UUID> = []
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.openURL) private var openURL
 	@AppStorage("appearance", store: EditorPreferences.shared) private var appearance = EditorAppearance.system
@@ -46,7 +47,7 @@ struct SettingsView: View {
 				} header: { heading("Editing") }
 				Section {
 					NavigationLink("Audio") { RecordingRouteSettings() }
-					NavigationLink("Storage") { StorageSettingsView() }
+					NavigationLink("Storage") { StorageSettingsView(support: support, openProjectIDs: openProjectIDs) }
 				}
 				supportSection
 				Section {
@@ -153,6 +154,8 @@ struct SettingsView: View {
 }
 
 private struct StorageSettingsView: View {
+	let support: SupportStore
+	let openProjectIDs: Set<UUID>
 	@Environment(\.scenePhase) private var phase
 	@State private var sizes: (projects: Int64, temporary: Int64, available: Int64)?
 	@State private var managing = false
@@ -212,10 +215,10 @@ private struct StorageSettingsView: View {
 			if let pending { opened = pending; self.pending = nil }
 			else { manageFocused = true; refreshing += 1 }
 		}) {
-			ProjectLauncherView(mode: .open) { pending = $0 }
+			ProjectLauncherView(mode: .open, openProjectIDs: openProjectIDs) { pending = $0 }
 		}
 		.fullScreenCover(item: $opened, onDismiss: { manageFocused = true; refreshing += 1 }) { project in
-			ProjectWorkspaceView(project: project) { opened = nil }
+			ProjectWorkspaceView(project: project, support: support, openProjectIDs: openProjectIDs) { opened = nil }
 		}
 		.alert("Storage", isPresented: Binding(get: { failure != nil }, set: { if !$0 { failure = nil } })) {
 			Button("OK") {}

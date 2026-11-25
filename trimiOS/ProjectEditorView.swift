@@ -12,10 +12,14 @@ private struct HistoryEntry {
 
 private enum ProjectSheet: Identifiable {
 	case settings
+	case help
+	case appSettings
 	case export(ProjectExport)
 	var id: String {
 		switch self {
 		case .settings: "settings"
+		case .help: "help"
+		case .appSettings: "appSettings"
 		case .export: "export"
 		}
 	}
@@ -68,6 +72,8 @@ private enum ProjectSheet: Identifiable {
 
 struct ProjectEditorView: View {
 	@Binding var project: EditingProject
+	let support: SupportStore
+	let openProjectIDs: Set<UUID>
 	let close: () -> Void
 	@ObservedObject var playback: ProjectPlayback
 	@Binding var board: ProjectBoard?
@@ -247,6 +253,10 @@ struct ProjectEditorView: View {
 						}
 					}
 					.editorAppearance()
+				case .help:
+					HelpView()
+				case .appSettings:
+					SettingsView(support: support, openProjectIDs: openProjectIDs)
 				case .export(let timeline):
 					ProjectExportView(timeline: timeline, didSave: prepareExportConfirmation)
 				}
@@ -468,6 +478,8 @@ struct ProjectEditorView: View {
 				projectSheet = .export(timeline)
 			})
 		}
+		actions.append(EditorMenuAction("Help") { playback.releaseAudio(); projectSheet = .help })
+		actions.append(EditorMenuAction("Trimatillo Settings") { playback.releaseAudio(); projectSheet = .appSettings })
 		return actions
 	}
 
