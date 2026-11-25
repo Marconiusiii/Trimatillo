@@ -385,7 +385,10 @@ private struct ScrubAudioWindow {
 		snapshot.videoComposition = item.videoComposition
 		do { snapshot.audioMix = try audioMix(project, solo: []) }
 		catch { failure = error.localizedDescription; return nil }
-		return ProjectExport(name: name, captions: captions, item: snapshot, duration: duration, sources: Array(media.values), quality: mediaQuality)
+		let spatial: SpatialProjectAudio?
+		do { spatial = try spatialExport(project) }
+		catch { failure = error.localizedDescription; return nil }
+		return ProjectExport(name: name, captions: captions, item: snapshot, duration: duration, sources: Array(media.values), quality: mediaQuality, spatial: spatial)
 	}
 
 	func makePreview() -> PreviewPlayback? {
@@ -717,6 +720,55 @@ private struct ScrubAudioWindow {
 			return clipGain
 		}
 	}
+	private struct SpatialSection {
+		let input: AVAssetTrack
+		let range: CMTimeRange
+		let start: CMTime
+		let channels: Int
+		let mono: Bool
+	}
+	private var spatialSections: [CMPersistentTrackID: [SpatialSection]] = [:]
+	private var spatialEligible = false
+
+	private func spatialExport(_ project: EditingProject) throws -> SpatialProjectAudio? {
+		guard #available(iOS 26, *), mediaQuality.spatialAudio, spatialEligible else { return nil }
+		let composition = AVMutableComposition()
+		let mix = AVMutableAudioMix()
+		var native: Set<CMPersistentTrackID> = []
+		var mono: Set<CMPersistentTrackID> = []
+		var gains: [CMPersistentTrackID: [SpatialGainRamp]] = [:]
+		for output in mixOutputs {
+			let sections = (spatialSections[output.id] ?? []).filter { $0.start < duration && $0.range.duration > .zero }
+			let groups = Dictionary(grouping: sections) { $0.channels > 2 ? $0.channels : ($0.mono ? 1 : 2) }
+			for key in groups.keys.sorted() {
+				guard let track = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: kCMPersistentTrackID_Invalid) else { throw MediaExportFailure.spatialProcessing }
+				for section in groups[key]!.sorted(by: { $0.start < $1.start }) {
+					let end = min(section.start + section.range.duration, duration)
+					guard section.start < end else { continue }
+					try track.insertTimeRange(CMTimeRange(start: section.range.start, duration: end - section.start), of: section.input, at: section.start)
+				}
+				if key > 2 {
+					// Stereo-only effects must never silently reshape a spatial soundfield.
+					guard (project.trackStereo?[output.channel] ?? .neutral) == .neutral,
+						project.trackEffects?[output.channel]?.smoothing == nil else { return nil }
+					native.insert(track.trackID)
+					let ducking = project.descriptionDucking?.volumeRamps(takes: project.audioDescriptions ?? [], duration: duration) ?? []
+					let ramps = TransitionAudioSchedule.ramps(output.envelopes, base: 1, ducking: ducking, duration: duration)
+					let base = level(output, project: project, solo: [])
+					gains[track.trackID] = ramps.map { SpatialGainRamp(range: $0.range, start: $0.start * base, end: $0.end * base) }
+				} else {
+					guard let parameters = try audioMix(project, solo: [])?.inputParameters.first(where: { $0.trackID == output.id })?.mutableCopy() as? AVMutableAudioMixInputParameters else { throw MediaExportFailure.spatialProcessing }
+					parameters.trackID = track.trackID
+					mix.inputParameters.append(parameters)
+					if key == 1 && (project.trackStereo?[output.channel] ?? .neutral) == .neutral { mono.insert(track.trackID) }
+				}
+			}
+		}
+		guard !native.isEmpty else { return nil }
+		if composition.duration < duration { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: duration)) }
+		return SpatialProjectAudio(asset: composition, mix: mix, nativeTrackIDs: native, monoTrackIDs: mono, nativeGains: gains)
+	}
+
 	private var stereoMedia = StereoMedia()
 	private var mediaQuality = MediaQuality()
 	private var mixOutputs: [MixOutput] = []
@@ -952,6 +1004,9 @@ private struct ScrubAudioWindow {
 		let generatedVideoIDs = Set(project.sources.filter { $0.generator != nil && $0.picture != nil }.map(\.id))
 		let usesTransitions = project.transitions?.isEmpty == false || project.placements.contains { $0.compositing != nil || generatedVideoIDs.contains($0.sourceID) }
 		let preparedMedia = StereoMedia()
+		var collectedSpatial: [CMPersistentTrackID: [SpatialSection]] = [:]
+		var spatialInputs: [UUID: [AVAssetTrack]] = [:]
+		var canPreserveSpatial = true
 		var builtOutputs: [MixOutput] = []
 		var currentName = ""
 		do {
@@ -977,6 +1032,26 @@ private struct ScrubAudioWindow {
 						guard let input = selected else {
 							if type == .video && source.picture != nil || type == .audio && source.hasAudio { throw CocoaError(.fileReadCorruptFile) }
 							continue
+						}
+						var spatialInput: AVAssetTrack?
+						var sourceChannels = 2
+						if type == .audio {
+							if spatialInputs[source.id] == nil {
+								var found: [AVAssetTrack] = []
+								for candidate in try await access.asset.loadTracks(withMediaType: .audio) {
+									if try await candidate.load(.formatDescriptions).contains(where: { CMFormatDescriptionGetMediaSubType($0) == kAudioFormatAPAC }) { found.append(candidate) }
+								}
+								spatialInputs[source.id] = found
+							}
+							spatialInput = spatialInputs[source.id]?.first
+							if let spatialInput {
+								let descriptions = try await spatialInput.load(.formatDescriptions)
+								let fallbacks = try await spatialInput.loadAssociatedTracks(ofType: .audioFallback)
+								if descriptions.isEmpty || !descriptions.allSatisfy(SpatialChannelMap.supports) || !fallbacks.contains(where: { $0.trackID == input.trackID }) || spatialInputs[source.id]?.count != 1 { canPreserveSpatial = false }
+							}
+							if let description = try await (spatialInput ?? input).load(.formatDescriptions).first,
+								let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description) { sourceChannels = Int(basic.pointee.mChannelsPerFrame) }
+							if spatialInput == nil && sourceChannels > 2 { canPreserveSpatial = false }
 						}
 						let channel = track.kind == .video ? project.audioPartner(for: track.id)?.id ?? track.id : track.id
 						let needsMeasurement = type == .audio && project.trackEffects?[channel]?.loudness != nil
@@ -1005,6 +1080,16 @@ private struct ScrubAudioWindow {
 							if overlap.isValid && !overlap.isEmpty {
 								let (sourceTrack, sourceRange) = type == .audio ? try await preparedMedia.source(access.asset, track: input, range: overlap) : (input, overlap)
 								try output.insertTimeRange(sourceRange, of: sourceTrack, at: cursor + (overlap.start - range.start))
+								if type == .audio {
+									let spatialRange: CMTimeRange?
+									if let spatialInput { spatialRange = try await spatialInput.load(.timeRange) } else { spatialRange = nil }
+									let nativeRange = spatialRange.map { overlap.intersection($0) } ?? overlap
+									if spatialInput == nil || nativeRange.isValid && !nativeRange.isEmpty {
+										collectedSpatial[output.trackID, default: []].append(SpatialSection(input: spatialInput ?? sourceTrack,
+											range: spatialInput == nil ? sourceRange : nativeRange,
+											start: cursor + ((spatialInput == nil ? overlap : nativeRange).start - range.start), channels: sourceChannels, mono: sourceChannels == 1))
+									}
+								}
 							}
 							cursor = cursor + range.duration
 						}
@@ -1039,6 +1124,12 @@ private struct ScrubAudioWindow {
 				let url = try ProjectStorage.recording(take.recording, project: project.id)
 				let parameters = try await insertTake(take, url: url, in: composition, media: preparedMedia)
 				builtOutputs.append(MixOutput(id: parameters.trackID, channel: EditingProject.descriptionMixID))
+				if let recorded = composition.track(withTrackID: parameters.trackID) {
+					let original = try await AVURLAsset(url: url).loadTracks(withMediaType: .audio).first
+					let descriptions = try await original?.load(.formatDescriptions) ?? []
+					let mono = descriptions.first.flatMap { CMAudioFormatDescriptionGetStreamBasicDescription($0)?.pointee.mChannelsPerFrame } == 1
+					collectedSpatial[parameters.trackID] = [SpatialSection(input: recorded, range: recorded.timeRange, start: recorded.timeRange.start, channels: 2, mono: mono)]
+				}
 			}
 			if composition.duration > duration { composition.removeTimeRange(CMTimeRange(start: duration, end: composition.duration)) }
 			try Task.checkCancellation()
@@ -1046,6 +1137,8 @@ private struct ScrubAudioWindow {
 			if composition.duration < duration { composition.insertEmptyTimeRange(CMTimeRange(start: composition.duration, end: duration)) }
 			let item = AVPlayerItem(asset: composition)
 			if layers.isEmpty { quality.hdr = false }
+			spatialSections = collectedSpatial
+			spatialEligible = canPreserveSpatial
 			mediaQuality = quality
 			stereoMedia = preparedMedia
 			mixOutputs = builtOutputs
@@ -1158,10 +1251,12 @@ private struct ScrubAudioWindow {
 	// Keep security-scoped files open through rendering.
 	let sources: [ProjectMediaAccess]
 	let quality: MediaQuality
+	let spatial: SpatialProjectAudio?
+	var needsStereoConfirmation: Bool { quality.needsAudioChoice && spatial == nil }
 	var hasVideo: Bool { item.videoComposition != nil }
 
 	func render(burnInCaptions: Bool = false, allowStereo: Bool = false) async throws -> ExportFile {
-		if quality.needsAudioChoice && !allowStereo { throw MediaExportFailure.spatialProcessing }
+		if needsStereoConfirmation && !allowStereo { throw MediaExportFailure.spatialProcessing }
 		let type: AVFileType = hasVideo ? (quality.hdr ? .mov : .mp4) : .m4a
 		let exporter = try await MediaExportSupport.exporter(asset: item.asset, video: hasVideo, hdr: quality.hdr, type: type)
 		if burnInCaptions, let composition = item.videoComposition, !captions.isEmpty {
@@ -1178,6 +1273,11 @@ private struct ScrubAudioWindow {
 		try await exporter.export(to: output.url, as: type)
 		try await MediaExportSupport.validate(output.url, hdr: quality.hdr)
 		try Task.checkCancellation()
+		if #available(iOS 26, *), let spatial, !allowStereo {
+			let result = try await spatial.render(stereoMovie: output.url, duration: duration, name: name)
+			try await MediaExportSupport.validate(result.url, hdr: quality.hdr)
+			return result
+		}
 		return output
 	}
 

@@ -66,3 +66,7 @@ The camera logs are `/tmp/trimatillo-camera-cinematic-preserved.log` and `/tmp/t
 ## Follow-up: native channel conversion
 
 The project-audio investigation reproduced a non-identity matrix for identical five-channel FOA plus center layouts on macOS and two iOS simulator runtimes. An uncompressed-file trace also reproduced the channel leakage without APAC. This narrows the investigation beyond the earlier encoded round-trip failure; it does not establish a codec defect or a production export workaround. See [PROJECT_AUDIO.md](PROJECT_AUDIO.md) and the unsubmitted [Apple Feedback draft](APPLE_FEEDBACK.md).
+
+## Channel-preserving project export
+
+The project renderer now requests discrete channel-order PCM decoding and keeps the original spatial metadata for encoding. Independent checks for all five channels pass, as do both supplied camera fixtures with narration and whole-program ducking. This replaces the earlier failing requested-layout conversion; it does not compensate for that conversion with gain changes. See [PROJECT_AUDIO.md](PROJECT_AUDIO.md) for the integrated path and remaining device-validation boundaries.

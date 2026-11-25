@@ -1,5 +1,3 @@
-// Experimental project mixer. Not included in the app target.
-// APAC channel-isolation validation currently fails; see PROJECT_AUDIO.md.
 import AVFoundation
 
 // ACN/SN3D W,Y,Z,X followed by a discrete front-center channel.
@@ -42,6 +40,15 @@ nonisolated enum SpatialChannelMap {
 			result[AVLinearPCMIsFloatKey] = true
 			result[AVLinearPCMIsNonInterleaved] = false
 		}
+		return result
+	}
+
+	// Decode channels in their stored order; do not render the soundfield to speakers.
+	static func decodingSettings(channels: Int) -> [String: Any] {
+		var result = settings(channels: channels, pcm: true)
+		var order = AudioChannelLayout()
+		order.mChannelLayoutTag = kAudioChannelLayoutTag_DiscreteInOrder | UInt32(channels)
+		result[AVChannelLayoutKey] = Data(bytes: &order, count: MemoryLayout<AudioChannelLayout>.size)
 		return result
 	}
 
@@ -98,6 +105,9 @@ nonisolated struct SpatialProjectAudio {
 	@available(iOS 26, *)
 	@concurrent func render(stereoMovie: URL, duration: CMTime, name: String,
 		inspectPCM: (@Sendable (AVAudioPCMBuffer, Int64) throws -> Void)? = nil) async throws -> ExportFile {
+		let prepared = try await SpatialSourcePreparation.prepare(asset, nativeTrackIDs: nativeTrackIDs)
+		defer { withExtendedLifetime(prepared) {} }
+		let asset = prepared.asset
 		let output = try ExportFile(name: name, suffix: "mov")
 		let writer = try AVAssetWriter(outputURL: output.url, fileType: .mov)
 		let settings = SpatialChannelMap.settings(channels: 5, pcm: false)
@@ -132,8 +142,16 @@ nonisolated struct SpatialProjectAudio {
 			if !finished { pictureReader.cancelReading(); writer.cancelWriting() }
 		}
 		for track in try await asset.loadTracks(withMediaType: .audio) {
+			let native = nativeTrackIDs.contains(track.trackID)
+			let descriptions = try await track.load(.formatDescriptions)
+			guard !native || descriptions.allSatisfy({ format in
+				guard let basic = CMAudioFormatDescriptionGetStreamBasicDescription(format) else { return false }
+				return [4, 5].contains(Int(basic.pointee.mChannelsPerFrame)) && CMFormatDescriptionGetMediaSubType(format) == kAudioFormatLinearPCM
+			}),
+				let description = descriptions.first,
+				let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description) else { throw MediaExportFailure.spatialProcessing }
 			let stream = try SpatialAudioStream(asset: asset, track: track, mix: mix,
-				channels: nativeTrackIDs.contains(track.trackID) ? 5 : 2, mono: monoTrackIDs.contains(track.trackID), nativeGains: nativeGains[track.trackID], duration: duration)
+				channels: native ? Int(basic.pointee.mChannelsPerFrame) : 2, mono: monoTrackIDs.contains(track.trackID), nativeGains: nativeGains[track.trackID], duration: duration)
 			streams.append(stream)
 		}
 		guard writer.startWriting() else { throw writer.error ?? MediaExportFailure.invalidOutput }
@@ -224,7 +242,7 @@ nonisolated struct SpatialProjectAudio {
 
 nonisolated private final class SpatialAudioStream {
 	let reader: AVAssetReader
-	private let output: AVAssetReaderAudioMixOutput
+	private let output: AVAssetReaderOutput
 	private let channels: Int
 	private let mono: Bool
 	private let nativeGains: [SpatialGainRamp]?
@@ -240,13 +258,15 @@ nonisolated private final class SpatialAudioStream {
 		self.nativeGains = nativeGains
 		reader = try AVAssetReader(asset: asset)
 		reader.timeRange = CMTimeRange(start: .zero, duration: duration)
-		output = AVAssetReaderAudioMixOutput(audioTracks: [track], audioSettings: SpatialChannelMap.settings(channels: channels, pcm: true))
-		let selectedMix = AVMutableAudioMix()
-		selectedMix.inputParameters = mix.inputParameters.filter { $0.trackID == track.trackID }
-		// AVFoundation's processing-tap path can negotiate stereo before the
-		// requested output conversion. Apply native spatial envelopes to PCM
-		// directly so the soundfield never passes through that downmix.
-		if nativeGains == nil { output.audioMix = selectedMix }
+		if nativeGains != nil {
+			output = AVAssetReaderTrackOutput(track: track, outputSettings: SpatialChannelMap.decodingSettings(channels: channels))
+		} else {
+			let mixed = AVAssetReaderAudioMixOutput(audioTracks: [track], audioSettings: SpatialChannelMap.settings(channels: channels, pcm: true))
+			let selectedMix = AVMutableAudioMix()
+			selectedMix.inputParameters = mix.inputParameters.filter { $0.trackID == track.trackID }
+			mixed.audioMix = selectedMix
+			output = mixed
+		}
 		output.alwaysCopiesSampleData = false
 		guard reader.canAdd(output) else { throw MediaExportFailure.spatialProcessing }
 		reader.add(output)
@@ -263,6 +283,7 @@ nonisolated private final class SpatialAudioStream {
 			buffer = nil
 			return
 		}
+		if CMSampleBufferGetNumSamples(sample) == 0 { try next(); return }
 		guard let description = CMSampleBufferGetFormatDescription(sample) else { throw MediaExportFailure.invalidOutput }
 		let format = AVAudioFormat(cmAudioFormatDescription: description)
 		guard format.commonFormat == .pcmFormatFloat32, format.isInterleaved,
@@ -311,5 +332,115 @@ nonisolated private final class SpatialAudioStream {
 
 	func finish() throws {
 		while !ended { try Task.checkCancellation(); try next() }
+	}
+}
+
+// Decode compressed spatial sources continuously before applying edit boundaries.
+// Seeking inside APAC produced a decoder-delay offset in the native-media checks.
+// Scratch audio is streamed to managed export files and released after rendering.
+nonisolated private enum SpatialSourcePreparation {
+	struct Key: Hashable {
+		let url: URL
+		let id: CMPersistentTrackID
+	}
+	struct Prepared {
+		let asset: AVComposition
+		let files: [ExportFile]
+		let sources: [AVAsset]
+	}
+
+	static func prepare(_ original: AVComposition, nativeTrackIDs: Set<CMPersistentTrackID>) async throws -> Prepared {
+		let composition = AVMutableComposition()
+		for track in try await original.loadTracks(withMediaType: .audio) where !nativeTrackIDs.contains(track.trackID) {
+			guard let destination = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: track.trackID) else { throw MediaExportFailure.invalidOutput }
+			let range = try await track.load(.timeRange)
+			try destination.insertTimeRange(range, of: track, at: range.start)
+		}
+		var needed: [Key: CMTime] = [:]
+		for track in try await original.loadTracks(withMediaType: .audio) where nativeTrackIDs.contains(track.trackID) {
+			for segment in try await track.load(.segments) where !segment.isEmpty {
+				guard let segment = segment as? AVCompositionTrackSegment, let url = segment.sourceURL else { throw MediaExportFailure.spatialProcessing }
+				let key = Key(url: url, id: segment.sourceTrackID)
+				needed[key] = max(needed[key] ?? .zero, segment.timeMapping.source.end)
+			}
+		}
+		var files: [ExportFile] = []
+		var sources: [AVAsset] = []
+		var tracks: [Key: AVAssetTrack] = [:]
+		for (key, end) in needed {
+			try Task.checkCancellation()
+			let file = try await decode(key, through: end)
+			files.append(file)
+			let asset = AVURLAsset(url: file.url)
+			sources.append(asset)
+			guard let track = try await asset.loadTracks(withMediaType: .audio).first else { throw MediaExportFailure.invalidOutput }
+			tracks[key] = track
+		}
+		for originalTrack in try await original.loadTracks(withMediaType: .audio) where nativeTrackIDs.contains(originalTrack.trackID) {
+			guard let replacement = composition.addMutableTrack(withMediaType: .audio, preferredTrackID: originalTrack.trackID) else { throw MediaExportFailure.invalidOutput }
+			for segment in try await originalTrack.load(.segments) where !segment.isEmpty {
+				guard let segment = segment as? AVCompositionTrackSegment, let url = segment.sourceURL, let input = tracks[Key(url: url, id: segment.sourceTrackID)] else { throw MediaExportFailure.invalidOutput }
+				let mapping = segment.timeMapping
+				try replacement.insertTimeRange(mapping.source, of: input, at: mapping.target.start)
+				if mapping.source.duration != mapping.target.duration {
+					replacement.scaleTimeRange(CMTimeRange(start: mapping.target.start, duration: mapping.source.duration), toDuration: mapping.target.duration)
+				}
+			}
+		}
+		return Prepared(asset: composition, files: files, sources: sources)
+	}
+
+	private static func decode(_ key: Key, through end: CMTime) async throws -> ExportFile {
+		let asset = AVURLAsset(url: key.url)
+		guard let track = try await asset.loadTrack(withTrackID: key.id),
+			let description = try await track.load(.formatDescriptions).first,
+			SpatialChannelMap.supports(description),
+			let basic = CMAudioFormatDescriptionGetStreamBasicDescription(description),
+			CMAudioFormatDescriptionGetChannelLayout(description, sizeOut: nil) != nil else { throw MediaExportFailure.spatialProcessing }
+		let channels = Int(basic.pointee.mChannelsPerFrame)
+		let format = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: SpatialChannelMap.rate,
+			interleaved: true, channelLayout: AVAudioChannelLayout(layoutTag: kAudioChannelLayoutTag_DiscreteInOrder | UInt32(channels))!)
+		let file = try ExportFile(name: "Spatial Audio", suffix: "caf")
+		var audio: AVAudioFile? = try AVAudioFile(forWriting: file.url, settings: format.settings, commonFormat: .pcmFormatFloat32, interleaved: true)
+		let reader = try AVAssetReader(asset: asset)
+		let output = AVAssetReaderTrackOutput(track: track, outputSettings: SpatialChannelMap.decodingSettings(channels: channels))
+		output.alwaysCopiesSampleData = false
+		guard reader.canAdd(output) else { throw MediaExportFailure.spatialProcessing }
+		reader.add(output)
+		guard reader.startReading() else { throw reader.error ?? MediaExportFailure.invalidOutput }
+		defer { reader.cancelReading() }
+		let total = Int64((end.seconds * SpatialChannelMap.rate).rounded())
+		var cursor: Int64 = 0
+		guard let silence = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: 1024) else { throw MediaExportFailure.invalidOutput }
+		silence.mutableAudioBufferList.pointee.mBuffers.mData!.initializeMemory(as: UInt8.self, repeating: 0, count: 1024 * channels * MemoryLayout<Float>.size)
+		func pad(to frame: Int64) throws {
+			while cursor < frame {
+				try Task.checkCancellation()
+				silence.frameLength = UInt32(min(1024, frame - cursor))
+				try audio!.write(from: silence)
+				cursor += Int64(silence.frameLength)
+			}
+		}
+		while cursor < total, let sample = output.copyNextSampleBuffer() {
+			try Task.checkCancellation()
+			let count = CMSampleBufferGetNumSamples(sample)
+			guard count > 0 else { continue }
+			let time = CMSampleBufferGetPresentationTimeStamp(sample)
+			guard time.isNumeric else { throw MediaExportFailure.invalidOutput }
+			let first = Int64((time.seconds * SpatialChannelMap.rate).rounded())
+			try pad(to: min(total, max(0, first)))
+			let skip = Int(max(0, cursor - first))
+			let frames = min(count - skip, Int(total - cursor))
+			guard frames > 0 else { continue }
+			guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: UInt32(frames)) else { throw MediaExportFailure.invalidOutput }
+			buffer.frameLength = UInt32(frames)
+			guard CMSampleBufferCopyPCMDataIntoAudioBufferList(sample, at: Int32(skip), frameCount: Int32(frames), into: buffer.mutableAudioBufferList) == noErr else { throw MediaExportFailure.invalidOutput }
+			try audio!.write(from: buffer)
+			cursor += Int64(frames)
+		}
+		guard cursor == total || reader.status == .completed else { throw reader.error ?? MediaExportFailure.invalidOutput }
+		try pad(to: total)
+		audio = nil
+		return file
 	}
 }

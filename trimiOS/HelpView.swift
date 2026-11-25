@@ -95,10 +95,10 @@ private enum HelpTopic: String, CaseIterable {
 		HelpSection("Export a project", numbered: true, [
 			"Open Project Actions beside the project name and choose Export. Export includes the full timeline and its track volumes.",
 			"To make captions part of the picture, turn on Burn In Open Captions. The movie uses the captions and timing in the Caption Timeline.",
-			"For video, choose Photos to save a new video to the library, or Files to choose a folder. For an audio project, choose Files to save an M4A.",
+			"For video, choose Photos to save a new video to the library, or Files to choose a folder. For an audio project, choose Files. Stereo exports use M4A; spatial exports use MOV.",
 			"In Files, choose a folder and filename for the export.",
 			"HDR video is exported in HDR when supported by the device and media format.",
-			"For a project containing spatial or multichannel audio, Export in Stereo creates a two-channel mix. Cancel returns to the export choices."
+			"On iOS 26 or later, supported spatial recordings retain spatial audio in project exports, alongside a stereo version for playback. Track volume, fades, and Audio Description ducking apply across the original soundfield. Added recordings and music play in front. If the source layout or applied audio effects require conversion, choose Export in Stereo to create a two-channel mix."
 		])
 	}
 

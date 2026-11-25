@@ -57,3 +57,7 @@ In a separate macOS trace, an uncompressed five-channel LPCM file containing onl
 CNAssetSpatialAudioInfo.assetWriterInputSettings(for: .spatial) returns an equivalent five-channel layout for the tested four-channel iPhone camera recording. Querying the matrix with that returned layout produces the same result. The complete Apple sample has not been run end to end.
 
 References: [Editing spatial audio with an audio mix](https://developer.apple.com/documentation/cinematic/editing-spatial-audio-with-an-audio-mix), [AVAudioConverter channelMap](https://developer.apple.com/documentation/avfaudio/avaudioconverter/channelmap), and [Apple Positional Audio Codec](https://developer.apple.com/av-foundation/Apple-Positional-Audio-Codec.pdf).
+
+## Subsequent working configuration
+
+Requesting PCM from AVAssetReaderTrackOutput with `kAudioChannelLayoutTag_DiscreteInOrder | channelCount` preserves each channel independently in the tested APAC round trips. The production renderer retains known input-layout metadata separately, decodes channels in order, and encodes the final mix with the explicit spatial layout. All five isolated-channel cases pass. The matrix query above still reproduces, but it no longer blocks channel preservation. A separate seeking/timing discrepancy is handled by continuous source decoding before cuts. This draft remains unsubmitted.

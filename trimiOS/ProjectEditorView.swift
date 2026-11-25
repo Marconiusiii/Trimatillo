@@ -2354,7 +2354,7 @@ private struct ProjectExportView: View {
 	}
 
 	private func request(_ selected: Destination) {
-		if timeline.quality.needsAudioChoice {
+		if timeline.needsStereoConfirmation {
 			pendingDestination = selected
 			stereoConfirmation = true
 		} else { destination = selected }
