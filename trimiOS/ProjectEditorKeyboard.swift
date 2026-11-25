@@ -5,6 +5,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 	let playback: ProjectPlayback
 	let enabled: Bool
 	var tool = ProjectTool.editor
+	var timeline = EditorTimeline.media(.primaryVideo)
 	var groupEditing = false
 	let undoShake: () -> Bool
 	let perform: (String, UIKeyModifierFlags) -> Void
@@ -17,6 +18,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 	func updateUIViewController(_ controller: Controller, context: Context) {
 		controller.rootView = content()
 		controller.tool = tool
+		controller.timeline = timeline
 		controller.groupEditing = groupEditing
 		controller.undoShake = enabled ? undoShake : nil
 		controller.performKey = enabled ? perform : nil
@@ -39,6 +41,7 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 		private var commandCache: [ProjectTool: [UIKeyCommand]] = [:]
 		var groupEditing = false { didSet { if oldValue != groupEditing { commandCache.removeAll() } } }
 		var tool = ProjectTool.editor
+		var timeline = EditorTimeline.media(.primaryVideo) { didSet { if oldValue != timeline { commandCache.removeAll() } } }
 		var undoShake: (() -> Bool)?
 		var performKey: ((String, UIKeyModifierFlags) -> Void)?
 		override var canBecomeFirstResponder: Bool { true }
@@ -97,13 +100,37 @@ struct ProjectEditorKeyboard<Content: View>: UIViewControllerRepresentable {
 						("\r", [], tool == .captioner ? "Edit Caption" : "Edit Description")]
 				}
 			} else {
-				bindings += [("g", [], "Add Generator"), ("x", [], "Quick Crossfade"), ("f", [], "Quick Fade"), ("t", .command, "Transitions"), ("d", [.command, .shift], "New Description"), (UIKeyCommand.inputUpArrow, [.alternate, .command], "Previous Track"),
+				bindings += [("g", [], "Add Generator"), ("x", [], "Quick Crossfade"), ("f", [], "Quick Fade"), ("t", .command, "Transitions"), ("c", [.command, .shift], "New Caption"), ("d", [.command, .shift], "New Description"), (UIKeyCommand.inputUpArrow, [.alternate, .command], "Previous Track"),
 				(UIKeyCommand.inputDownArrow, [.alternate, .command], "Next Track"),
 				(UIKeyCommand.inputLeftArrow, [.command, .alternate], "Move Earlier"),
 				(UIKeyCommand.inputRightArrow, [.command, .alternate], "Move Later"),
 				("s", .shift, "Add to Drag"), ("s", [], "Select Clip"), ("c", [], "Open Cutting Board"),
-				("b", .command, "Split Clip"), ("v", [.command, .alternate], "Drop After"),
+				("b", .command, "Split Clip"), ("v", [.command, .alternate], "Drop Clips"),
 				(UIKeyCommand.inputEscape, [], "Cancel Drag")]
+			}
+			if tool == .editor, timeline.mediaTrack == nil {
+				bindings.removeAll { input, flags, _ in
+					["g", "x", "f", "[", "]"].contains(input)
+						|| (input == "t" && flags == .command)
+						|| (input == "b" && flags == .command)
+						|| (input == "s" && flags == .shift)
+						|| (input == "v" && flags == [.command, .alternate])
+						|| ([UIKeyCommand.inputLeftArrow, UIKeyCommand.inputRightArrow].contains(input) && flags == [.command, .alternate])
+						|| input == UIKeyCommand.inputEscape
+				}
+				let item: String
+				switch timeline {
+				case .captions: item = "Caption"
+				case .descriptions(.audio): item = "Audio Description"
+				case .descriptions(.transcript): item = "Written Description"
+				case .media: item = "Clip"
+				}
+				bindings = bindings.map { input, flags, title in
+					if input == "\r" || (input == "c" && flags.isEmpty) { return (input, flags, "Edit " + item) }
+					if input == "s" && flags.isEmpty { return (input, flags, "Select " + item) }
+					if ["\u{8}", UIKeyCommand.inputDelete].contains(input) { return (input, flags, "Delete " + item + "s") }
+					return (input, flags, title)
+				}
 			}
 			bindings.append(("m", [.command, .shift], "Open Mixer"))
 			bindings.append(("v", [.command, .shift], "Record Voice Over"))

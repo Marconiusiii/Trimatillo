@@ -202,7 +202,7 @@ struct ProjectEditorView: View {
 
 	private var workspacePage: some View {
 		ProjectEditorKeyboard(playback: playback, enabled: clipsBoard == nil && shifting == nil && generatorRequest == nil && deletingSource == nil && voiceInsertion == nil && movingToTime == nil && trackForMove == nil && confirmPacking == nil && descriptionEntry == nil && captionEntry == nil && !directTouch && projectSheet == nil && renaming == nil && fullScreenPreview == nil && board == nil && effects == nil && transitionRequest == nil && !jumping && error == nil && !loading && !pickingPhoto && !pickingFile,
-			tool: tool, undoShake: {
+			tool: tool, timeline: editorTimeline, undoShake: {
 				guard !undo.isEmpty else { return false }
 				history(back: true)
 				return true
@@ -1766,6 +1766,11 @@ struct ProjectEditorView: View {
 		if key.lowercased() == "v", flags.contains([.command, .shift]) {
 			tool = .voicer
 			openVoice()
+			return
+		}
+		if key == "c", flags == [.command, .shift] {
+			tool = .captioner
+			openCaption(nil)
 			return
 		}
 		if key.lowercased() == "d", flags.contains([.command, .shift]) {

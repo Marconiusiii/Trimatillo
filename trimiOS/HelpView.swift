@@ -193,13 +193,15 @@ private enum HelpTopic: String, CaseIterable {
 				"Use a clip's accessibility actions to open its Cutting Board, move it, or remove it. Use track headings to reach Track Actions."
 			]), HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
-				"In Editor, G opens Add Generator for the selected track.",
+				"In Editor, G opens Add Generator for the selected video or audio track.",
 				"X applies Cross Dissolve on a video track or Cross Fade on an audio track at the edit point.",
 				"F opens Quick Fade at the playhead on the selected track.",
-				"Command-T opens Transitions at the playhead on the selected track.",
+				"Command-T opens Transitions at the playhead on the selected video or audio track.",
+				"From Editor, Command-Shift-C opens New Caption using the In and Out markers. Command-Shift-D opens New Description, and Command-Shift-V opens Record Voice Over.",
 				"On the project timeline, Space or K plays or pauses, including when a clip is focused. K also stops rewind or fast forward. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
 				"I and O mark In and Out at the current playhead without stopping playback. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
-				"Command-Option-Up and Command-Option-Down select a track. C opens its clip at or after the playhead. Return opens the focused clip. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",
+				"Command-Option-Up and Command-Option-Down select a track. C or Return opens the focused clip, or the clip at or after the playhead when no clip is focused. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",
+				"On a caption or description timeline, C or Return edits the focused entry or the entry at the playhead. S selects an entry, and Delete removes the selected entries.",
 				"S selects or deselects a clip. With a clip focused, Shift-S starts a drag or adds the clip to the current drag. Use Left or Right Arrow to choose a destination and Command-Option-V to drop. Escape cancels. Without a selected destination, Command-Option-V drops after the focused clip.",
 				"Command-Option-Left and Command-Option-Right move a clip or selected group earlier or later. Delete removes the selected clips. Command-Z undoes and Command-Shift-Z redoes."
 			]), HelpSection("Create a project", numbered: true, [
