@@ -508,7 +508,7 @@ struct ProjectEditorView: View {
 		transport
 
 		DisclosureGroup(isExpanded: $expanded) {
-			sourcePicker("Import Clip", source: nil)
+			sourcePicker("Import Media", source: nil)
 			ForEach(project.sources) { source in
 				let actions = (source.generator == nil ? [] : [EditorMenuAction("Edit Generator") { openGenerator(source: source, rowID: source.id.uuidString) }]) + [
 					EditorMenuAction("Open Cutting Board") { openBoard(source, placement: nil) },
