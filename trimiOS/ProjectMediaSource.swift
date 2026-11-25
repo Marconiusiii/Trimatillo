@@ -112,6 +112,22 @@ nonisolated struct ProjectMediaSource: Codable, Equatable, Identifiable {
 		return nil
 	}
 
+	@MainActor func renewedFileReference() throws -> Reference? {
+		guard case .file(let data) = reference else { return nil }
+		var stale = false
+		// Unavailable sources retain their existing reconnect flow.
+		guard let url = try? URL(resolvingBookmarkData: data, options: .withoutUI,
+			relativeTo: nil, bookmarkDataIsStale: &stale), stale else { return nil }
+		let accessed = url.startAccessingSecurityScopedResource()
+		defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+		do {
+			return .file(try url.bookmarkData(options: .minimalBookmark,
+				includingResourceValuesForKeys: nil, relativeTo: nil))
+		} catch {
+			throw ProjectFailure("Could not update the file reference for " + displayName + ". Reconnect the clip in Project Media.")
+		}
+	}
+
 	@MainActor func open() async throws -> ProjectMediaAccess {
 		switch reference {
 		case .generated(let definition): return try await GeneratorRenderer.access(definition)

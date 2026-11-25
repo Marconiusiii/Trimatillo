@@ -382,7 +382,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose My Projects on the main screen, then the project name. Trimatillo saves each project change as you work.",
 				"If a saved project cannot be read, restore its project file from backup. Choose another project in My Projects to keep editing.",
 				"If a source is unavailable, open Project Media, choose the source, and reconnect it from Files or Photos. Choose the original to restore access for every placement.",
-				"When moving to a new device, restore Trimatillo's project data from your device backup and make the original media available through Files or Photos."
+				"When moving to a new device, restore Trimatillo's project data from your device backup and make the original media available through Files or Photos. Trimatillo updates saved file references when it can locate a moved file. Reconnect unavailable clips in Project Media."
 			]), HelpSection("Manage storage", numbered: true, [
 				"From the main screen, open Settings, then Storage to check the space used by projects and temporary files.",
 				"Choose Clear Temporary Files to remove unused working copies. Files in use are released when their import, edit, share, or export finishes.",

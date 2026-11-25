@@ -26,6 +26,7 @@ struct ProjectWorkspaceView: View {
 				guard board == nil else { return }
 				let preparing = revision
 				do {
+					try await renewFileReferences()
 					try await prepareNarration()
 					try Task.checkCancellation()
 					await playback.prepare(project)
@@ -55,6 +56,22 @@ struct ProjectWorkspaceView: View {
 			.overlay {
 				if closing { LoadingStatusView("Saving project") }
 			}
+	}
+
+	private func renewFileReferences() async throws {
+		try Task.checkCancellation()
+		let original = project
+		var updated = original
+		for index in updated.sources.indices {
+			if let reference = try updated.sources[index].renewedFileReference() {
+				updated.sources[index].reference = reference
+			}
+		}
+		guard updated != original else { return }
+		try saves.enqueue(updated, replacing: original)
+		// Update before yielding so subsequent edits use the queued snapshot.
+		project = updated
+		try await saves.flush()
 	}
 
 	private func prepareNarration() async throws {
