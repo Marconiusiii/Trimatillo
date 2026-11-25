@@ -419,6 +419,7 @@ private enum HelpTopic: String, CaseIterable {
 		case .playback:
 			[HelpSection("Move through a clip", [
 				"With VoiceOver, focus Clip preview to use image description tools.",
+				"In Settings, turn on Show Audio Waveforms to display the edited audio above Playhead in the Audio Cutting Board and in audio-only projects. The position line follows playback and movement of the Playhead slider.",
 				"With VoiceOver, swipe up or down on Playhead to move five seconds forward or back. Short clips use smaller steps. Double-tap and hold, then drag to scrub. Magic Tap plays or pauses while Playhead is focused.",
 				"Fast Forward plays forward. Rewind plays backward. Repeat either control to advance through 1x, 1.5x, 2x, 4x, and 8x. Switching direction starts at 1x.",
 				"Use the Go to Start accessibility action on Rewind or Go to End on Fast Forward to move to that boundary of the edited clip.",

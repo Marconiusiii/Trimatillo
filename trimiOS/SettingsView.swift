@@ -7,6 +7,7 @@ struct SettingsView: View {
 	@Environment(\.dismiss) private var dismiss
 	@Environment(\.openURL) private var openURL
 	@AppStorage("appearance", store: EditorPreferences.shared) private var appearance = EditorAppearance.system
+	@AppStorage("showAudioWaveforms", store: EditorPreferences.shared) private var showAudioWaveforms = false
 	@AppStorage("shakeToUndo", store: EditorPreferences.shared) private var shake = true
 	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
@@ -32,6 +33,7 @@ struct SettingsView: View {
 					Picker("Control Color", selection: $color) {
 						ForEach(ControlColor.allCases, id: \.self) { Text($0.rawValue).tag($0) }
 					}
+					Toggle("Show Audio Waveforms", isOn: $showAudioWaveforms)
 				} header: { heading("Appearance") }
 				Section {
 					Picker("Timecode", selection: $format) {

@@ -27,6 +27,7 @@
         }, {
           "target": "TrimatoShare",
           "inclusions": [
+			"AudioWaveformView.swift",
             "ClipEditTimeline.swift",
             "ClipSilenceTrimming.swift",
             "CuttingBoardKeyboard.swift",

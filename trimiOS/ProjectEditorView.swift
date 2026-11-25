@@ -141,6 +141,7 @@ struct ProjectEditorView: View {
 	@FocusState private var renamingClip: Bool
 	@AccessibilityFocusState(for: .voiceOver) private var renameFocused: Bool
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
+	@AppStorage("showAudioWaveforms", store: EditorPreferences.shared) private var showAudioWaveforms = false
 	@AccessibilityFocusState private var focus: String?
 	@State private var trigger: String?
 
@@ -393,14 +394,15 @@ struct ProjectEditorView: View {
 	private var editorLayout: some View {
 		GeometryReader { geometry in
 			let hasVideo = project.placements.contains { $0.track == .video }
+			let hasPreview = hasVideo || (showAudioWaveforms && project.duration > .zero)
 			let wide = geometry.size.width > geometry.size.height && geometry.size.width > 550
 			HStack(spacing: 0) {
-				if hasVideo && wide {
+				if hasPreview && wide {
 					preview.frame(width: geometry.size.width * 0.45)
 				}
 				ScrollView {
 					VStack(alignment: .leading, spacing: 0) {
-						if hasVideo && !wide {
+						if hasPreview && !wide {
 							preview.frame(maxWidth: .infinity)
 								.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect) + 48)
 						}
@@ -475,6 +477,16 @@ struct ProjectEditorView: View {
 	}
 
 	private var preview: some View {
+		Group {
+			if !project.placements.contains(where: { $0.track == .video }) {
+				AudioWaveformView(item: playback.player.currentItem) {
+					ProjectWaveformPlayhead(playhead: playback.playhead, duration: project.duration)
+				}
+			} else { videoPreview }
+		}
+	}
+
+	private var videoPreview: some View {
 		VStack(spacing: 0) {
 			ProjectPreview(player: playback.player)
 				.overlay {
@@ -2711,4 +2723,10 @@ struct ProjectTouchSurface: UIViewRepresentable {
 			if hold.state == .ended { playback.setScrubbing(false) }
 		}
 	}
+}
+
+struct ProjectWaveformPlayhead: View {
+	@ObservedObject var playhead: ProjectPlayhead
+	let duration: CMTime
+	var body: some View { WaveformPlayhead(position: playhead.position, duration: duration) }
 }

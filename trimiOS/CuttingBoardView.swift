@@ -94,6 +94,7 @@ struct BoardProjectActions {
 struct CuttingBoardView: View {
 	var projectActions: BoardProjectActions?
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
+	@AppStorage("showAudioWaveforms", store: EditorPreferences.shared) private var showAudioWaveforms = false
 	@ObservedObject var session: CuttingBoardSession
 	var closeDirectTouchEditor: (() -> Void)?
 	@State private var showingDirectTouchEditor = false
@@ -185,6 +186,14 @@ struct CuttingBoardView: View {
 		VStack(spacing: 0) {
 			if showingDirectTouchEditor {
 				EditorTheme.surface
+			} else if !session.hasVideo && showAudioWaveforms {
+				AudioWaveformView(item: session.player.currentItem) {
+					ZStack {
+						WaveformSelection(range: session.selection, duration: session.duration)
+						ClipWaveformPlayhead(playhead: session.playhead, duration: session.duration)
+					}
+				}
+				.frame(maxWidth: .infinity, maxHeight: .infinity)
 			} else {
 				CuttingBoardTouchSurface(session: session, onClose: nil)
 					.frame(maxWidth: .infinity, maxHeight: .infinity)
