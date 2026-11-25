@@ -396,20 +396,141 @@ private struct PhotoClipsPreview: View {
 
 	private var pages: some View {
 		VStack(spacing: 0) {
-			TabView(selection: Binding(get: { page }, set: { next in
-				guard collection.prepared, next != page, collection.previews.indices.contains(page), collection.previews.indices.contains(next) else { return }
-				collection.previews[page].player?.pause()
-				page = next
-			})) {
-				ForEach(items.indices, id: \.self) { index in
-					PhotoPreviewContent(playback: collection.previews[index]).tag(index)
-				}
-			}
-			.tabViewStyle(.page(indexDisplayMode: .always))
-			.indexViewStyle(.page(backgroundDisplayMode: .always))
+			PhotoPreviewPager(previews: collection.previews, selection: $page)
 			Toggle("Include Clip", isOn: Binding(get: { !excluded.contains(page) }, set: {
 				if $0 { excluded.remove(page) } else { excluded.insert(page) }
 			})).padding()
 		}
+	}
+}
+
+// UIKit owns the pager and page control for the entire review session.
+// SwiftUI updates do not replace either control or the hosted preview roots.
+private struct PhotoPreviewPager: UIViewControllerRepresentable {
+	let previews: [PhotoPreviewPlayback]
+	@Binding var selection: Int
+	@AppStorage("controlColor", store: EditorPreferences.shared) private var color = ControlColor.teal
+
+	func makeUIViewController(context: Context) -> PhotoPreviewPageController {
+		PhotoPreviewPageController(previews: previews, selection: selection) { selection = $0 }
+	}
+
+	func updateUIViewController(_ controller: PhotoPreviewPageController, context: Context) {
+		controller.selectionChanged = { selection = $0 }
+		controller.view.tintColor = UIColor(color.accent)
+		controller.pageControl.currentPageIndicatorTintColor = UIColor(color.accent)
+	}
+
+	static func dismantleUIViewController(_ controller: PhotoPreviewPageController, coordinator: ()) {
+		controller.close()
+	}
+}
+
+@MainActor private final class PhotoPreviewPageController: UIViewController, UIPageViewControllerDataSource, UIPageViewControllerDelegate {
+	let pageControl = UIPageControl()
+	var selectionChanged: (Int) -> Void
+	private let previews: [PhotoPreviewPlayback]
+	private let pages: [UIHostingController<PhotoPreviewContent>]
+	private let pager = UIPageViewController(transitionStyle: .scroll, navigationOrientation: .horizontal)
+	private var selected: Int
+	private var requested: Int?
+	private var transitioning = false
+	private var closed = false
+
+	init(previews: [PhotoPreviewPlayback], selection: Int, selectionChanged: @escaping (Int) -> Void) {
+		self.previews = previews
+		pages = previews.map { UIHostingController(rootView: PhotoPreviewContent(playback: $0)) }
+		selected = selection
+		self.selectionChanged = selectionChanged
+		super.init(nibName: nil, bundle: nil)
+	}
+
+	required init?(coder: NSCoder) { fatalError("init(coder:) has not been implemented") }
+
+	override func viewDidLoad() {
+		super.viewDidLoad()
+		view.backgroundColor = UIColor(EditorTheme.workspace)
+		pager.dataSource = self
+		pager.delegate = self
+		addChild(pager)
+		view.addSubview(pager.view)
+		pager.view.translatesAutoresizingMaskIntoConstraints = false
+		pager.didMove(toParent: self)
+		pageControl.numberOfPages = pages.count
+		pageControl.currentPage = selected
+		pageControl.accessibilityLabel = "Clip Preview"
+		pageControl.backgroundStyle = .prominent
+		pageControl.pageIndicatorTintColor = .secondaryLabel
+		pageControl.addTarget(self, action: #selector(pageChanged), for: .valueChanged)
+		view.addSubview(pageControl)
+		pageControl.translatesAutoresizingMaskIntoConstraints = false
+		NSLayoutConstraint.activate([
+			pager.view.topAnchor.constraint(equalTo: view.topAnchor),
+			pager.view.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+			pager.view.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+			pager.view.bottomAnchor.constraint(equalTo: pageControl.topAnchor),
+			pageControl.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+			pageControl.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+			pageControl.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+			pageControl.heightAnchor.constraint(greaterThanOrEqualToConstant: 48)
+		])
+		if pages.indices.contains(selected) { pager.setViewControllers([pages[selected]], direction: .forward, animated: false) }
+	}
+
+	@objc private func pageChanged() {
+		guard !closed, pages.indices.contains(pageControl.currentPage) else { return }
+		requested = pageControl.currentPage
+		showRequestedPage()
+	}
+
+	private func showRequestedPage() {
+		guard !closed, !transitioning, let target = requested else { return }
+		requested = nil
+		guard target != selected else { return }
+		previews[selected].player?.pause()
+		let direction: UIPageViewController.NavigationDirection = target > selected ? .forward : .reverse
+		transitioning = true
+		pager.setViewControllers([pages[target]], direction: direction, animated: !UIAccessibility.isReduceMotionEnabled) { [weak self] _ in
+			self?.finishTransition()
+		}
+	}
+
+	private func finishTransition() {
+		guard !closed else { return }
+		transitioning = false
+		if let visible = pager.viewControllers?.first, let index = pages.firstIndex(where: { $0 === visible }) {
+			selected = index
+			selectionChanged(index)
+		}
+		if requested == nil { pageControl.currentPage = selected }
+		showRequestedPage()
+	}
+
+	func pageViewController(_ pageViewController: UIPageViewController, viewControllerBefore viewController: UIViewController) -> UIViewController? {
+		guard let index = pages.firstIndex(where: { $0 === viewController }), index > 0 else { return nil }
+		return pages[index - 1]
+	}
+
+	func pageViewController(_ pageViewController: UIPageViewController, viewControllerAfter viewController: UIViewController) -> UIViewController? {
+		guard let index = pages.firstIndex(where: { $0 === viewController }), index + 1 < pages.count else { return nil }
+		return pages[index + 1]
+	}
+
+	func pageViewController(_ pageViewController: UIPageViewController, willTransitionTo pendingViewControllers: [UIViewController]) {
+		transitioning = true
+		previews[selected].player?.pause()
+	}
+
+	func pageViewController(_ pageViewController: UIPageViewController, didFinishAnimating finished: Bool, previousViewControllers: [UIViewController], transitionCompleted completed: Bool) {
+		finishTransition()
+	}
+
+	func close() {
+		closed = true
+		requested = nil
+		selectionChanged = { _ in }
+		previews.forEach { $0.player?.pause() }
+		pager.delegate = nil
+		pager.dataSource = nil
 	}
 }

@@ -306,7 +306,7 @@ private enum HelpTopic: String, CaseIterable {
 			]), HelpSection("Arrange clips", numbered: true, [
 				"Expand Project Media. Choose Import Clip, then Photo Library or Files.",
 				"In Photo Library, select videos in the order you want to import them, then choose Preview Clips. The previews open after preparation finishes.",
-				"Use the page control or scroll horizontally to preview each selected clip. Magic Tap plays or pauses the current clip. Moving to another page pauses playback.",
+				"With VoiceOver, adjust the Clip Preview page control to move between selected clips. You can also swipe horizontally between pages. Magic Tap plays or pauses the current clip. Changing pages pauses playback.",
 				"Turn off Include Clip to leave a video out of the import. Choose Use Clips to add the included videos to Project Media. VoiceOver focus moves to the first imported clip.",
 				"Choose Open Cutting Board from the source clip's accessibility actions or menu. Trim the clip or cut a marked range.",
 				"Choose Append to add the marked portion after the last clip on the selected compatible track. With fewer than two markers, Append uses the entire current edit. Keep the Cutting Board open to append another passage.",
