@@ -22,6 +22,12 @@ struct HelpView: View {
 			.navigationDestination(for: HelpTopic.self) { topic in
 				List {
 					Text(topic.introduction).editorTouchRow(alignment: .leading).listRowBackground(EditorTheme.surface)
+					if topic == .projects || topic == .captioner || topic == .describer || topic == .voicer {
+						NavigationLink(value: HelpTopic.touch) {
+							Text(HelpTopic.touch.rawValue).editorTouchRow(alignment: .leading)
+						}
+						.listRowBackground(EditorTheme.surface)
+					}
 					ForEach(topic.sections, id: \.title) { section in
 						Section {
 							ForEach(section.rows.indices, id: \.self) { index in
@@ -57,7 +63,6 @@ private struct HelpSection {
 private enum HelpTopic: String, CaseIterable {
 	case first = "Quick Start"
 	case touch = "Direct Touch Editing"
-	case projectTouch = "Project Direct Touch Editor"
 	case actions = "VoiceOver actions"
 	case keys = "Keyboard commands"
 	case open = "Open a clip"
@@ -78,14 +83,13 @@ private enum HelpTopic: String, CaseIterable {
 		case .voicer: "Record a voice-over take and place it at a chosen time in your project."
 		case .describer: "Describe what happens in a passage with a timed transcript, a spoken recording, or both."
 		case .captioner: "Write timed text for dialogue, music, and sounds as you play through your project."
-		case .projectTouch: "Explore the assembled project, choose a track, and find the clips that meet at each cut."
 		case .projects: "Arrange video and audio clips on a shared timeline. Each placement has its own edits."
 		case .first: "Trim the beginning and end of a clip, then cut a passage from the middle and save a copy."
 		case .open: "Open an audio or video file in Trimatillo, or send a video from Photos to the Cutting Board."
 		case .playback: "The playhead is your current position in the clip. Move it to find the moment you want to edit."
 		case .cuts: "A trim shortens one end of a clip. Cutting a passage from the middle creates a join where the two remaining sections meet."
 		case .actions: "Use the VoiceOver Actions rotor on Cutting Board controls to move the playhead, set markers, and make cuts."
-		case .touch: "Use Direct Touch gestures in the Cutting Board to move through a clip and edit it. For project gestures, including generators and transitions, see Project Direct Touch Editor in Help."
+		case .touch: "Choose Direct Touch Editor in the Cutting Board, Editor, Captioner, Describer, or Voicer. It opens at the current playhead. Use the common gestures below and the additional gestures for that workspace."
 		case .keys: "Use a connected keyboard to control playback, edit clips, and add generators and transitions in Editor."
 		case .save: "Save an edited clip from the Cutting Board or export a project timeline from Project Actions."
 		}
@@ -137,27 +141,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Export in Project Actions to include your volume, stereo, mute, and audio ducking settings. Solo applies only while listening in Mixer."
 			])]
 		case .voicer:
-			[HelpSection("Use Direct Touch", [
-				"Open Voicer, then choose Direct Touch Editor to use these gestures."
-			]), HelpSection("One finger in Voicer Direct Touch", [
-				"Swipe right to step forward one project frame.",
-				"Swipe left to step back one project frame.",
-				"Double-tap and hold, then drag to scrub through the project.",
-				"Swipe down to mark In. Repeat at the marker to remove it.",
-				"Swipe up to mark Out. Repeat at the marker to remove it.",
-				"Triple-tap to close Direct Touch."
-			]), HelpSection("Two fingers in Voicer Direct Touch", [
-				"Double-tap to play or pause. With VoiceOver, use Magic Tap.",
-				"Swipe right to play forward. Repeat to increase speed.",
-				"Swipe left to rewind. Repeat to increase speed.",
-				"Swipe down to open Record Voice Over at the playhead."
-			]), HelpSection("Three fingers in Voicer Direct Touch", [
-				"Tap once to hear the current playhead position.",
-				"Swipe right to go to the next voice-over edit point or project marker.",
-				"Swipe left to go to the previous voice-over edit point or project marker.",
-				"Swipe down to undo a project edit.",
-				"Swipe up to redo it."
-			]), HelpSection("Record a take", numbered: true, [
+			[HelpSection("Record a take", numbered: true, [
 				"Open Voicer and move the project playhead to the start of the narration.",
 				"Press Command-Shift-V from the project, or choose Record Voice Over. To use a different insertion time, change Insert at Time or Insert at Frame.",
 				"Enter a Clip Name. Leave Source Audio Playback on to hear the project during the take, or turn it off to record with the project audio muted. Choose Record and speak after the rising cue. Choose Stop Recording when you finish.",
@@ -167,29 +151,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Remove from Track removes this placement. Delete from Project removes the recording and all timeline clips that use it. Choose Undo to restore the edit."
 			])]
 		case .describer:
-			[HelpSection("Use Direct Touch", [
-				"Open Describer, then choose Direct Touch Editor to use these gestures."
-			]), HelpSection("One finger in Describer Direct Touch", [
-				"Swipe right to advance one frame.",
-				"Swipe left to go back one frame.",
-				"Double-tap and hold, then drag to scrub.",
-				"Swipe down to mark In. Repeat at the same time to remove In.",
-				"Swipe up to mark Out. Repeat at the same time to remove Out.",
-				"Double-tap on an entry boundary to edit it. Double-tap elsewhere to create a description for the marked passage.",
-				"Triple-tap to return to Describer."
-			]), HelpSection("Two fingers in Describer Direct Touch", [
-				"Double-tap to play or pause.",
-				"Swipe right to play forward. Repeat to increase speed.",
-				"Swipe left to rewind. Repeat to increase speed.",
-				"Swipe up to open Written Description for the marked passage. Description Text is ready to type.",
-				"Swipe down to open Audio Description for the marked passage. Choose Record to start a take. Saving returns to Direct Touch Editor."
-			]), HelpSection("Three fingers in Describer Direct Touch", [
-				"Tap once to hear the current playhead position.",
-				"Swipe right to reach the next entry boundary or project End.",
-				"Swipe left to reach the previous entry boundary or project Start.",
-				"Swipe down to undo.",
-				"Swipe up to redo."
-			]), HelpSection("Describe a passage", numbered: true, [
+			[HelpSection("Describe a passage", numbered: true, [
 				"Open Describer in a project. Mark In at the beginning of the passage and Out at its end.",
 				"For a written entry, select Descriptive Transcript in Timeline Chooser. Press Command-Shift-D or choose New Description. Enter the passage in Description Text.",
 				"Choose Play In to Out to repeat the passage while writing or preparing a recording.",
@@ -206,27 +168,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Open Audio in the main Settings sheet to select a microphone or audio output. Same as System uses the microphone selected by your device."
 			])]
 		case .captioner:
-			[HelpSection("Use Direct Touch", [
-				"Open Captioner, then choose Direct Touch Editor to use these gestures."
-			]), HelpSection("One finger in Captioner Direct Touch", [
-				"Swipe right to step forward one project frame.",
-				"Swipe left to step back one project frame.",
-				"Double-tap and hold the second tap, then drag to scrub using your Absolute or Relative setting.",
-				"Swipe down to mark In. Repeat at the marker to remove it.",
-				"Swipe up to mark Out. Repeat at the marker to remove it.",
-				"Triple-tap to close Direct Touch."
-			]), HelpSection("Two fingers in Captioner Direct Touch", [
-				"Double-tap to play or pause.",
-				"Swipe right to play forward. Repeat to increase speed.",
-				"Swipe left to rewind. Repeat to increase rewind speed.",
-				"Swipe down to open New Caption for the marked passage."
-			]), HelpSection("Three fingers in Captioner Direct Touch", [
-				"Tap once to hear the current playhead position.",
-				"Swipe right to move to the next caption start, marker, or project boundary.",
-				"Swipe left to move to the previous caption start, marker, or project boundary.",
-				"Swipe down to undo the last project change.",
-				"Swipe up to redo it."
-			]), HelpSection("Captioner keyboard commands", [
+			[HelpSection("Captioner keyboard commands", [
 				"Press I and O to mark In and Out without stopping playback. Option-I and Option-O clear the markers.",
 				"Press Command-Shift-C to open New Caption. Return edits the focused caption or the caption at the playhead.",
 				"Press Space or K to play or pause. J rewinds and L plays forward.",
@@ -246,43 +188,8 @@ private enum HelpTopic: String, CaseIterable {
 				"If passages need review, read the reason for each one. Shorten the text or adjust the marked range and finalize again. Undo restores the previous captions.",
 				"Choose Export Captions, then SRT or WebVTT for timed captions, or Plain Text Transcript for the words in timeline order. Choose an app in the share sheet or choose Save to Files."
 			])]
-		case .projectTouch:
-			[HelpSection("Open Direct Touch", numbered: true, [
-				"Open a project with clips on its timeline. In the Editor, choose Direct Touch Editor.",
-				"The surface opens at the project playhead on the selected track. Primary Video is the initial track."
-			]), HelpSection("One finger", [
-				"Swipe right to step forward one project frame.",
-				"Swipe left to step back one project frame.",
-				"Double-tap and hold the second tap, then drag to scrub with project audio. Absolute scrubbing maps the full project across the surface. Relative scrubbing starts at the current playhead and spans up to ten seconds across the surface. Lift to leave the playhead there.",
-				"Swipe down to mark In at the playhead. Repeat there to remove it.",
-				"Swipe up to mark Out at the playhead. Repeat there to remove it.",
-				"Double-tap at a caption or description boundary to open that entry for editing.",
-				"Triple-tap to close Direct Touch and return to the Editor."
-			]), HelpSection("Two fingers", [
-				"Double-tap to play or pause. With VoiceOver, use Magic Tap.",
-				"Swipe right to play forward. Repeat to increase speed through 1x, 1.5x, 2x, 4x, and 8x.",
-				"Swipe left to rewind. Repeat to increase rewind speed through the same five speeds.",
-				"Swipe up to select the previous project timeline and load its edit points.",
-				"Swipe down to select the next project timeline and load its edit points. This includes video and audio tracks, Voice Over tracks, Captions, Audio Description, and Descriptive Transcript."
-			]), HelpSection("Three fingers", [
-				"Tap once to hear the current playhead position.",
-				"Swipe right to snap to the next edit point on the selected track.",
-				"Swipe left to snap to the previous edit point on the selected track.",
-				"Swipe down to undo the last project edit.",
-				"Swipe up to redo the last project edit you undid."
-			]), HelpSection("Four fingers", [
-				"Swipe right to open Add Generator for the selected track. Choose the generator and where to add it.",
-				"Swipe down at an edit point on the selected track to apply Cross Dissolve on a video track or Cross Fade on an audio track. The first duration is one second. Later uses follow the duration last saved for Cross Dissolve or Cross Fade.",
-				"Swipe up to open Quick Fade at the playhead on the selected track. Set Fade In and Fade Out and their durations, then preview the result.",
-				"Tap once to open Transitions for the clip or edit point on the selected track. Choose a transition, set its duration, and preview it."
-			]), HelpSection("Track navigation", [
-				"Switching tracks keeps the playhead in place. Playback and scrubbing include the full project mix.",
-				"At a shared cut, the edit point uses the name of the clip beginning there in either direction. Start, End, In, and Out are also stops.",
-				"In the main Editor, adjust Timeline Chooser to select the active track. The Editor shows the selected track and its edit points on the playhead slider. Use the Previous Edit Point and Next Edit Point buttons near the step controls to reach the same stops. The step buttons also retain these accessibility actions."
-			])]
 		case .projects:
-			[HelpSection("Direct Touch and VoiceOver", [
-				"In Editor, choose Direct Touch Editor for playback, markers, track navigation, generators, and transitions. Project Direct Touch Editor in Help lists each gesture.",
+			[HelpSection("VoiceOver actions", [
 				"Use a clip's accessibility actions to open its Cutting Board, move it, or remove it. Use track headings to reach Track Actions."
 			]), HelpSection("Project keyboard commands", [
 				"On a project Cutting Board, E appends, Option-W opens Add at Playhead, W inserts and splits, and D overwrites. Command-U saves changes to an existing placement.",
@@ -334,7 +241,6 @@ private enum HelpTopic: String, CaseIterable {
 				"Applied fades and transitions appear beside their clips. Fade In appears before a clip, Fade Out after it, and a transition between clips before the incoming clip. Open an entry to adjust it or choose Remove Transition and save. Transitions that include linked audio also appear on its audio track; either entry edits the same transition.",
 				"In Editor, press X for a quick crossfade, F for Quick Fade, or Command-Shift-T for Transitions. These commands use the playhead on the selected track. Commands in a clip's own menu apply to that clip."
 			]), HelpSection("Project playback and navigation", [
-				"Choose Direct Touch Editor to use gestures on the project. The Project Direct Touch Editor Help topic lists each gesture.",
 				"Choose Rewind or Fast Forward to play in that direction. Repeat to select 1x, 1.5x, 2x, 4x, or 8x. Changing direction starts at 1x.",
 				"Use the Go to Start accessibility action on Rewind or Go to End on Fast Forward to move to that boundary of the project.",
 				"Press Space or K to play or pause, J to rewind, and L to play forward. Left and Right Arrow step one project frame. Hold Shift to step ten frames.",
@@ -462,36 +368,61 @@ private enum HelpTopic: String, CaseIterable {
 				"Use Magic Tap, a two-finger double-tap, to play or pause the clip."
 			])]
 		case .touch:
-			[HelpSection("Open the editor", ["Choose Direct Touch Editor on the Cutting Board to use the following gestures."]),
-			HelpSection("One finger", [
-				"Swipe right to step forward one frame.",
-				"Swipe left to step back one frame.",
-				"Double-tap and hold the second tap to scrub. Drag left or right to preview the clip, then lift to leave the playhead there.",
-				"Swipe down to mark In. Repeat at the marker to remove it, or swipe down at a new position to move it.",
-				"Swipe up to mark Out. Repeat at the marker to remove it, or swipe up at a new position to move it.",
-				"Double-tap at a join to adjust its boundaries.",
-				"Triple-tap to close the editor and return to the Cutting Board."
-			]), HelpSection("Two fingers", [
-				"Double-tap to play or pause.",
-				"Swipe right to play forward. Repeat to increase the speed through 1x, 1.5x, 2x, 4x, and 8x.",
-				"Swipe left to rewind. Repeat to increase the rewind speed through the same five speeds.",
-				"Swipe down to delete the marked range. When material remains on both sides, the two sections meet at a join."
-			]), HelpSection("Three fingers", [
+			[HelpSection("Common gestures: one finger", [
+				"Swipe right to step forward one clip or project frame.",
+				"Swipe left to step back one clip or project frame.",
+				"Double-tap and hold the second tap, then drag left or right to scrub with audio. Lift to leave the playhead there.",
+				"Swipe down to mark In. Repeat at the marker to remove it, or at a new position to move it.",
+				"Swipe up to mark Out. Repeat at the marker to remove it, or at a new position to move it.",
+				"Triple-tap to close Direct Touch and return to the workspace."
+			]), HelpSection("Common gestures: two fingers", [
+				"Double-tap to play or pause. With VoiceOver, use Magic Tap.",
+				"Swipe right to play forward. Repeat to increase speed through 1x, 1.5x, 2x, 4x, and 8x.",
+				"Swipe left to rewind. Repeat to increase rewind speed through the same five speeds."
+			]), HelpSection("Common gestures: three fingers", [
 				"Tap once to hear the current playhead position.",
-				"Swipe right to move to the next join, marker, or end of the clip.",
-				"Swipe left to move to the previous join, marker, or start of the clip.",
+				"Swipe right to move to the next edit point or marker, including End.",
+				"Swipe left to move to the previous edit point or marker, including Start.",
 				"Swipe down to undo the last edit. Repeat to undo earlier edits. VoiceOver announces the action after each Undo.",
-				"Swipe up to redo the last edit you undid. Repeat to reapply edits in order."
-			]), HelpSection("Four fingers", [
+				"Swipe up to redo. Repeat to reapply edits in order."
+			]), HelpSection("Scrubbing", [
+				"In Settings, choose Direct Touch Scrubbing under Editing.",
+				"Absolute is the default. The left edge is Start, the center is halfway through the edited clip or project, and the right edge is End. The playhead jumps to your finger when the hold begins.",
+				"Relative starts each drag at the current playhead. For clips or projects ten seconds or longer, dragging from the center to either edge moves five seconds. For shorter content, the full width spans its duration.",
+				"Lift and start another double-tap and hold to continue from the new playhead position. You can begin anywhere on the surface, including back at the center."
+			]), HelpSection("Cutting Board: one finger", [
+				"Double-tap at a join to adjust its boundaries."
+			]), HelpSection("Cutting Board: two fingers", [
+				"Swipe down to delete the marked range. When material remains on both sides, the sections meet at a join."
+			]), HelpSection("Cutting Board: four fingers", [
 				"Swipe right to trim the head of the clip to the playhead.",
 				"Swipe left to trim the tail of the clip to the playhead.",
 				"Swipe down in a project Cutting Board to append the marked portion to the timeline.",
 				"Swipe up in a project Cutting Board to choose Append to Track, Add to New Track, Overwrite at Playhead, or Insert and Split at Playhead."
-			]), HelpSection("Direct Touch Scrubbing", [
-				"In Settings, choose Direct Touch Scrubbing under Editing.",
-				"Absolute is the default. The left edge is the start of the edited clip, the center is halfway through, and the right edge is the end. The playhead jumps to your finger as soon as the hold begins.",
-				"Relative starts each drag at the current playhead. On clips ten seconds or longer, dragging from the center to either edge moves five seconds. On shorter clips, the full width spans the clip's duration.",
-				"To continue in Relative mode, lift and start another double-tap and hold. You can start anywhere on the surface, including back at the center."
+			]), HelpSection("Project Editor: one finger", [
+				"Double-tap at a caption or description boundary to open that entry for editing."
+			]), HelpSection("Project Editor: two fingers", [
+				"Swipe up to select the previous project timeline and load its edit points.",
+				"Swipe down to select the next project timeline and load its edit points."
+			]), HelpSection("Project Editor: four fingers", [
+				"Swipe right to open Add Generator for the selected track. Choose the generator and where to add it.",
+				"Swipe down at an edit point to apply Cross Dissolve on a video track or Cross Fade on an audio track. The first duration is one second. Later uses follow the duration last saved for that transition.",
+				"Swipe up to open Quick Fade at the playhead on the selected track. Set Fade In and Fade Out and their durations, then preview the result.",
+				"Tap once to open Transitions for the clip or edit point on the selected track."
+			]), HelpSection("Captioner: two fingers", [
+				"Swipe down to open New Caption for the marked passage."
+			]), HelpSection("Describer: one finger", [
+				"Double-tap on an entry boundary to edit it. Double-tap elsewhere to create a description for the marked passage."
+			]), HelpSection("Describer: two fingers", [
+				"Swipe up to open Written Description for the marked passage. Description Text is ready to type.",
+				"Swipe down to open Audio Description for the marked passage. Choose Record to start a take. Saving returns to Direct Touch Editor."
+			]), HelpSection("Voicer: two fingers", [
+				"Swipe down to open Record Voice Over at the playhead."
+			]), HelpSection("Edit points by workspace", [
+				"The Cutting Board stops at joins. Project Editor uses the selected timeline, including video, audio, Voice Over, Captions, Audio Description, and Descriptive Transcript.",
+				"Captioner uses caption starts. Describer uses entry boundaries on its selected timeline. Voicer uses voice-over edit points.",
+				"Project Editor opens on the selected track. Switching tracks keeps the playhead in place. Playback and scrubbing include the full project mix.",
+				"At a shared project cut, the edit point uses the name of the clip beginning there in either direction."
 			])]
 		case .keys:
 			[HelpSection("On the primary Cutting Board", [
