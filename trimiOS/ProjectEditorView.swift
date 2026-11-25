@@ -1742,7 +1742,7 @@ struct ProjectEditorView: View {
 			quickCross()
 			return
 		case "f" where flags.isEmpty && tool == .editor: openTransition(quick: true); return
-		case "t" where flags.contains(.command) && tool == .editor: openTransition(quick: false); return
+		case "t" where flags == .command && tool == .editor: openTransition(quick: false); return
 		case " ", "k": playback.toggle(); return
 		case "j", "l": playback.shuttle(forward: key == "l"); return
 		case "i", "o":

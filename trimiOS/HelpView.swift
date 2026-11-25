@@ -196,7 +196,7 @@ private enum HelpTopic: String, CaseIterable {
 				"In Editor, G opens Add Generator for the selected track.",
 				"X applies Cross Dissolve on a video track or Cross Fade on an audio track at the edit point.",
 				"F opens Quick Fade at the playhead on the selected track.",
-				"Command-T or Command-Shift-T opens Transitions at the playhead on the selected track.",
+				"Command-T opens Transitions at the playhead on the selected track.",
 				"On the project timeline, Space or K plays or pauses, including when a clip is focused. K also stops rewind or fast forward. J rewinds and L plays forward. Left and Right Arrow step one frame, or ten with Shift. T reads the playhead. Home and End jump to the project boundaries.",
 				"I and O mark In and Out at the current playhead without stopping playback. Hold Option to clear a marker. Semicolon and Apostrophe move to the previous and next boundary or marker. Command-Left and Command-Right do the same.",
 				"Command-Option-Up and Command-Option-Down select a track. C opens its clip at or after the playhead. Return opens the focused clip. Command-B splits at the playhead. Command-[ and Command-] trim the start and end.",
@@ -241,7 +241,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Cross transitions use extra source material on both sides of the cut. If there is too little available, shorten the transition or adjust the cut in the Cutting Board. The project duration stays the same.",
 				"Transitions follow their clips. Removing a clip, separating a joined pair, or shortening a clip beyond its transition removes the affected transition. Undo restores it.",
 				"Applied fades and transitions appear beside their clips. Fade In appears before a clip, Fade Out after it, and a transition between clips before the incoming clip. Open an entry to adjust it or choose Remove Transition and save. Transitions that include linked audio also appear on its audio track; either entry edits the same transition.",
-				"In Editor, press X for a quick crossfade, F for Quick Fade, or Command-Shift-T for Transitions. These commands use the playhead on the selected track. Commands in a clip's own menu apply to that clip."
+				"In Editor, press X for a quick crossfade, F for Quick Fade, or Command-T for Transitions. These commands use the playhead on the selected track. Commands in a clip's own menu apply to that clip."
 			]), HelpSection("Project playback and navigation", [
 				"Choose Rewind or Fast Forward to play in that direction. Repeat to select 1x, 1.5x, 2x, 4x, or 8x. Changing direction starts at 1x.",
 				"Use the Go to Start accessibility action on Rewind or Go to End on Fast Forward to move to that boundary of the project.",
@@ -450,7 +450,7 @@ private enum HelpTopic: String, CaseIterable {
 				"G opens Add Generator.",
 				"X applies Cross Dissolve on a video track or Cross Fade on an audio track at an edit point.",
 				"F opens Quick Fade.",
-				"Command-T or Command-Shift-T opens Transitions."
+				"Command-T opens Transitions."
 			])]
 		case .save:
 			[Self.projectExport, HelpSection("Export from the Cutting Board", [
