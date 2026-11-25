@@ -305,7 +305,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Edit the name, resolution, frame rate, or duration. Resolution and frame rate apply to project playback and export."
 			]), HelpSection("Arrange clips", numbered: true, [
 				"Expand Project Media. Choose Import Clip, then Photo Library or Files.",
-				"In Photo Library, select videos in the order you want to import them, then choose Preview Clips.",
+				"In Photo Library, select videos in the order you want to import them, then choose Preview Clips. The previews open after preparation finishes.",
 				"Use the page control or scroll horizontally to preview each selected clip. Magic Tap plays or pauses the current clip. Moving to another page pauses playback.",
 				"Turn off Include Clip to leave a video out of the import. Choose Use Clips to add the included videos to Project Media. VoiceOver focus moves to the first imported clip.",
 				"Choose Open Cutting Board from the source clip's accessibility actions or menu. Trim the clip or cut a marked range.",

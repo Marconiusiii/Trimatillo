@@ -119,11 +119,14 @@ struct PhotoClipPickerView: View {
 	@Published private(set) var failure: String?
 	private var observation: AnyCancellable?
 	private var generation = UUID()
+	private var readiness: CheckedContinuation<Void, Error>?
+	private var readinessObservation: AnyCancellable?
+	private var readinessTimeout: Task<Void, Never>?
 
-	func load(_ request: PhotoPreviewRequest) async {
+	func load(_ request: PhotoPreviewRequest, announce: Bool = true) async {
 		stop()
 		let generation = self.generation
-		if UIAccessibility.isVoiceOverRunning {
+		if announce && UIAccessibility.isVoiceOverRunning {
 			var message = AttributedString("Loading Clip Preview")
 			message.accessibilitySpeechAnnouncementPriority = .high
 			AccessibilityNotification.Announcement(message).post()
@@ -135,6 +138,7 @@ struct PhotoClipPickerView: View {
 			try AVAudioSession.sharedInstance().setCategory(.playback, mode: .moviePlayback)
 			clip = candidate
 			let item = AVPlayerItem(asset: candidate.asset)
+			if !announce { item.preferredForwardBufferDuration = 1 }
 			let player = AVPlayer()
 			self.player = player
 			observation = item.publisher(for: \.status, options: [.initial, .new])
@@ -144,7 +148,7 @@ struct PhotoClipPickerView: View {
 					if status == .failed { self.playbackFailed() }
 					else if status == .readyToPlay && !self.ready {
 						self.ready = true
-						if UIAccessibility.isVoiceOverRunning {
+						if announce && UIAccessibility.isVoiceOverRunning {
 							var message = AttributedString("Clip preview ready")
 							message.accessibilitySpeechAnnouncementPriority = .low
 							AccessibilityNotification.Announcement(message).post()
@@ -159,7 +163,64 @@ struct PhotoClipPickerView: View {
 		}
 	}
 
+	func prepare(_ request: PhotoPreviewRequest) async throws {
+		await load(request, announce: false)
+		try Task.checkCancellation()
+		guard failure == nil, let player, let item = player.currentItem else { throw CocoaError(.fileReadCorruptFile) }
+		try await withTaskCancellationHandler {
+			try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Void, Error>) in
+				readiness = continuation
+				readinessTimeout = Task { [weak self] in
+					do { try await Task.sleep(for: .seconds(30)) } catch { return }
+					self?.finishReadiness(.failure(CocoaError(.fileReadUnknown)))
+				}
+				readinessObservation = player.publisher(for: \.status, options: [.initial, .new])
+					.combineLatest(item.publisher(for: \.status, options: [.initial, .new]))
+					.receive(on: DispatchQueue.main)
+					.sink { [weak self] playerStatus, itemStatus in
+						if playerStatus == .failed || itemStatus == .failed {
+							self?.finishReadiness(.failure(CocoaError(.fileReadCorruptFile)))
+						} else if playerStatus == .readyToPlay && itemStatus == .readyToPlay {
+							self?.finishReadiness(.success(()))
+						}
+					}
+			}
+		} onCancel: {
+			Task { @MainActor [weak self] in self?.finishReadiness(.failure(CancellationError())) }
+		}
+		try Task.checkCancellation()
+		let timeout = Task { @MainActor [weak player] in
+			do { try await Task.sleep(for: .seconds(30)) } catch { return }
+			player?.cancelPendingPrerolls()
+		}
+		defer { timeout.cancel() }
+		let primed = await withTaskCancellationHandler {
+			await player.preroll(atRate: 1)
+		} onCancel: {
+			Task { @MainActor [weak player] in player?.cancelPendingPrerolls() }
+		}
+		try Task.checkCancellation()
+		guard primed else { throw CocoaError(.fileReadUnknown) }
+	}
+
+	private func finishReadiness(_ result: Result<Void, Error>) {
+		let continuation = readiness
+		readiness = nil
+		readinessObservation?.cancel()
+		readinessObservation = nil
+		readinessTimeout?.cancel()
+		readinessTimeout = nil
+		continuation?.resume(with: result)
+	}
+
+	func preparationFailed() {
+		stop()
+		failure = "Could not prepare this video. Turn off Include Clip to import the other videos, or go back and choose it again."
+	}
+
 	func stop() {
+		finishReadiness(.failure(CancellationError()))
+		player?.cancelPendingPrerolls()
 		generation = UUID()
 		observation?.cancel()
 		observation = nil
@@ -229,64 +290,126 @@ private struct PhotoClipPreview: View {
 	}
 }
 
+@MainActor private final class PhotoPreviewCollection: ObservableObject {
+	@Published private(set) var previews: [PhotoPreviewPlayback] = []
+	@Published private(set) var prepared = false
+	private var pending: PhotoPreviewPlayback?
+	private var request: PhotoPreviewRequest?
+	private var generation = UUID()
+
+	func prepare(_ items: [PhotosPickerItem]) async {
+		stop()
+		let generation = self.generation
+		for item in items {
+			guard generation == self.generation else { return }
+			guard !Task.isCancelled else { stop(); return }
+			let preview = PhotoPreviewPlayback()
+			let request = PhotoPreviewRequest(item: item)
+			pending = preview
+			self.request = request
+			do { try await preview.prepare(request) }
+			catch {
+				guard generation == self.generation else { return }
+				if Task.isCancelled { stop(); return }
+				preview.preparationFailed()
+			}
+			guard generation == self.generation else { return }
+			guard !Task.isCancelled else { stop(); return }
+			previews.append(preview)
+			pending = nil
+			self.request = nil
+		}
+		prepared = true
+	}
+
+	func stop() {
+		generation = UUID()
+		prepared = false
+		request?.preparation.cancel()
+		request = nil
+		pending?.stop()
+		pending = nil
+		previews.forEach { $0.stop() }
+		previews = []
+	}
+}
+
 private struct PhotoClipsPreview: View {
 	let items: [PhotosPickerItem]
 	let use: ([PhotosPickerItem]) -> Void
 	@Environment(\.dismiss) private var dismiss
-	@StateObject private var playback = PhotoPreviewPlayback()
+	@StateObject private var collection = PhotoPreviewCollection()
 	@State private var page = 0
 	@State private var excluded: Set<Int> = []
 	@State private var inclusionError = false
-	@State private var request: PhotoPreviewRequest?
 
 	var body: some View {
 		NavigationStack {
-			VStack(spacing: 0) {
-				TabView(selection: Binding(get: { page }, set: { next in
-					guard next != page else { return }
-					request?.preparation.cancel()
-					playback.stop()
-					page = next
-				})) {
-					ForEach(items.indices, id: \.self) { index in
-						Group {
-							if index == page { PhotoPreviewContent(playback: playback) }
-							else { Color.clear.accessibilityHidden(true) }
-						}.tag(index)
-					}
+			Group {
+				if collection.prepared { pages }
+				else {
+					ProgressView("Preparing Clip Previews", value: Double(collection.previews.count), total: Double(max(1, items.count)))
+						.padding()
+						.frame(maxWidth: .infinity, maxHeight: .infinity)
 				}
-				.tabViewStyle(.page(indexDisplayMode: .always))
-				.indexViewStyle(.page(backgroundDisplayMode: .always))
-				Toggle("Include Clip", isOn: Binding(get: { !excluded.contains(page) }, set: {
-					if $0 { excluded.remove(page) } else { excluded.insert(page) }
-				})).padding()
 			}
 			.background(EditorTheme.workspace)
 			.navigationBarTitleDisplayMode(.inline)
 			.toolbar {
-				ToolbarItem(placement: .topBarLeading) { Button("Back") { dismiss() } }
+				ToolbarItem(placement: .topBarLeading) { Button(collection.prepared ? "Back" : "Cancel") { dismiss() } }
 				ToolbarItem(placement: .principal) {
-					Text("Clip \(page + 1) of \(items.count)").font(.headline).accessibilityAddTraits(.isHeader)
+					Text("Clip Preview").font(.headline).accessibilityAddTraits(.isHeader)
 				}
-				ToolbarItem(placement: .topBarTrailing) {
-					Button("Use Clips") {
-						let included = items.indices.filter { !excluded.contains($0) }.map { items[$0] }
-						if included.isEmpty { inclusionError = true }
-						else { playback.player?.pause(); use(included) }
+				if collection.prepared {
+					ToolbarItem(placement: .topBarTrailing) {
+						Button("Use Clips") {
+							let included = items.indices.filter { !excluded.contains($0) }.map { items[$0] }
+							if included.isEmpty { inclusionError = true }
+							else { collection.previews[page].player?.pause(); use(included) }
+						}
 					}
 				}
 			}
 		}
 		.editorAppearance()
-		.accessibilityAction(.magicTap) { playback.toggle() }
+		.accessibilityAction(.magicTap) {
+			if collection.prepared { collection.previews[page].toggle() }
+		}
 		.alert("Include a Clip", isPresented: $inclusionError) {
 			Button("OK", role: .cancel) {}
 		} message: { Text("Turn on Include Clip for at least one video, then choose Use Clips.") }
-		.task(id: page) {
-			let request = PhotoPreviewRequest(item: items[page])
-			self.request = request
-			await playback.load(request)
+		.task {
+			if UIAccessibility.isVoiceOverRunning {
+				var message = AttributedString("Preparing Clip Previews")
+				message.accessibilitySpeechAnnouncementPriority = .high
+				AccessibilityNotification.Announcement(message).post()
+			}
+			await collection.prepare(items)
+			if !Task.isCancelled, collection.prepared, UIAccessibility.isVoiceOverRunning {
+				var message = AttributedString("Clip previews ready")
+				message.accessibilitySpeechAnnouncementPriority = .low
+				AccessibilityNotification.Announcement(message).post()
+			}
 		}
-		.onDisappear { request?.preparation.cancel(); playback.stop() }
+		.onDisappear { collection.stop() }
+	}
+
+	private var pages: some View {
+		VStack(spacing: 0) {
+			TabView(selection: Binding(get: { page }, set: { next in
+				guard collection.prepared, next != page, collection.previews.indices.contains(page), collection.previews.indices.contains(next) else { return }
+				collection.previews[page].player?.pause()
+				page = next
+			})) {
+				ForEach(items.indices, id: \.self) { index in
+					PhotoPreviewContent(playback: collection.previews[index]).tag(index)
+				}
+			}
+			.tabViewStyle(.page(indexDisplayMode: .always))
+			.indexViewStyle(.page(backgroundDisplayMode: .always))
+			Toggle("Include Clip", isOn: Binding(get: { !excluded.contains(page) }, set: {
+				if $0 { excluded.remove(page) } else { excluded.insert(page) }
+			})).padding()
+		}
 	}
 }
