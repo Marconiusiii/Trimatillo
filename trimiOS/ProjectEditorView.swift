@@ -98,7 +98,6 @@ struct ProjectEditorView: View {
 	@State private var dropAnchor: UUID?
 	@State private var dropAfter = false
 	@State private var dragging: Set<UUID> = []
-	@ScaledMetric(relativeTo: .body) private var wideTransportWidth: CGFloat = 420
 	@State private var generatorRequest: GeneratorRequest?
 	@State private var effects: TimelineTrack?
 	@State private var transitionRequest: ProjectTransitionRequest?
@@ -404,7 +403,7 @@ struct ProjectEditorView: View {
 					VStack(alignment: .leading, spacing: 0) {
 						if hasPreview && !wide {
 							preview.frame(maxWidth: .infinity)
-								.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect) + 48)
+								.frame(height: min(geometry.size.height * 0.4, geometry.size.width / pictureAspect))
 						}
 						Group {
 							if tool == .editor { projectRows }
@@ -487,22 +486,13 @@ struct ProjectEditorView: View {
 	}
 
 	private var videoPreview: some View {
-		VStack(spacing: 0) {
-			ProjectPreview(player: playback.player)
-				.overlay {
-					if let cues = project.captions, !cues.isEmpty {
-						CaptionOverlay(cues: cues, playhead: playback.playhead, aspect: pictureAspect)
-					}
+		ProjectPreview(player: playback.player)
+			.overlay {
+				if let cues = project.captions, !cues.isEmpty {
+					CaptionOverlay(cues: cues, playhead: playback.playhead, aspect: pictureAspect)
 				}
-				.frame(maxWidth: .infinity, maxHeight: .infinity)
-			Button { fullScreenPreview = playback.makePreview() } label: {
-				Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right")
 			}
-			.buttonStyle(EditorButtonStyle())
-			.fixedSize(horizontal: false, vertical: true)
-			.disabled(!playback.ready)
-			.accessibilityFocused($focus, equals: "fullScreenPreview")
-		}
+			.frame(maxWidth: .infinity, maxHeight: .infinity)
 	}
 
 	private var mainTransitionActions: [EditorMenuAction] {
@@ -745,73 +735,96 @@ struct ProjectEditorView: View {
 
 	private var transport: some View {
 		Group {
-			if tool != .mixer {
-				Button("Direct Touch Editor") { directTouch = true }
-					.buttonStyle(EditorButtonStyle())
-					.accessibilityFocused($focus, equals: "projectDirectTouch")
-					.disabled(!playback.ready)
-			}
 			ProjectTimelineSlider(playhead: playback.playhead, playback: playback, duration: project.duration,
 				points: timelinePoints,
 				frame: project.frame, format: format, formatTime: time)
 				.disabled(!playback.ready)
-			Button("Jump to Time", action: openJump)
-				.buttonStyle(EditorButtonStyle())
-				.accessibilityFocused($focus, equals: "jump")
-				.disabled(!playback.ready)
 			ViewThatFits(in: .horizontal) {
-				HStack(spacing: 0) {
-					editPointButton(forward: false)
-					playbackButtons
-					editPointButton(forward: true)
+				HStack(alignment: .top, spacing: 0) {
+					backwardButtons
+					ProjectPlayButton(playback: playback)
+					forwardButtons
 				}
-				.frame(minWidth: wideTransportWidth)
+				.frame(minWidth: 336)
 				VStack(spacing: 0) {
-					HStack(spacing: 0) { playbackButtons }
-					HStack(spacing: 0) {
-						editPointButton(forward: false)
-						editPointButton(forward: true)
+					HStack(alignment: .top, spacing: 0) {
+						backwardButtons
+						ProjectPlayButton(playback: playback)
 					}
+					HStack(alignment: .top, spacing: 0) { forwardButtons }
 				}
 			}
 			.disabled(!playback.ready)
 			.labelStyle(.iconOnly)
-			.buttonStyle(EditorButtonStyle(square: true))
+			.buttonStyle(EditorButtonStyle(square: true, reservesBadgeSpace: true))
 			.fixedSize(horizontal: false, vertical: true)
 			EditorCommandRow {
-				ForEach([true, false], id: \.self) { isIn in
-					let point = isIn ? project.markIn : project.markOut
-					Button {
-						playback.pause()
-						setMarker(isIn, to: point?.time == playback.position ? nil : ProjectTime(playback.position))
-					} label: { Text(isIn ? "Mark In" : "Mark Out") }
-					.accessibilityActions {
-						if let point {
-							Button(isIn ? "Go to In" : "Go to Out") { playback.seek(point.time) }
-							Button(isIn ? "Clear In" : "Clear Out") { setMarker(isIn, to: nil) }
-						}
+				if tool != .mixer {
+					Button { directTouch = true } label: {
+						Text("Direct Touch").frame(maxWidth: .infinity)
 					}
-					.accessibilityValue(point.map { time($0.time) } ?? "")
-					.disabled(project.placements.isEmpty)
+					.accessibilityLabel("Direct Touch Editor")
+					.buttonStyle(EditorButtonStyle())
+					.accessibilityFocused($focus, equals: "projectDirectTouch")
 				}
-				Menu {
-					Button("Undo") { history(back: true) }.disabled(undo.isEmpty)
-					Button("Redo") { history(back: false) }.disabled(redo.isEmpty)
-				} label: { Text("Undo") }
-				.editorMenuActions("Undo", historyActions)
-				.disabled(undo.isEmpty && redo.isEmpty)
+				if project.placements.contains(where: { $0.track == .video }) {
+					Button { fullScreenPreview = playback.makePreview() } label: {
+						Label("Full Screen Preview", systemImage: "arrow.up.left.and.arrow.down.right")
+					}
+					.labelStyle(.iconOnly)
+					.buttonStyle(EditorButtonStyle(square: true))
+					.frame(width: 52)
+					.accessibilityFocused($focus, equals: "fullScreenPreview")
+				}
 			}
+			.disabled(!playback.ready)
+			.fixedSize(horizontal: false, vertical: true)
+			EditorCommandRow {
+				markerButton(true)
+				Button("Jump to Time", action: openJump)
+					.accessibilityFocused($focus, equals: "jump")
+					.disabled(!playback.ready)
+				markerButton(false)
+			}
+			.buttonStyle(EditorButtonStyle())
+			.fixedSize(horizontal: false, vertical: true)
+			Menu {
+				Button("Undo") { history(back: true) }.disabled(undo.isEmpty)
+				Button("Redo") { history(back: false) }.disabled(redo.isEmpty)
+			} label: { Text("Undo") }
+			.editorMenuActions("Undo", historyActions)
+			.disabled(undo.isEmpty && redo.isEmpty)
 			.buttonStyle(EditorButtonStyle())
 			.fixedSize(horizontal: false, vertical: true)
 		}
 	}
 
-	@ViewBuilder private var playbackButtons: some View {
+	private func markerButton(_ isIn: Bool) -> some View {
+		let point = isIn ? project.markIn : project.markOut
+		return Button {
+			playback.pause()
+			setMarker(isIn, to: point?.time == playback.position ? nil : ProjectTime(playback.position))
+		} label: { Text(isIn ? "Mark In" : "Mark Out") }
+		.accessibilityActions {
+			if let point {
+				Button(isIn ? "Go to In" : "Go to Out") { playback.seek(point.time) }
+				Button(isIn ? "Clear In" : "Clear Out") { setMarker(isIn, to: nil) }
+			}
+		}
+		.accessibilityValue(point.map { time($0.time) } ?? "")
+		.disabled(project.placements.isEmpty)
+	}
+
+	@ViewBuilder private var backwardButtons: some View {
+		editPointButton(forward: false)
 		stepButton(forward: false)
 		ProjectShuttleButton(playback: playback, forward: false, boundary: .zero)
-		ProjectPlayButton(playback: playback)
+	}
+
+	@ViewBuilder private var forwardButtons: some View {
 		ProjectShuttleButton(playback: playback, forward: true, boundary: project.duration)
 		stepButton(forward: true)
+		editPointButton(forward: true)
 	}
 
 	private func editPointTitle(forward: Bool) -> String {

@@ -88,8 +88,8 @@ private enum HelpTopic: String, CaseIterable {
 		case .open: "Open an audio or video file in Trimatillo, or send a video from Photos to the Cutting Board."
 		case .playback: "The playhead is your current position in the clip. Move it to find the moment you want to edit."
 		case .cuts: "A trim shortens one end of a clip. Cutting a passage from the middle creates a join where the two remaining sections meet."
-		case .actions: "Use the VoiceOver Actions rotor on Cutting Board controls to move the playhead, set markers, and make cuts."
-		case .touch: "Choose Direct Touch Editor in the Cutting Board, Editor, Captioner, Describer, or Voicer. It opens at the current playhead. Use the common gestures below and the additional gestures for that workspace."
+		case .actions: "Use the VoiceOver Actions rotor to step through a clip, go to markers, and redo edits."
+		case .touch: "Choose Direct Touch Editor in the Cutting Board, or Direct Touch in Editor, Captioner, Describer, or Voicer. It opens at the current playhead. Use the common gestures below and the additional gestures for that workspace."
 		case .keys: "Use a connected keyboard to control playback, edit clips, and add generators and transitions in Editor."
 		case .save: "Save an edited clip from the Cutting Board or export a project timeline from Project Actions."
 		}
@@ -247,7 +247,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Drag across Playhead to preview the project from start to end. Lift to leave the playhead there.",
 				"With VoiceOver, focus Playhead, double-tap and hold until you hear three rising tones, then drag left or right. After lifting your finger, use Magic Tap to play or pause at the playhead. Swipe up or down to move five seconds forward or back. Short projects use smaller steps.",
 				"When scrub audio is unavailable, VoiceOver reads the timecode after a brief pause in your drag or when you lift.",
-				"Choose Jump to Time to enter a time or frame in your selected timecode format.",
+				"Choose Jump to Time, between Mark In and Mark Out, to enter a time or frame in your selected timecode format.",
 				"Choose Step Back or Step Forward to move one project frame. In the Actions rotor, choose the 10-frame action or the previous or next edit point. Double-tap to use that action again while the button stays focused.",
 				"Previous Edit Point and Next Edit Point move between clip boundaries on the selected track, project markers, Start, and End. VoiceOver identifies the clip at a boundary and reads the position. Where two clips meet, it names the clip that begins there.",
 				"Choose Mark In or Mark Out to set a marker. Its actions let you go to it or clear it. Pressing the marker button at its marked position also clears it. Opening a project clears its previous In and Out markers."
@@ -257,7 +257,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Append a second passage from the same source. A clip named Interview becomes Interview A on the timeline, and the new passage is Interview B. Each clip keeps its letter when moved."
 			]), HelpSection("Full Screen Preview", numbered: true, [
 				"Pause or step to the picture you want to inspect. With VoiceOver, focus Video frame to explore the image.",
-				"Choose Full Screen Preview beneath the video preview to open the project at the playhead.",
+				"Choose Full Screen Preview beside Direct Touch to open the project at the playhead.",
 				"Use Magic Tap or Play and Pause to control playback. Adjust the playback slider to move to another time."
 			]), HelpSection("Add at Playhead", numbered: true, [
 				"Set the project playhead to the destination time before opening the Cutting Board. Mark the source passage and choose Add at Playhead.",
@@ -363,9 +363,8 @@ private enum HelpTopic: String, CaseIterable {
 			[HelpSection("Actions rotor", [
 				"Focus Step Forward or Step Back. In the Actions rotor, swipe up or down to choose a ten-frame move or the next or previous edit point. Double-tap to perform the selected action.",
 				"Focus Undo, select Redo in the Actions rotor, and double-tap to reapply the last edit you undid. Making a new edit clears the remaining redo history.",
-				"Focus Playhead and use its actions to mark, trim, delete a selection, or navigate to an edit point.",
-				"Focus a set In or Out marker and use its actions to jump to that time or clear the marker.",
-				"Use Magic Tap, a two-finger double-tap, to play or pause the clip."
+				"Focus Rewind and choose Go to Start, or focus Fast Forward and choose Go to End.",
+				"Focus a set In or Out marker and use its actions to jump to that time or clear the marker."
 			])]
 		case .touch:
 			[HelpSection("Common gestures: one finger", [
