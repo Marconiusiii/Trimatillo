@@ -95,7 +95,7 @@ private enum HelpTopic: String, CaseIterable {
 		HelpSection("Export a project", numbered: true, [
 			"Open Project Actions beside the project name and choose Export. Export includes the full timeline and its track volumes.",
 			"To make captions part of the picture, turn on Burn In Open Captions. The movie uses the captions and timing in the Caption Timeline.",
-			"For video, choose Photos to save a new video to the library, or Files to choose a folder. For an audio project, choose Files. Stereo exports use M4A; spatial exports use MOV.",
+			"For video, choose Export to Photo Library to save a new video to the library, or Export to Files to choose a folder. For an audio project, choose Export to Files. Stereo exports use M4A; spatial exports use MOV.",
 			"In Files, choose a folder and filename for the export.",
 			"HDR video is exported in HDR when supported by the device and media format.",
 			"On iOS 26 or later, supported spatial recordings retain spatial audio in project exports, alongside a stereo version for playback. Track volume, fades, and Audio Description ducking apply across the original soundfield. Added recordings and music play in front. If the source layout or applied audio effects require conversion, choose Export in Stereo to create a two-channel mix."
@@ -182,7 +182,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Swipe right to play forward. Repeat to increase speed.",
 				"Swipe left to rewind. Repeat to increase speed.",
 				"Swipe up to open Written Description for the marked passage. Description Text is ready to type.",
-				"Swipe down to open Audio Description for the marked passage. Choose Record to start a take."
+				"Swipe down to open Audio Description for the marked passage. Choose Record to start a take. Saving returns to Direct Touch Editor."
 			]), HelpSection("Three fingers in Describer Direct Touch", [
 				"Tap once to hear the current playhead position.",
 				"Swipe right to reach the next entry boundary or project End.",
@@ -304,8 +304,10 @@ private enum HelpTopic: String, CaseIterable {
 				"Open Project Actions beside the project name and choose Project Settings.",
 				"Edit the name, resolution, frame rate, or duration. Resolution and frame rate apply to project playback and export."
 			]), HelpSection("Arrange clips", numbered: true, [
-				"Expand Project Media. Choose Import Clip, then Photo Library or Files, and select the original.",
-				"In Photo Library, select a video to open Clip Preview. Play or scrub through it, then choose Use Clip to add it to Project Media.",
+				"Expand Project Media. Choose Import Clip, then Photo Library or Files.",
+				"In Photo Library, select videos in the order you want to import them, then choose Preview Clips.",
+				"Use the page control or scroll horizontally to preview each selected clip. Magic Tap plays or pauses the current clip. Moving to another page pauses playback.",
+				"Turn off Include Clip to leave a video out of the import. Choose Use Clips to add the included videos to Project Media. VoiceOver focus moves to the first imported clip.",
 				"Choose Open Cutting Board from the source clip's accessibility actions or menu. Trim the clip or cut a marked range.",
 				"Choose Append to add the marked portion after the last clip on the selected compatible track. With fewer than two markers, Append uses the entire current edit. Keep the Cutting Board open to append another passage.",
 				"Primary Audio Track includes the linked sound from Primary Video. The linked clip follows the video through trims, splits, moves, and removal. Use Track Effects on Primary Audio Track to adjust its volume.",
@@ -345,7 +347,7 @@ private enum HelpTopic: String, CaseIterable {
 				"Choose Mark In or Mark Out to set a marker. Its actions let you go to it or clear it. Pressing the marker button at its marked position also clears it. Opening a project clears its previous In and Out markers."
 			]), HelpSection("Name a project clip", numbered: true, [
 				"Expand Project Media. Open the imported clip's menu or actions and choose Rename Clip.",
-				"Enter a Clip Name. The project uses that name for the source and its timeline clips.",
+				"Clip Name is ready to edit. Enter the name to use for the source and its timeline clips.",
 				"Append a second passage from the same source. A clip named Interview becomes Interview A on the timeline, and the new passage is Interview B. Each clip keeps its letter when moved."
 			]), HelpSection("Full Screen Preview", numbered: true, [
 				"Pause or step to the picture you want to inspect. With VoiceOver, focus Video frame to explore the image.",
@@ -520,10 +522,10 @@ private enum HelpTopic: String, CaseIterable {
 		case .save:
 			[Self.projectExport, HelpSection("Export from the Cutting Board", [
 				"Save Changes to Original updates the selected Photos video or replaces a writable MOV, MP4, or M4A original in Files.",
-				"Save as New Clip creates a separate clip. For video, choose Photos or Files. For audio, use the Files picker.",
+				"Save as New Clip creates a separate clip. For video, choose Export to Photo Library or Export to Files. For audio, use the Files picker.",
 				"In Files, choose a folder and filename for the edited clip.",
 				"The Cutting Board preserves HDR and supported original audio layouts. On iOS 26 or later, supported spatial recordings can also retain spatial audio after sections are removed. If preservation is unavailable, Export in Stereo creates a two-channel version.",
-				"When editing from the Photos Share sheet, choose Export, then Photos or Files under Save as New Clip.",
+				"When editing from the Photos Share sheet, choose Export, then Export to Photo Library or Export to Files under Save as New Clip.",
 				"Export edits you want to keep before closing a clip in Trim a Clip."
 			])]
 		}

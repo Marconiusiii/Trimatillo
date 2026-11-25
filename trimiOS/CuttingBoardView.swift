@@ -734,19 +734,19 @@ private struct ClipExportView: View {
 					ProgressView("Exporting")
 				} else if Bundle.main.bundleURL.pathExtension == "appex" {
 					Section("Save as New Clip") {
-						Button("Photos") { destination = .photos }
-						Button("Files") { destination = .files }
+						Button("Export to Photo Library") { destination = .photos }
+						Button("Export to Files") { destination = .files }
 					}
 				} else {
 					Button("Save Changes to Original") { destination = .original }
 						.disabled(!session.canSaveOriginal)
 					if session.hasVideo {
 						Menu("Save as New Clip") {
-							Button("Photos") { destination = .photos }
-							Button("Files") { destination = .files }
+							Button("Export to Photo Library") { destination = .photos }
+							Button("Export to Files") { destination = .files }
 						}
-						.accessibilityAction(named: "Photos") { destination = .photos }
-						.accessibilityAction(named: "Files") { destination = .files }
+						.accessibilityAction(named: "Export to Photo Library") { destination = .photos }
+						.accessibilityAction(named: "Export to Files") { destination = .files }
 					} else {
 						Button("Save as New Clip") { destination = .files }
 					}

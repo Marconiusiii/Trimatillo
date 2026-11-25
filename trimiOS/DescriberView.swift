@@ -180,6 +180,8 @@ struct DescriberView: View {
 
 	private var duckingButton: some View {
 		Button("Audio Ducking") { mix = project.descriptionDucking ?? DescriptionDucking(); ducking = true }
+			.accessibilityValue((project.descriptionDucking ?? DescriptionDucking()).enabled ? "On" : "Off")
+			.accessibilityHint("Edits Audio Ducking settings")
 			.buttonStyle(EditorButtonStyle())
 			.accessibilityFocused(focus, equals: "ducking")
 			.sheet(isPresented: $ducking, onDismiss: { focus.wrappedValue = "ducking" }) {

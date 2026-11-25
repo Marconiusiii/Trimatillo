@@ -109,6 +109,10 @@ struct ProjectEditorView: View {
 	@State private var pickingFile = false
 	@State private var pickingPhoto = false
 	@State private var confirmedPhoto: SelectedPhotoClip?
+	@State private var confirmedPhotoItems: [PhotosPickerItem] = []
+	@State private var importFocus: UUID?
+	@State private var fileImportStarted = false
+	@State private var importingMultiple = false
 	@State private var deletingSource: ProjectMediaSource?
 	@State private var renaming: ProjectMediaSource?
 	@State private var clipName = ""
@@ -135,6 +139,7 @@ struct ProjectEditorView: View {
 	@State private var placementNeedsRebuild = false
 	@Environment(\.accessibilityReduceMotion) private var reduceMotion
 	@FocusState private var renamingClip: Bool
+	@AccessibilityFocusState(for: .voiceOver) private var renameFocused: Bool
 	@AppStorage("timecodeFormat", store: EditorPreferences.shared) private var format = TimecodeFormat.milliseconds
 	@AccessibilityFocusState private var focus: String?
 	@State private var trigger: String?
@@ -165,6 +170,9 @@ struct ProjectEditorView: View {
 		.onChange(of: preparingTimeline) { _, preparing in
 			if !preparing, let placementFocus { focus = placementFocus; self.placementFocus = nil }
 			if !preparing && restoringDescription { restoreDescriptionFocus() }
+		}
+		.onChange(of: preparedRevision) { _, value in
+			if value == revision, !preparingTimeline, restoringDescription { restoreDescriptionFocus() }
 		}
 		.onChange(of: activeTrack) {
 			dropAnchor = nil
@@ -199,7 +207,7 @@ struct ProjectEditorView: View {
 		NavigationStack {
 			Group {
 				if clipTask != nil {
-					LoadingStatusView("Opening clip", cancel: cancelClipLoad)
+					LoadingStatusView(importingMultiple ? "Importing Clips" : "Opening clip", cancel: cancelClipLoad)
 				} else {
 					editorLayout
 				}
@@ -263,12 +271,20 @@ struct ProjectEditorView: View {
 				trackEffectsSheet(track)
 			}
 			.fileImporter(isPresented: $pickingFile, allowedContentTypes: [.movie, .audio]) { result in
-				if case .success(let url) = result { importSource { try await ProjectMediaSource.file(url) } }
+				if case .success(let url) = result { fileImportStarted = true; importSource { try await ProjectMediaSource.file(url) } }
 				else if case .failure(let problem) = result, (problem as NSError).code != NSUserCancelledError { error = "Could not open the file. Choose it again in Files." }
 				focus = trigger
 			}
 			.sheet(isPresented: $pickingPhoto, onDismiss: {
-				if let clip = confirmedPhoto {
+				if !confirmedPhotoItems.isEmpty {
+					let items = confirmedPhotoItems
+					confirmedPhotoItems = []
+					importSources(items.map { item in {
+						let clip = try await SelectedPhotoClip.load(item)
+						guard let id = item.itemIdentifier else { throw ProjectFailure("Choose the original video in Photo Library.") }
+						return try await ProjectMediaSource.photo(id, asset: clip.asset)
+					} })
+				} else if let clip = confirmedPhoto {
 					confirmedPhoto = nil
 					importSource {
 						guard let id = clip.item.itemIdentifier else { throw ProjectFailure("Choose the original video in Photo Library.") }
@@ -276,12 +292,12 @@ struct ProjectEditorView: View {
 					}
 				} else { focus = trigger }
 			}) {
-				PhotoClipPickerView { confirmedPhoto = $0 }
+				PhotoClipPickerView(useClips: reconnect == nil ? { confirmedPhotoItems = $0 } : nil) { confirmedPhoto = $0 }
 			}
-			.onChange(of: pickingFile) { _, presented in if !presented { focus = trigger } }
-			.sheet(item: $renaming, onDismiss: { focus = trigger }) { source in
+			.onChange(of: pickingFile) { _, presented in if !presented && !fileImportStarted { focus = trigger } }
+			.sheet(item: $renaming, onDismiss: { renamingClip = false; renameFocused = false; focus = trigger }) { source in
 				NavigationStack {
-					Form { TextField("", text: $clipName).focused($renamingClip).editorFieldLabel("Clip Name") }
+					Form { TextField("", text: $clipName).focused($renamingClip).accessibilityFocused($renameFocused).editorFieldLabel("Clip Name") }
 						.dismissKeyboardToolbar(while: renamingClip) { renamingClip = false }
 						.editorListMargins()
 						.scrollContentBackground(.hidden)
@@ -299,6 +315,7 @@ struct ProjectEditorView: View {
 						}
 				}
 				.editorAppearance()
+				.task { renamingClip = true; renameFocused = true }
 			}
 			.sheet(item: voiceBinding(direct: false), onDismiss: finishVoice, content: voiceSheet)
 			.sheet(item: descriptionBinding(direct: false), onDismiss: finishDescription, content: descriptionSheet)
@@ -505,6 +522,13 @@ struct ProjectEditorView: View {
 				.contextMenu { EditorMenuAction.buttons(actions) }
 				.editorMenuActions(source.displayName, actions)
 				.accessibilityFocused($focus, equals: source.id.uuidString)
+				.task(id: importFocus) {
+					guard importFocus == source.id, !loading else { return }
+					await Task.yield()
+					guard !Task.isCancelled, importFocus == source.id, !loading else { return }
+					focus = source.id.uuidString
+					importFocus = nil
+				}
 			}
 		} label: { Text("Project Media").editorTouchRow(alignment: .leading) }
 		.accessibilityAddTraits(.isHeader)
@@ -1286,6 +1310,8 @@ struct ProjectEditorView: View {
 
 	private func pick(_ id: UUID?, files: Bool) {
 		playback.releaseAudio()
+		fileImportStarted = false
+		importFocus = nil
 		reconnect = id
 		trigger = id?.uuidString ?? "import"
 		if files { pickingFile = true } else { pickingPhoto = true }
@@ -1294,27 +1320,40 @@ struct ProjectEditorView: View {
 	private func cancelClipLoad() {
 		clipTask?.cancel()
 		clipTask = nil
+		importingMultiple = false
 		focus = trigger
 	}
 
 	private func importSource(_ load: @escaping () async throws -> ProjectMediaSource) {
+		importSources([load])
+	}
+
+	private func importSources(_ loads: [() async throws -> ProjectMediaSource]) {
+		importingMultiple = loads.count > 1
 		let replacing = reconnect
 		clipTask = Task {
-			defer { if !Task.isCancelled { clipTask = nil; focus = trigger } }
+			defer { if !Task.isCancelled { clipTask = nil; importingMultiple = false } }
 			do {
-				var source = try await load()
+				var imported: [ProjectMediaSource] = []
+				for load in loads {
+					try Task.checkCancellation()
+					imported.append(try await load())
+				}
 				try Task.checkCancellation()
 				var next = project
-				if let replacing, let index = next.sources.firstIndex(where: { $0.id == replacing }) {
+				if let replacing, let index = next.sources.firstIndex(where: { $0.id == replacing }), var source = imported.first {
 					let original = next.sources[index]
 					guard original.duration.time == source.duration.time, (original.picture == nil) == (source.picture == nil),
 						original.hasAudio == source.hasAudio else { throw ProjectFailure("Choose the original clip with the same duration and media type.") }
 					source.id = replacing
 					source.projectName = original.projectName
 					next.sources[index] = source
-				} else { next.sources.append(source) }
-				commit(next, action: replacing == nil ? "Import Clip" : "Reconnect Clip")
-			} catch { if !Task.isCancelled { self.error = error.localizedDescription } }
+					imported = [source]
+				} else { next.sources.append(contentsOf: imported) }
+				try save(next, action: replacing == nil ? (imported.count == 1 ? "Import Clip" : "Import Clips") : "Reconnect Clip")
+				expanded = true
+				importFocus = imported.first?.id
+			} catch { if !Task.isCancelled { self.error = error.localizedDescription; focus = trigger } }
 		}
 	}
 
@@ -1586,7 +1625,7 @@ struct ProjectEditorView: View {
 	private func finishDescription() {
 		if descriptionNeedsRebuild {
 			descriptionNeedsRebuild = false
-			if directTouch { restoreDescriptionFocus() } else { restoringDescription = true }
+			restoringDescription = true
 			revision += 1
 		} else { restoreDescriptionFocus() }
 	}
@@ -2286,8 +2325,8 @@ private struct ProjectExportView: View {
 					if timeline.hasVideo && !timeline.captions.isEmpty {
 						Toggle("Burn In Open Captions", isOn: $burnInCaptions)
 					}
-					if timeline.hasVideo { Button("Photos") { request(.photos) } }
-					Button("Files") { request(.files) }
+					if timeline.hasVideo { Button("Export to Photo Library") { request(.photos) } }
+					Button("Export to Files") { request(.files) }
 				}
 			}
 			.scrollContentBackground(.hidden)
