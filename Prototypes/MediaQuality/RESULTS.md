@@ -1,5 +1,9 @@
 # Prototype results
 
+## Subsequent channel-isolation finding
+
+The project-audio investigation found a failing five-channel APAC round trip that the aggregate checks below did not establish. A signal in the first channel appeared in other channels after encoding and decoding. Do not treat the earlier five-channel camera result as proof of independent channel preservation. See [Spatial project audio investigation](PROJECT_AUDIO.md) for the retained reproduction, measurements, and validation boundaries.
+
 Run on November 24, 2026, using macOS 27.2.1 and Apple Swift 6.4.2. The command-line target was macOS 26.0. Native encoder access was required outside the restricted execution sandbox.
 
 ## Passed
@@ -58,3 +62,7 @@ The final run log is `/tmp/trimatillo-quality-final.log`. Rendered fixtures are 
 The combined movie is `spatial-cut-gain-narration.mov`. It contains synthetic tones, not speech. `hdr-edited.mov` contains the full 1.5-second video demonstration.
 
 The camera logs are `/tmp/trimatillo-camera-cinematic-preserved.log` and `/tmp/trimatillo-camera-4k-preserved.log`. Their corresponding output directories have the same names without `.log`. Each contains `camera-hdr-edited.mov` (silent video) and `camera-audio-cut-gain-narration.mov` (audio only).
+
+## Follow-up: native channel conversion
+
+The project-audio investigation reproduced a non-identity matrix for identical five-channel FOA plus center layouts on macOS and two iOS simulator runtimes. An uncompressed-file trace also reproduced the channel leakage without APAC. This narrows the investigation beyond the earlier encoded round-trip failure; it does not establish a codec defect or a production export workaround. See [PROJECT_AUDIO.md](PROJECT_AUDIO.md) and the unsubmitted [Apple Feedback draft](APPLE_FEEDBACK.md).
